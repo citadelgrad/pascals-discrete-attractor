@@ -13,11 +13,15 @@ mkdir -p "${INSTALL_DIR}"
 # Copy binary
 cp "target/release/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
 
-# Sign with Apple Developer identity if available (prevents macOS SIGKILL on unsigned binaries)
-SIGN_IDENTITY="Apple Development: Scott Nixon (8XVMGBR5UZ)"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "${SIGN_IDENTITY}"; then
-    codesign --force --sign "${SIGN_IDENTITY}" "${INSTALL_DIR}/${BIN_NAME}"
-    echo "Signed ${BIN_NAME} with ${SIGN_IDENTITY}"
+# Sign with Apple Developer identity (prevents macOS SIGKILL on unsigned binaries)
+if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
+    echo "ERROR: CODESIGN_IDENTITY is not set."
+    echo "Set it in your .envrc (see .envrc.example) or export it before running install.sh"
+    exit 1
+fi
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "${CODESIGN_IDENTITY}"; then
+    codesign --force --sign "${CODESIGN_IDENTITY}" "${INSTALL_DIR}/${BIN_NAME}"
+    echo "Signed ${BIN_NAME} with ${CODESIGN_IDENTITY}"
 else
     echo "WARNING: Signing identity not found, skipping codesign"
 fi

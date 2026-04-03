@@ -98,7 +98,7 @@ digraph C4_Component {
         fontcolor="#438dd5"
 
         start_exec [label="start_execution()",    fillcolor="#438dd5", fontcolor=white]
-        cli_path   [label="attractor_cli_path()",  fillcolor="#438dd5", fontcolor=white]
+        cli_path   [label="pas_cli_path()",  fillcolor="#438dd5", fontcolor=white]
         runner     [label="PipelineRunner",        fillcolor="#438dd5", fontcolor=white]
         stream     [label="stream_events()",       fillcolor="#438dd5", fontcolor=white]
         publish    [label="publish_event()",       fillcolor="#438dd5", fontcolor=white]
@@ -132,7 +132,7 @@ digraph C4_Component {
 | ExecutionPanel | `components/execution_panel.rs` | Subscribes to SSE, renders node list with live status |
 | ExecutionNode | `components/execution_node.rs` | Single node: status badge, cost, notes |
 | start_execution() | `server/execute.rs` | Orchestrates decompose, scaffold, parse, spawn |
-| attractor_cli_path() | `server/execute.rs` | Resolves CLI binary from `ATTRACTOR_CLI_PATH` env var |
+| pas_cli_path() | `server/execute.rs` | Resolves CLI binary from `PAS_CLI_PATH` env var |
 | PipelineRunner | `server/execute.rs` | Walks graph, executes handlers, publishes events |
 | stream_events() | `server/stream.rs` | SSE endpoint, bridges broadcast to EventSource |
 | publish_event() | `server/stream.rs` | Writes to broadcast channel + replay buffer |

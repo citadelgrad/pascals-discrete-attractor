@@ -1,2 +1,5 @@
-# Path to attractor CLI binary (defaults to "attractor" on PATH if unset)
-export ATTRACTOR_CLI_PATH=/path/to/attractor-cli
+# Path to pas CLI binary (defaults to "pas" on PATH if unset)
+export PAS_CLI_PATH=/path/to/pas
+
+# Apple codesigning identity for install.sh (run `security find-identity -v -p codesigning` to list)
+export CODESIGN_IDENTITY="Apple Development: Your Name (XXXXXXXXXX)"

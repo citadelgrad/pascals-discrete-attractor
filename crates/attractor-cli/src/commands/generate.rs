@@ -254,19 +254,41 @@ Node attrs: `label`, `shape`, `prompt` (self-contained instructions with ALL con
 Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`.
 Edge attrs: `label` (e.g. "PASS","FAIL"), `condition` (e.g. preferred_label=PASS), `loop_restart="true"` on back-edges.
 
+## Timeouts
+
+Every node MUST have a `timeout` attribute. Set it based on complexity:
+- Lightweight (conditionals, haiku routing, simple file reads): `timeout="120s"`
+- Medium (investigation, verification, fixups, linting): `timeout="300s"`
+- Heavy (implementation, full test suites, multi-step builds): `timeout="900s"`
+
 Example node format:
     my_node [
         label="Short Label"
         shape="box"
+        timeout="300s"
         prompt="Detailed instructions here."
     ]
 
 ## Structure
 
-start -> [task1] -> [verify1] -PASS-> [task2] -> ... -> done
+start -> [task1] -> [verify1] -PASS-> [task2] -> ... -> commit_changes -> done
                         \-FAIL-> [fixup1] -> [verify1] (loop_restart=true)
 
 Each spec task becomes a work node + verify diamond. FAIL edges loop through a fixup node. PASS edges advance. Node prompts must be fully self-contained.
+
+## Commit step (REQUIRED)
+
+The LAST work node before `done` MUST be a commit node that stages and commits all changes:
+    commit_changes [
+        label="Commit Changes"
+        shape="box"
+        timeout="120s"
+        allowed_tools="Bash(git:*)"
+        prompt="Stage and commit all changes made by this pipeline.
+1. Run git diff --stat to review what changed
+2. Stage the changed files: git add -A
+3. Commit with a descriptive message summarizing the work done"
+    ]
 
 Output ONLY the raw digraph. No markdown fences, no commentary."#,
         prd_section = prd_section,
@@ -392,6 +414,26 @@ mod tests {
         assert!(result.contains("Msquare"));
         assert!(result.contains("node_type=\"conditional\""));
         assert!(result.contains("loop_restart"));
+    }
+
+    #[test]
+    fn build_prompt_contains_timeout_guidance() {
+        let result = build_prompt("spec", None);
+        assert!(result.contains("timeout"));
+        assert!(result.contains("timeout=\"120s\""));
+        assert!(result.contains("timeout=\"300s\""));
+        assert!(result.contains("timeout=\"900s\""));
+        assert!(result.contains("Lightweight"));
+        assert!(result.contains("Heavy"));
+    }
+
+    #[test]
+    fn build_prompt_requires_commit_step() {
+        let result = build_prompt("spec", None);
+        assert!(result.contains("commit_changes"));
+        assert!(result.contains("Commit Changes"));
+        assert!(result.contains("git add -A"));
+        assert!(result.contains("Bash(git:*)"));
     }
 
     #[test]

@@ -21,12 +21,12 @@ pub struct ExecutionResponse {
     pub pipeline_path: String,
 }
 
-/// Resolve the attractor CLI binary path.
+/// Resolve the pas CLI binary path.
 ///
-/// Checks `ATTRACTOR_CLI_PATH` env var first, then falls back to `attractor` on PATH.
+/// Checks `PAS_CLI_PATH` env var first, then falls back to `pas` on PATH.
 #[cfg(feature = "ssr")]
-fn attractor_cli_path() -> String {
-    std::env::var("ATTRACTOR_CLI_PATH").unwrap_or_else(|_| "attractor".into())
+fn pas_cli_path() -> String {
+    std::env::var("PAS_CLI_PATH").unwrap_or_else(|_| "pas".into())
 }
 
 /// Start the full execution chain: decompose spec → scaffold pipeline → run.
@@ -52,7 +52,7 @@ pub async fn start_execution(project_id: i64) -> Result<ExecutionResponse, Serve
             format!("Failed to get project: {}", e)
         ))?;
 
-    let cli = attractor_cli_path();
+    let cli = pas_cli_path();
     let session_id = Uuid::new_v4().to_string();
     let spec_path = format!("{}/.pas/spec.md", project.folder_path);
     let project_dir = std::path::PathBuf::from(&project.folder_path);

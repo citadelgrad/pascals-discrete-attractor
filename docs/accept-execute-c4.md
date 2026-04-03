@@ -76,7 +76,7 @@ flowchart TB
 
     subgraph server ["Axum Server (SSR)"]
         start_exec["start_execution()"]
-        cli_path["attractor_cli_path()"]
+        cli_path["pas_cli_path()"]
         runner["PipelineRunner"]
         stream["stream_events()"]
         publish["publish_event()"]
@@ -123,7 +123,7 @@ flowchart TB
 | ExecutionPanel | `components/execution_panel.rs` | Subscribes to SSE, renders node list with live status |
 | ExecutionNode | `components/execution_node.rs` | Single node: status badge, cost, notes |
 | start_execution() | `server/execute.rs` | Orchestrates decompose, scaffold, parse, spawn |
-| attractor_cli_path() | `server/execute.rs` | Resolves CLI binary from `ATTRACTOR_CLI_PATH` env var |
+| pas_cli_path() | `server/execute.rs` | Resolves CLI binary from `PAS_CLI_PATH` env var |
 | PipelineRunner | `server/execute.rs` | Walks graph, executes handlers, publishes events |
 | stream_events() | `server/stream.rs` | SSE endpoint, bridges broadcast to EventSource |
 | publish_event() | `server/stream.rs` | Writes to broadcast channel + replay buffer |

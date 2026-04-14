@@ -1,0 +1,36 @@
+pipelines/phase-1-spec.dot
+  54699824900b474c 1-4,7-11,13-19,21-29,31-37,39-45,47-55,57-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "cb275b21221e3de88d6631d8dabd2e9384b360f5",
+  "prompts": {
+    "2a4a1b5422717264": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a783469-9c4b-4ec3-80c8-0ef9fde3d220",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 652,
+      "overriden_lines": 0
+    },
+    "54699824900b474c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74084669-5e3e-4d76-8026-d85eb81ec7dd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 45,
+      "accepted_lines": 778,
+      "overriden_lines": 0
+    }
+  }
+}

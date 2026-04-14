@@ -265,15 +265,30 @@ fn build_prompt(spec: &str, prd: Option<&str>) -> String {
 
 {spec}
 
+## DOT syntax constraints (CRITICAL — violating these causes parse failures)
+
+The parser accepts a STRICT SUBSET of Graphviz DOT. These constraints are non-negotiable:
+- ONLY `digraph Name {{ }}` — no `graph`, no `strict`, no `--` edges
+- Node IDs MUST be bare identifiers: `[A-Za-z_][A-Za-z0-9_]*` — use snake_case
+- NO quoted node IDs (`"my node"`), numeric IDs (`42`), HTML labels (`<B>text</B>`), or port syntax (`node:port`)
+- ALL attribute values MUST be double-quoted strings. Use `shape="Mdiamond"` not `shape=Mdiamond`.
+- Only one `[ ]` block per node/edge. NO chained blocks (`[a=1][b=2]`).
+- String concatenation (`"a" + "b"`) is NOT supported.
+- Attribute separators: commas, semicolons, or whitespace inside `[ ]` blocks.
+- Comments: `//` line and `/* */` block only. No `#` comments.
+- Use multi-line node declarations with one attribute per line for readability.
+
 ## Pipeline conventions
 
-IMPORTANT: ALL attribute values MUST be double-quoted. Use `shape="Mdiamond"` not `shape=Mdiamond`. Use multi-line node declarations with one attribute per line.
-
-Shapes: `"Mdiamond"` = start, `"Msquare"` = done, `"box"` = work, `"diamond"` (node_type="conditional") = decision, `"hexagon"` (node_type="wait.human") = human gate.
+Shapes: `"Mdiamond"` = start, `"Msquare"` = done, `"box"` = work, `"diamond"` (node_type="conditional") = decision, `"hexagon"` (node_type="wait.human") = human gate, `"parallelogram"` = tool node (runs a shell command via `tool_command`).
 Graph attrs: `label`, `goal`, `model="sonnet"`.
 Node attrs: `label`, `shape`, `prompt` (self-contained instructions with ALL context from the spec — no references to external tickets).
-Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`.
+Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`, `tool_command` (for parallelogram nodes).
 Edge attrs: `label` (e.g. "PASS","FAIL"), `condition` (e.g. preferred_label=PASS), `loop_restart="true"` on back-edges.
+
+## Human gates — use sparingly
+
+Do NOT create human gates (`hexagon`) unless the spec EXPLICITLY requests human approval or the task is inherently non-automatable (e.g. visual design review, business sign-off). Verification tasks like checking HTTP endpoints, running health checks, querying APIs, or validating service responses MUST be automated as `parallelogram` tool nodes (using curl/wget) or `box` work nodes — never put automatable checks in a human gate prompt. The pipeline engine exists to automate these steps.
 
 ## Timeouts
 
@@ -533,6 +548,25 @@ mod tests {
         assert!(result.contains("Msquare"));
         assert!(result.contains("node_type=\"conditional\""));
         assert!(result.contains("loop_restart"));
+        assert!(result.contains("parallelogram"));
+        assert!(result.contains("tool_command"));
+    }
+
+    #[test]
+    fn build_prompt_discourages_unnecessary_human_gates() {
+        let result = build_prompt("spec", None);
+        assert!(result.contains("Do NOT create human gates"));
+        assert!(result.contains("EXPLICITLY requests human approval"));
+    }
+
+    #[test]
+    fn build_prompt_contains_dot_syntax_constraints() {
+        let result = build_prompt("spec", None);
+        assert!(result.contains("DOT syntax constraints"));
+        assert!(result.contains("ONLY `digraph Name"));
+        assert!(result.contains("[A-Za-z_][A-Za-z0-9_]*"));
+        assert!(result.contains("NO quoted node IDs"));
+        assert!(result.contains("NO chained blocks"));
     }
 
     #[test]

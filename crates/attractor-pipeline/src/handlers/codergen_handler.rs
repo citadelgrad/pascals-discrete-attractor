@@ -545,11 +545,11 @@ impl NodeHandler for CodergenHandler {
                         "Killing timed-out {} process",
                         provider.display_name()
                     );
-                    // SIGKILL the child process — its MCP server children will
-                    // get SIGHUP when their parent exits.
+                    // SIGKILL the entire process group so MCP server children
+                    // are also terminated (matches tool_handler behavior).
                     #[cfg(unix)]
                     unsafe {
-                        libc::kill(pid as i32, libc::SIGKILL);
+                        libc::kill(-(pid as i32), libc::SIGKILL);
                     }
                 }
                 return Err(AttractorError::CommandTimeout {
@@ -659,11 +659,24 @@ fn extract_label(response: &str, labels: &[String]) -> Option<String> {
             }
         }
     }
-    // Fallback: search full response for label as a standalone word
+    // Fallback: search full response for label as a standalone word.
+    // Sort labels longest-first to avoid substring false matches
+    // (e.g. "BUY" matching inside "BUYOUT").
+    let mut sorted_labels: Vec<&String> = labels.iter().collect();
+    sorted_labels.sort_by_key(|b| std::cmp::Reverse(b.len()));
     let upper = response.to_uppercase();
-    for label in labels {
-        if upper.contains(&label.to_uppercase()) {
-            return Some(label.clone());
+    for label in sorted_labels {
+        let label_upper = label.to_uppercase();
+        if let Some(pos) = upper.find(&label_upper) {
+            // Check word boundaries to avoid substring matches
+            let before_ok = pos == 0
+                || !upper.as_bytes()[pos - 1].is_ascii_alphanumeric();
+            let end = pos + label_upper.len();
+            let after_ok = end >= upper.len()
+                || !upper.as_bytes()[end].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return Some(label.clone());
+            }
         }
     }
     None

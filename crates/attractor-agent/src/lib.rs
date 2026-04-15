@@ -208,7 +208,13 @@ impl AgentSession {
         let mut current_input = user_input.to_string();
 
         loop {
-            let result = self.process_single_input(&current_input).await?;
+            let result = match self.process_single_input(&current_input).await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.state = SessionState::Idle;
+                    return Err(e);
+                }
+            };
 
             // Check for follow-up messages
             if let Some(followup) = self.followup_queue.pop_front() {
@@ -276,17 +282,19 @@ impl AgentSession {
                 break;
             }
 
-            // Check if this is the last allowed round
+            // Execute each tool call
+            let results = self.execute_tool_calls(&response.tool_calls).await;
+
+            // Check if this is the last allowed round (after executing tools
+            // so results are not silently dropped from history)
             if round + 1 >= self.config.max_tool_rounds {
                 tracing::info!(
                     max_rounds = self.config.max_tool_rounds,
                     "Max tool rounds reached, stopping loop"
                 );
+                self.history.push(Turn::ToolResults { results });
                 break;
             }
-
-            // Execute each tool call
-            let results = self.execute_tool_calls(&response.tool_calls).await;
 
             // Check for tool-call loops before appending results
             if let Some(ref mut detector) = self.loop_detector {
@@ -431,7 +439,7 @@ impl AgentSession {
                             }
                             let mut t = output[..split].to_string();
                             t.push_str(&format!(
-                                "\n\n[WARNING: Output truncated. {} characters removed.]",
+                                "\n\n[WARNING: Output truncated. {} bytes removed.]",
                                 output.len() - split
                             ));
                             t
@@ -870,6 +878,6 @@ mod tests {
         });
         let results = tool_results.unwrap();
         assert!(results[0].content.contains("[WARNING: Output truncated."));
-        assert!(results[0].content.contains("20000 characters removed"));
+        assert!(results[0].content.contains("20000 bytes removed"));
     }
 }

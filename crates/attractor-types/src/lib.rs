@@ -116,6 +116,9 @@ impl AttractorError {
                 | AttractorError::ValidationError(_)
                 | AttractorError::ContextLengthExceeded { .. }
                 | AttractorError::CliNotFound { .. }
+                | AttractorError::GoalGateUnsatisfied { .. }
+                | AttractorError::NoRetryTarget { .. }
+                | AttractorError::RetriesExhausted { .. }
         )
     }
 

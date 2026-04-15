@@ -311,8 +311,9 @@ fn strip_code_fences(s: &str) -> String {
 /// Truncate a string for display, replacing newlines with spaces.
 fn truncate_for_display(s: &str, max_len: usize) -> String {
     let flat: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    if flat.len() > max_len {
-        format!("{}...", &flat[..max_len])
+    if flat.chars().count() > max_len {
+        let truncated: String = flat.chars().take(max_len).collect();
+        format!("{}...", truncated)
     } else {
         flat
     }

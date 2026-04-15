@@ -383,7 +383,7 @@ impl LintRule for GoalGateHasRetryRule {
     fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
         graph
             .all_nodes()
-            .filter(|n| n.goal_gate && n.retry_target.is_none())
+            .filter(|n| n.goal_gate && n.retry_target.is_none() && n.fallback_retry_target.is_none())
             .map(|n| Diagnostic {
                 rule: self.name().into(),
                 severity: Severity::Warning,

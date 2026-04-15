@@ -38,14 +38,24 @@ impl FidelityMode {
 
 /// Apply fidelity mode to a message history.
 /// Returns the processed messages (does NOT modify in place).
+///
+/// The first message (typically the system prompt) is always preserved
+/// by `Truncate` mode to avoid losing LLM persona/instructions.
 pub fn apply_fidelity<T: Clone>(messages: &[T], mode: &FidelityMode) -> Vec<T> {
     match mode {
         FidelityMode::Full => messages.to_vec(),
         FidelityMode::Truncate { keep_last } => {
             if messages.len() <= *keep_last {
                 messages.to_vec()
+            } else if *keep_last == 0 {
+                Vec::new()
             } else {
-                messages[messages.len() - keep_last..].to_vec()
+                // Always preserve the first message (system prompt), then
+                // keep the most recent (keep_last - 1) messages.
+                let tail_count = keep_last - 1;
+                let mut result = vec![messages[0].clone()];
+                result.extend_from_slice(&messages[messages.len() - tail_count..]);
+                result
             }
         }
         FidelityMode::Compact | FidelityMode::Summary => {
@@ -125,10 +135,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_fidelity_truncate_keeps_last_n() {
+    fn apply_fidelity_truncate_preserves_first_and_keeps_last() {
         let msgs = vec![1, 2, 3, 4, 5];
+        // keep_last=3 → first message (system prompt) + last 2 messages
         let result = apply_fidelity(&msgs, &FidelityMode::Truncate { keep_last: 3 });
-        assert_eq!(result, vec![3, 4, 5]);
+        assert_eq!(result, vec![1, 4, 5]);
     }
 
     #[test]

@@ -37,6 +37,8 @@ fn ceil_char_boundary(s: &str, target: usize) -> usize {
 /// If the output is within the limit, it is returned unchanged.
 /// Otherwise a warning marker is inserted indicating how many characters were removed.
 pub fn truncate_output(output: &str, max_chars: usize, mode: TruncationMode) -> String {
+    // Use byte length as a fast path: if byte length is within the limit,
+    // char count is guaranteed to be <= byte length, so we can skip counting.
     if output.len() <= max_chars {
         return output.to_string();
     }
@@ -45,7 +47,7 @@ pub fn truncate_output(output: &str, max_chars: usize, mode: TruncationMode) -> 
         TruncationMode::HeadTail => {
             let head_size = floor_char_boundary(output, max_chars * 40 / 100);
             let tail_start = ceil_char_boundary(output, output.len() - (max_chars - head_size));
-            let removed = tail_start - head_size;
+            let removed = output[head_size..tail_start].chars().count();
             let head = &output[..head_size];
             let tail = &output[tail_start..];
             format!(
@@ -55,7 +57,7 @@ pub fn truncate_output(output: &str, max_chars: usize, mode: TruncationMode) -> 
         }
         TruncationMode::Tail => {
             let tail_start = ceil_char_boundary(output, output.len() - max_chars);
-            let removed = tail_start;
+            let removed = output[..tail_start].chars().count();
             let tail = &output[tail_start..];
             format!(
                 "\n[WARNING: Output truncated. {} characters removed from start]\n{}",

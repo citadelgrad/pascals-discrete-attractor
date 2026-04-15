@@ -12,7 +12,7 @@ fn fnv1a32(bytes: &[u8]) -> u32 {
     const OFFSET: u32 = 2166136261;
     const PRIME: u32 = 16777619;
     bytes.iter().fold(OFFSET, |acc, &b| {
-        acc.wrapping_mul(PRIME) ^ (b as u32)
+        (acc ^ (b as u32)).wrapping_mul(PRIME)
     })
 }
 

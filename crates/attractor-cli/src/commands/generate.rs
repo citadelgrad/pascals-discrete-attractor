@@ -140,8 +140,10 @@ pub async fn cmd_generate(
         if verbose {
             let stdout = String::from_utf8_lossy(&output_result.stdout);
             eprintln!("[debug] exit code: {:?}", output_result.status.code());
-            eprintln!("[debug] stdout: {}", &stdout[..stdout.len().min(1000)]);
-            eprintln!("[debug] stderr: {}", &stderr[..stderr.len().min(1000)]);
+            let stdout_preview: String = stdout.chars().take(1000).collect();
+            let stderr_preview: String = stderr.chars().take(1000).collect();
+            eprintln!("[debug] stdout: {}", stdout_preview);
+            eprintln!("[debug] stderr: {}", stderr_preview);
         }
         anyhow::bail!("Claude CLI failed: {}", stderr);
     }
@@ -171,17 +173,16 @@ pub async fn cmd_generate(
         Some(d) => d,
         None => {
             eprintln!("No digraph found in Claude's response. First 500 chars:");
-            eprintln!("{}", &result_str[..result_str.len().min(500)]);
+            let preview: String = result_str.chars().take(500).collect();
+            eprintln!("{}", preview);
             anyhow::bail!("Claude did not produce a valid digraph");
         }
     };
 
     if verbose {
         eprintln!("[debug] extracted DOT: {} bytes", dot_content.len());
-        eprintln!(
-            "[debug] first 200 chars:\n{}",
-            &dot_content[..dot_content.len().min(200)]
-        );
+        let dot_preview: String = dot_content.chars().take(200).collect();
+        eprintln!("[debug] first 200 chars:\n{}", dot_preview);
     }
 
     // Determine output path
@@ -210,7 +211,8 @@ pub async fn cmd_generate(
         Err(e) => {
             eprintln!("Generated file written to: {}", output_path.display());
             eprintln!("DOT parse failed — first 500 chars of output:");
-            eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
+            let err_preview: String = dot_content.chars().take(500).collect();
+            eprintln!("{}", err_preview);
             anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
         }
     };

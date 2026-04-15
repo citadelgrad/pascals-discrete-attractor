@@ -186,6 +186,7 @@ pub enum FinishReason {
     MaxTokens,
     StopSequence,
     ToolUse,
+    ContentFiltered,
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +387,7 @@ mod tests {
             (FinishReason::MaxTokens, "\"max_tokens\""),
             (FinishReason::StopSequence, "\"stop_sequence\""),
             (FinishReason::ToolUse, "\"tool_use\""),
+            (FinishReason::ContentFiltered, "\"content_filtered\""),
         ];
         for (reason, expected) in &reasons {
             let json = serde_json::to_string(reason).unwrap();

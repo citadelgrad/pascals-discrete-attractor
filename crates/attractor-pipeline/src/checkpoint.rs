@@ -76,13 +76,15 @@ impl PipelineCheckpoint {
         }
     }
 
-    /// Create a new checkpoint with a session ID.
+    /// Create a new checkpoint with a session ID and preserved counters.
     pub fn with_session_id(
         current_node_id: String,
         completed_nodes: Vec<String>,
         node_outcomes: HashMap<String, attractor_types::Outcome>,
         context_snapshot: HashMap<String, serde_json::Value>,
         session_id: String,
+        step_count: u64,
+        total_cost: f64,
     ) -> Self {
         Self {
             current_node_id,
@@ -91,8 +93,8 @@ impl PipelineCheckpoint {
             context_snapshot,
             timestamp: chrono::Utc::now().to_rfc3339(),
             session_id: Some(session_id),
-            step_count: 0,
-            total_cost: 0.0,
+            step_count,
+            total_cost,
         }
     }
 }
@@ -226,6 +228,8 @@ mod tests {
             outcomes,
             ctx,
             "test-session-123".into(),
+            5,
+            1.25,
         );
 
         let json = serde_json::to_string(&cp).unwrap();

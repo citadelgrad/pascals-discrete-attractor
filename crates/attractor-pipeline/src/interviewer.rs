@@ -56,10 +56,13 @@ impl Interviewer for ConsoleInterviewer {
         for (i, choice) in question.choices.iter().enumerate() {
             println!("  [{}] {}", i + 1, choice);
         }
-        let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .map_err(attractor_types::AttractorError::Io)?;
+        let input = tokio::task::spawn_blocking(|| {
+            let mut buf = String::new();
+            std::io::stdin().read_line(&mut buf).map(|_| buf)
+        })
+        .await
+        .map_err(|e| attractor_types::AttractorError::Other(format!("stdin task failed: {}", e)))?
+        .map_err(attractor_types::AttractorError::Io)?;
         let trimmed = input.trim();
         if let Ok(idx) = trimmed.parse::<usize>() {
             if idx > 0 && idx <= question.choices.len() {

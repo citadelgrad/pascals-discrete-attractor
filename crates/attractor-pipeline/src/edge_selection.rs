@@ -65,7 +65,12 @@ pub fn select_edge<'a>(
     // Step 4 & 5: Unconditional edges by weight with lexical tiebreak
     let unconditional: Vec<_> = edges.iter().filter(|e| e.condition.is_none()).collect();
     if unconditional.is_empty() {
-        // Last resort: return first edge regardless
+        // Last resort: all edges have conditions but none matched — fall back
+        // to the first edge and warn, since routing is now arbitrary.
+        tracing::warn!(
+            node = %node_id,
+            "All outgoing edges have conditions but none matched; falling back to first edge"
+        );
         return edges.first();
     }
     Some(best_by_weight_then_lexical(&unconditional))

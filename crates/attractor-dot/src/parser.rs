@@ -43,6 +43,10 @@ pub(crate) fn strip_comments(input: &str) -> String {
             }
             if i + 1 < len {
                 i += 2; // skip */
+            } else {
+                // Unclosed block comment at EOF — skip remaining char so it
+                // doesn't leak into the output as a normal character.
+                i = len;
             }
         } else if chars[i] == '"' {
             // inside a string literal — copy verbatim, handling escapes
@@ -147,9 +151,18 @@ fn duration_value(input: &mut &str) -> ModalResult<Duration> {
     Ok(dur)
 }
 
-/// Parse a boolean value.
+/// Parse a boolean value, ensuring it is not a prefix of a longer identifier.
 fn boolean_value(input: &mut &str) -> ModalResult<bool> {
-    alt((literal("true").value(true), literal("false").value(false))).parse_next(input)
+    let val = alt((literal("true").value(true), literal("false").value(false))).parse_next(input)?;
+    // Reject if followed by an alphanumeric char (e.g. "truefoo" is not a boolean)
+    if input
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
+    Ok(val)
 }
 
 /// Parse a float: optional sign, digits, '.', digits.
@@ -420,6 +433,19 @@ fn merge_statements(
                 nodes.insert(id.clone(), NodeDef { id, attrs });
             }
             Statement::Edge(chain, attrs) => {
+                // Ensure all nodes referenced in edges exist (once, not per pair)
+                for node_id in &chain {
+                    nodes.entry(node_id.clone()).or_insert_with(|| {
+                        let mut na = HashMap::new();
+                        for (k, v) in &node_defaults {
+                            na.insert(k.clone(), v.clone());
+                        }
+                        NodeDef {
+                            id: node_id.clone(),
+                            attrs: na,
+                        }
+                    });
+                }
                 // Expand chained edges: A -> B -> C => (A,B), (B,C)
                 for pair in chain.windows(2) {
                     let mut merged = edge_defaults.clone();
@@ -429,19 +455,6 @@ fn merge_statements(
                         to: pair[1].clone(),
                         attrs: merged,
                     });
-                    // Ensure nodes referenced in edges exist
-                    for node_id in &chain {
-                        nodes.entry(node_id.clone()).or_insert_with(|| {
-                            let mut na = HashMap::new();
-                            for (k, v) in &node_defaults {
-                                na.insert(k.clone(), v.clone());
-                            }
-                            NodeDef {
-                                id: node_id.clone(),
-                                attrs: na,
-                            }
-                        });
-                    }
                 }
             }
             Statement::Subgraph(name, inner_stmts) => {
@@ -489,8 +502,7 @@ fn parse_digraph(input: &mut &str) -> ModalResult<DotGraph> {
     }
 
     // Reject undirected 'graph'
-    if input.starts_with("graph") && !input.starts_with("graph [") {
-        let after = &input[5..];
+    if let Some(after) = input.strip_prefix("graph") {
         let trimmed = after.trim_start();
         if trimmed.starts_with('{') || trimmed.starts_with(|c: char| c.is_ascii_alphabetic()) {
             return Err(make_cut_error(
@@ -533,12 +545,14 @@ fn parse_digraph(input: &mut &str) -> ModalResult<DotGraph> {
     })
 }
 
-/// Compute (line, col) from byte offset in the original (pre-stripped) text.
-fn offset_to_line_col(original: &str, remaining_len: usize, stripped_len: usize) -> (usize, usize) {
+/// Compute (line, col) from byte offset in the stripped (comment-free) text.
+///
+/// Since `strip_comments` preserves newlines, the line count matches the
+/// original source. Column may differ if comments precede the error on the
+/// same line, but this is acceptable for diagnostic purposes.
+fn offset_to_line_col(stripped: &str, remaining_len: usize, stripped_len: usize) -> (usize, usize) {
     let consumed = stripped_len - remaining_len;
-    // We map back into the original. Since strip_comments preserves newlines,
-    // the line count stays the same. We just count from the stripped text.
-    let prefix = &original[..consumed.min(original.len())];
+    let prefix = &stripped[..consumed.min(stripped.len())];
     let line = prefix.matches('\n').count() + 1;
     let col = match prefix.rfind('\n') {
         Some(pos) => consumed - pos,

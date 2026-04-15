@@ -137,7 +137,8 @@ window.initTerminal = function(containerId, folderPath) {
     const resizeObserver = new ResizeObserver(function() { fitAddon.fit(); });
     resizeObserver.observe(container);
 
-    // Store all resources in global registry for cleanup
+    // Store all resources in global registry BEFORE connect() so it can
+    // access the instance for reconnectTimer and ws fields.
     window._terminalInstances[containerId] = {
         ws: null,
         terminal: terminal,

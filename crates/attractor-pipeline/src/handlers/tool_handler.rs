@@ -92,18 +92,30 @@ impl NodeHandler for ToolHandler {
             message: format!("Failed to spawn command: {}", e),
         })?;
 
+        // Capture the PID before waiting so we can kill on timeout
+        let child_pid = child.id();
+
         // Apply timeout if configured on the node, default 5 minutes
         let timeout_dur = node.timeout.unwrap_or(std::time::Duration::from_secs(300));
-        let output = tokio::time::timeout(timeout_dur, child.wait_with_output())
-            .await
-            .map_err(|_| AttractorError::CommandTimeout {
-                timeout_ms: timeout_dur.as_millis() as u64,
-            })?
-            .map_err(|e| AttractorError::HandlerError {
+        let output = match tokio::time::timeout(timeout_dur, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| AttractorError::HandlerError {
                 handler: "tool".into(),
                 node: node.id.clone(),
                 message: format!("Command execution failed: {}", e),
-            })?;
+            })?,
+            Err(_) => {
+                // Kill the child process group on timeout to avoid leaking processes
+                if let Some(pid) = child_pid {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGKILL);
+                    }
+                }
+                return Err(AttractorError::CommandTimeout {
+                    timeout_ms: timeout_dur.as_millis() as u64,
+                });
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

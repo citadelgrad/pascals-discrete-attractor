@@ -283,7 +283,10 @@ fn parse_response(body: &serde_json::Value) -> Result<Response, AttractorError> 
                 }
                 Some("thinking") => {
                     if let Some(t) = block["thinking"].as_str() {
-                        reasoning = Some(t.to_string());
+                        reasoning = Some(match reasoning {
+                            Some(existing) => format!("{}\n\n{}", existing, t),
+                            None => t.to_string(),
+                        });
                     }
                 }
                 _ => {}

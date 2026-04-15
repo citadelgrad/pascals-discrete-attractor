@@ -127,7 +127,7 @@ impl GeminiAdapter {
         let finish_reason = match candidate["finishReason"].as_str() {
             Some("STOP") => FinishReason::EndTurn,
             Some("MAX_TOKENS") => FinishReason::MaxTokens,
-            Some("SAFETY") => FinishReason::EndTurn,
+            Some("SAFETY") => FinishReason::ContentFiltered,
             Some("STOP_SEQUENCE") => FinishReason::StopSequence,
             _ => FinishReason::EndTurn,
         };

@@ -100,6 +100,7 @@ impl AttractorError {
             self,
             AttractorError::RateLimited { .. }
                 | AttractorError::CommandTimeout { .. }
+                | AttractorError::RequestTimeout { .. }
                 | AttractorError::ProviderError {
                     retryable: true,
                     ..

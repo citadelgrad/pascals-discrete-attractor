@@ -169,66 +169,71 @@ fn inject_cache_control_on_last_part(content: &mut [serde_json::Value]) {
 fn convert_content_parts(parts: &[ContentPart]) -> Vec<serde_json::Value> {
     parts
         .iter()
-        .map(|p| match p {
-            ContentPart::Text { text } => json!({
-                "type": "text",
-                "text": text
-            }),
-            ContentPart::ToolCall {
-                id,
-                name,
-                arguments,
-            } => json!({
-                "type": "tool_use",
-                "id": id,
-                "name": name,
-                "input": arguments
-            }),
-            ContentPart::ToolResult {
-                tool_call_id,
-                content,
-                is_error,
-            } => {
-                let mut v = json!({
-                    "type": "tool_result",
-                    "tool_use_id": tool_call_id,
-                    "content": content
-                });
-                if *is_error {
-                    v["is_error"] = json!(true);
+        .filter_map(|p| {
+            let v = match p {
+                ContentPart::Text { text } => json!({
+                    "type": "text",
+                    "text": text
+                }),
+                ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": name,
+                    "input": arguments
+                }),
+                ContentPart::ToolResult {
+                    tool_call_id,
+                    content,
+                    is_error,
+                    ..
+                } => {
+                    let mut v = json!({
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": content
+                    });
+                    if *is_error {
+                        v["is_error"] = json!(true);
+                    }
+                    v
                 }
-                v
-            }
-            ContentPart::Thinking { text, signature } => {
-                let mut v = json!({
+                // Thinking blocks without a signature must be omitted —
+                // the API rejects thinking blocks that lack a signature field.
+                ContentPart::Thinking { signature: None, .. } => return None,
+                ContentPart::Thinking {
+                    text,
+                    signature: Some(sig),
+                } => json!({
                     "type": "thinking",
-                    "thinking": text
-                });
-                if let Some(sig) = signature {
-                    v["signature"] = json!(sig);
+                    "thinking": text,
+                    "signature": sig
+                }),
+                ContentPart::RedactedThinking { data } => json!({
+                    "type": "redacted_thinking",
+                    "data": data
+                }),
+                ContentPart::Image { url, .. } => {
+                    if let Some(url) = url {
+                        json!({
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": url
+                            }
+                        })
+                    } else {
+                        json!({"type": "text", "text": "[unsupported image content]"})
+                    }
                 }
-                v
-            }
-            ContentPart::RedactedThinking { data } => json!({
-                "type": "redacted_thinking",
-                "data": data
-            }),
-            ContentPart::Image { url, .. } => {
-                if let Some(url) = url {
-                    json!({
-                        "type": "image",
-                        "source": {
-                            "type": "url",
-                            "url": url
-                        }
-                    })
-                } else {
-                    json!({"type": "text", "text": "[unsupported image content]"})
+                ContentPart::Audio { .. } | ContentPart::Document { .. } => {
+                    json!({"type": "text", "text": "[unsupported content type]"})
                 }
-            }
-            ContentPart::Audio { .. } | ContentPart::Document { .. } => {
-                json!({"type": "text", "text": "[unsupported content type]"})
-            }
+            };
+            Some(v)
         })
         .collect()
 }
@@ -675,7 +680,7 @@ mod tests {
                 name: None,
                 tool_call_id: None,
             },
-            Message::tool_result("tc_1", "result data", false),
+            Message::tool_result("tc_1", "search", "result data", false),
         ];
 
         let converted = convert_messages(&messages);

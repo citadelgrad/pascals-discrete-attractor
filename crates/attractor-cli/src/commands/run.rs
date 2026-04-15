@@ -7,10 +7,16 @@ use anyhow;
 ///
 /// The hash is derived from the canonical file path so re-running the same
 /// pipeline always finds the same logs dir (and its checkpoint).
-fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+/// FNV-1a 32-bit hash — deterministic across Rust versions and platforms.
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    const OFFSET: u32 = 2166136261;
+    const PRIME: u32 = 16777619;
+    bytes.iter().fold(OFFSET, |acc, &b| {
+        acc.wrapping_mul(PRIME) ^ (b as u32)
+    })
+}
 
+fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
     let stem = pipeline_path
         .file_stem()
         .unwrap_or_default()
@@ -19,11 +25,9 @@ fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
     // Hash the canonical path for deterministic directory across runs
     let canonical =
         std::fs::canonicalize(pipeline_path).unwrap_or_else(|_| pipeline_path.to_path_buf());
-    let mut hasher = DefaultHasher::new();
-    canonical.hash(&mut hasher);
-    let hash = hasher.finish();
+    let hash = fnv1a32(canonical.to_string_lossy().as_bytes());
 
-    PathBuf::from(format!(".pas/logs/{}-{:08x}", stem, hash as u32))
+    PathBuf::from(format!(".pas/logs/{}-{:08x}", stem, hash))
 }
 
 pub async fn cmd_run(
@@ -195,7 +199,7 @@ pub async fn cmd_run_dir(
             dry_run,
             max_budget_usd,
             max_steps,
-            false, // don't clear per-pipeline checkpoints during batch
+            fresh, // propagate --fresh to clear per-pipeline checkpoints
         )
         .await?;
 
@@ -224,17 +228,12 @@ struct RunManifest {
 }
 
 fn stable_manifest_dir(dir: &std::path::Path) -> PathBuf {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
     let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let mut hasher = DefaultHasher::new();
-    canonical.hash(&mut hasher);
-    let hash = hasher.finish();
+    let hash = fnv1a32(canonical.to_string_lossy().as_bytes());
 
     let stem = dir.file_name().unwrap_or_default().to_string_lossy();
 
-    PathBuf::from(format!(".pas/logs/{}-batch-{:08x}", stem, hash as u32))
+    PathBuf::from(format!(".pas/logs/{}-batch-{:08x}", stem, hash))
 }
 
 fn load_manifest(path: &std::path::Path) -> anyhow::Result<RunManifest> {

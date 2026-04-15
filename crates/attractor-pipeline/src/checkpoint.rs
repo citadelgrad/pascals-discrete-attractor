@@ -27,6 +27,12 @@ pub struct PipelineCheckpoint {
     /// Optional session ID for tracking execution sessions (e.g., for SSE streaming).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Number of steps executed so far (for enforcing max_steps across resume).
+    #[serde(default)]
+    pub step_count: u64,
+    /// Total cost accrued so far in USD (for enforcing max_budget_usd across resume).
+    #[serde(default)]
+    pub total_cost: f64,
 }
 
 impl PipelineCheckpoint {
@@ -44,6 +50,29 @@ impl PipelineCheckpoint {
             context_snapshot,
             timestamp: chrono::Utc::now().to_rfc3339(),
             session_id: None,
+            step_count: 0,
+            total_cost: 0.0,
+        }
+    }
+
+    /// Create a new checkpoint with step count and total cost preserved.
+    pub fn with_counters(
+        current_node_id: String,
+        completed_nodes: Vec<String>,
+        node_outcomes: HashMap<String, attractor_types::Outcome>,
+        context_snapshot: HashMap<String, serde_json::Value>,
+        step_count: u64,
+        total_cost: f64,
+    ) -> Self {
+        Self {
+            current_node_id,
+            completed_nodes,
+            node_outcomes,
+            context_snapshot,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_id: None,
+            step_count,
+            total_cost,
         }
     }
 
@@ -62,6 +91,8 @@ impl PipelineCheckpoint {
             context_snapshot,
             timestamp: chrono::Utc::now().to_rfc3339(),
             session_id: Some(session_id),
+            step_count: 0,
+            total_cost: 0.0,
         }
     }
 }

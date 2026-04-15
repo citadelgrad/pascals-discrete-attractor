@@ -215,12 +215,12 @@ fn convert_message(msg: &Message) -> serde_json::Value {
                 }
             }),
             ContentPart::ToolResult {
-                tool_call_id,
+                tool_name,
                 content,
                 ..
             } => json!({
                 "functionResponse": {
-                    "name": tool_call_id,
+                    "name": tool_name,
                     "response": {
                         "content": content
                     }

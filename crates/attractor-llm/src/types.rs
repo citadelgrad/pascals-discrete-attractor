@@ -49,6 +49,8 @@ pub enum ContentPart {
     },
     ToolResult {
         tool_call_id: String,
+        /// The actual function/tool name, required by some providers (e.g. Gemini `functionResponse.name`).
+        tool_name: String,
         content: String,
         is_error: bool,
     },
@@ -103,12 +105,18 @@ impl Message {
         }
     }
 
-    pub fn tool_result(id: impl Into<String>, content: impl Into<String>, is_error: bool) -> Self {
+    pub fn tool_result(
+        id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
         let id_str = id.into();
         Self {
             role: Role::Tool,
             content: vec![ContentPart::ToolResult {
                 tool_call_id: id_str.clone(),
+                tool_name: tool_name.into(),
                 content: content.into(),
                 is_error,
             }],
@@ -304,16 +312,18 @@ mod tests {
 
     #[test]
     fn message_tool_result_constructor() {
-        let msg = Message::tool_result("call_123", "result text", false);
+        let msg = Message::tool_result("call_123", "my_tool", "result text", false);
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.tool_call_id.as_deref(), Some("call_123"));
         match &msg.content[0] {
             ContentPart::ToolResult {
                 tool_call_id,
+                tool_name,
                 content,
                 is_error,
             } => {
                 assert_eq!(tool_call_id, "call_123");
+                assert_eq!(tool_name, "my_tool");
                 assert_eq!(content, "result text");
                 assert!(!is_error);
             }

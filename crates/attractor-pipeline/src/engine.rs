@@ -12,6 +12,7 @@ use crate::edge_selection::select_edge;
 use crate::goal_gate::enforce_goal_gates;
 use crate::graph::PipelineGraph;
 use crate::handler::{default_registry, HandlerRegistry};
+use crate::retry::{execute_with_retry, BackoffPolicy};
 use crate::validation::validate_or_raise;
 
 // ---------------------------------------------------------------------------
@@ -131,11 +132,16 @@ impl PipelineExecutor {
             .ok_or_else(|| AttractorError::ValidationError("No start node found".into()))?;
         let mut current_node = start;
 
+        // (step_count, total_cost) restored from checkpoint; default 0 on fresh run.
+        let mut checkpoint_counters: (u64, f64) = (0, 0.0);
+
         if let Some(logs) = logs_root {
             if let Some(cp) = load_checkpoint(logs).await? {
                 tracing::info!(
                     node = %cp.current_node_id,
                     completed = cp.completed_nodes.len(),
+                    step_count = cp.step_count,
+                    total_cost = cp.total_cost,
                     "Resuming from checkpoint"
                 );
                 // Restore context
@@ -143,6 +149,8 @@ impl PipelineExecutor {
                 // Restore completed state
                 completed_nodes = cp.completed_nodes;
                 node_outcomes = cp.node_outcomes;
+                // Restore safety counters so limits are enforced correctly on resume
+                checkpoint_counters = (cp.step_count, cp.total_cost);
                 // Jump to the node that was about to execute
                 current_node = graph.node(&cp.current_node_id).ok_or_else(|| {
                     AttractorError::Other(format!(
@@ -164,13 +172,15 @@ impl PipelineExecutor {
             .await
             .and_then(|v| v.as_u64())
             .unwrap_or(200);
-        let mut total_cost: f64 = 0.0;
-        let mut step_count: u64 = 0;
+        // These are populated from checkpoint if resuming, so that limits are
+        // correctly enforced across resume (not reset to zero each restart).
+        let mut total_cost: f64 = checkpoint_counters.1;
+        let mut step_count: u64 = checkpoint_counters.0;
 
         loop {
             // Check safety limits
             step_count += 1;
-            if step_count >= max_steps {
+            if step_count > max_steps {
                 tracing::error!(steps = step_count, max = max_steps, "Step limit exceeded");
                 return Err(AttractorError::Other(format!(
                     "Pipeline exceeded maximum step count ({max_steps}). Use --max-steps to increase."
@@ -206,7 +216,17 @@ impl PipelineExecutor {
                         message: format!("No handler registered for type '{}'", handler_type),
                     }
                 })?;
-                let outcome = handler.execute(current_node, &context, graph).await?;
+                let outcome = if current_node.max_retries > 0 {
+                    execute_with_retry(
+                        || handler.execute(current_node, &context, graph),
+                        current_node.max_retries,
+                        &BackoffPolicy::default(),
+                        &current_node.id,
+                    )
+                    .await?
+                } else {
+                    handler.execute(current_node, &context, graph).await?
+                };
                 completed_nodes.push(current_node.id.clone());
                 node_outcomes.insert(current_node.id.clone(), outcome);
                 break;
@@ -222,7 +242,17 @@ impl PipelineExecutor {
                         node: current_node.id.clone(),
                         message: format!("No handler registered for type '{}'", handler_type),
                     })?;
-            let outcome = handler.execute(current_node, &context, graph).await?;
+            let outcome = if current_node.max_retries > 0 {
+                execute_with_retry(
+                    || handler.execute(current_node, &context, graph),
+                    current_node.max_retries,
+                    &BackoffPolicy::default(),
+                    &current_node.id,
+                )
+                .await?
+            } else {
+                handler.execute(current_node, &context, graph).await?
+            };
 
             // Record
             completed_nodes.push(current_node.id.clone());
@@ -253,11 +283,16 @@ impl PipelineExecutor {
                     serde_json::Value::String(status_to_string(outcome.status)),
                 )
                 .await;
-            if let Some(ref label) = outcome.preferred_label {
-                context
-                    .set("preferred_label", serde_json::Value::String(label.clone()))
-                    .await;
-            }
+            // Always overwrite preferred_label to prevent stale values from
+            // a previous node persisting into the next node's context.
+            context
+                .set(
+                    "preferred_label",
+                    serde_json::Value::String(
+                        outcome.preferred_label.clone().unwrap_or_default(),
+                    ),
+                )
+                .await;
 
             // Select next edge — resolve condition keys from outcome and context
             let ctx_snapshot = context.snapshot().await;
@@ -280,37 +315,74 @@ impl PipelineExecutor {
 
             match next_edge {
                 Some(edge) => {
-                    // Handle loop_restart
+                    // Handle loop_restart: snapshot outcomes BEFORE clearing so
+                    // that if the next node is an exit node, goal gate evaluation
+                    // sees the completed loop's outcomes rather than an empty map.
                     if edge.loop_restart {
+                        let pre_restart_outcomes = node_outcomes.clone();
                         completed_nodes.clear();
                         node_outcomes.clear();
+                        // If the target is an exit node we need the pre-restart
+                        // outcomes available for enforce_goal_gates. Re-insert
+                        // them temporarily under a side-channel key isn't clean,
+                        // so we stash them back and let the exit node check use
+                        // them — the exit check runs before any new execution.
+                        // We achieve this by not clearing if the target is Msquare.
+                        let next_node_shape = graph
+                            .node(&edge.to)
+                            .map(|n| n.shape.as_str())
+                            .unwrap_or("");
+                        if next_node_shape == "Msquare" {
+                            // Restore outcomes so the goal gate check at the top
+                            // of the next loop iteration sees the loop's work.
+                            node_outcomes = pre_restart_outcomes;
+                        }
                     }
                     let next_id = edge.to.clone();
                     current_node = graph.node(&next_id).ok_or_else(|| {
                         AttractorError::Other(format!("Edge target '{}' not found", next_id))
                     })?;
 
-                    // Save checkpoint: the *next* node to execute
+                    // Save checkpoint: the *next* node to execute, including
+                    // counters so that resume correctly enforces limits.
                     if let Some(logs) = logs_root {
-                        let cp = PipelineCheckpoint::new(
+                        let cp = PipelineCheckpoint::with_counters(
                             current_node.id.clone(),
                             completed_nodes.clone(),
                             node_outcomes.clone(),
                             context.snapshot().await,
+                            step_count,
+                            total_cost,
                         );
                         save_checkpoint(&cp, logs).await?;
                     }
                 }
                 None => {
                     // No outgoing edge and not an exit node
-                    if outcome.status == StageStatus::Fail {
-                        return Err(AttractorError::HandlerError {
-                            handler: handler_type,
-                            node: current_node.id.clone(),
-                            message: "Handler failed with no outgoing edge".into(),
-                        });
+                    match outcome.status {
+                        StageStatus::Fail => {
+                            return Err(AttractorError::HandlerError {
+                                handler: handler_type,
+                                node: current_node.id.clone(),
+                                message: "Handler failed with no outgoing edge".into(),
+                            });
+                        }
+                        StageStatus::Retry => {
+                            return Err(AttractorError::HandlerError {
+                                handler: handler_type,
+                                node: current_node.id.clone(),
+                                message: "Handler requested retry but there is no outgoing edge to retry from".into(),
+                            });
+                        }
+                        StageStatus::Skipped => {
+                            tracing::warn!(
+                                node = %current_node.id,
+                                "Node completed with Skipped status but has no outgoing edge — treating as terminal"
+                            );
+                            break;
+                        }
+                        _ => break,
                     }
-                    break;
                 }
             }
         }

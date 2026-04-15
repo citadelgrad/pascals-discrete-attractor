@@ -5,8 +5,19 @@ use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::NodeHandler;
 
 /// Handler for "parallel" type nodes (shape="component").
-/// Represents a fan-out point where multiple branches can execute.
-/// In the current implementation, branches are identified by outgoing edges.
+///
+/// Represents a fan-out point where multiple branches could execute. This
+/// handler populates `suggested_next_ids` with all outgoing branch targets so
+/// the engine has visibility into the intended fan-out.
+///
+/// **Known limitation:** The engine's `select_edge` function follows exactly
+/// one edge per step (sequential execution). When this handler returns multiple
+/// `suggested_next_ids`, the engine will execute only the *first* matching
+/// branch and skip the rest. True parallel fork/join semantics are **not yet
+/// implemented** and would require significant engine changes (work-stealing
+/// queue, join barriers, shared-context merging). Until that work is done,
+/// pipelines using `shape="component"` nodes will silently execute only one
+/// branch. A `tracing::warn!` is emitted at runtime to make this visible.
 pub struct ParallelHandler;
 
 #[async_trait]
@@ -32,9 +43,21 @@ impl NodeHandler for ParallelHandler {
             "Parallel fan-out"
         );
 
+        if branch_count > 1 {
+            tracing::warn!(
+                node = %node.id,
+                branches = branch_count,
+                targets = ?branch_targets,
+                "ParallelHandler suggested {} branches but engine executes sequentially. \
+                 True parallel execution is not yet implemented.",
+                branch_count
+            );
+        }
+
         // The parallel handler itself just passes through.
         // The execution engine is responsible for actually forking execution.
-        // For now, suggest the first branch and let the engine handle routing.
+        // For now, suggest all branch targets; select_edge will follow only the
+        // first matching one (sequential, not parallel — see struct-level doc).
         Ok(Outcome {
             status: StageStatus::Success,
             preferred_label: None,

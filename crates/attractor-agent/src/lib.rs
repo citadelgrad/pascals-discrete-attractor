@@ -39,6 +39,8 @@ pub struct SessionConfig {
     pub enable_loop_detection: bool,
     /// Window size for loop detection (consecutive identical calls).
     pub loop_detection_window: usize,
+    /// Fidelity mode for managing conversation context.
+    pub fidelity_mode: FidelityMode,
 }
 
 impl Default for SessionConfig {
@@ -51,6 +53,7 @@ impl Default for SessionConfig {
             default_command_timeout_ms: 10_000,
             enable_loop_detection: true,
             loop_detection_window: 10,
+            fidelity_mode: FidelityMode::default(),
         }
     }
 }
@@ -123,6 +126,8 @@ pub struct AgentSession {
     followup_queue: VecDeque<String>,
     /// Running count of user turns (for max_turns enforcement).
     user_turn_count: usize,
+    /// Loop detector, active when `enable_loop_detection` is true.
+    loop_detector: Option<LoopDetector>,
 }
 
 impl AgentSession {
@@ -135,6 +140,11 @@ impl AgentSession {
     ) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         tracing::info!(session_id = %id, model = %config.model, "Agent session created");
+        let loop_detector = if config.enable_loop_detection {
+            Some(LoopDetector::new(config.loop_detection_window))
+        } else {
+            None
+        };
         Self {
             id,
             llm_client,
@@ -146,6 +156,7 @@ impl AgentSession {
             steering_queue: Vec::new(),
             followup_queue: VecDeque::new(),
             user_turn_count: 0,
+            loop_detector,
         }
     }
 
@@ -277,6 +288,33 @@ impl AgentSession {
             // Execute each tool call
             let results = self.execute_tool_calls(&response.tool_calls).await;
 
+            // Check for tool-call loops before appending results
+            if let Some(ref mut detector) = self.loop_detector {
+                // Check each tool call; if any triggers a loop, inject steering and break
+                let mut loop_detected = false;
+                let mut loop_tool_name = String::new();
+                for tc in &response.tool_calls {
+                    if detector.record_and_check(&tc.name, &tc.arguments) {
+                        loop_detected = true;
+                        loop_tool_name = tc.name.clone();
+                        break;
+                    }
+                }
+                if loop_detected {
+                    let window = self.config.loop_detection_window;
+                    let msg = SteeringInjector::loop_detected_message(&loop_tool_name, window);
+                    tracing::warn!(
+                        tool = %loop_tool_name,
+                        window,
+                        "Loop detected — injecting steering and breaking tool loop"
+                    );
+                    detector.reset();
+                    self.history.push(Turn::ToolResults { results });
+                    self.history.push(Turn::Steering { content: msg });
+                    break;
+                }
+            }
+
             // Append tool results turn
             self.history.push(Turn::ToolResults { results });
 
@@ -331,6 +369,7 @@ impl AgentSession {
                     for result in results {
                         messages.push(Message::tool_result(
                             &result.tool_call_id,
+                            &result.tool_name,
                             &result.content,
                             result.is_error,
                         ));
@@ -344,6 +383,9 @@ impl AgentSession {
                 }
             }
         }
+
+        // Apply fidelity mode to trim/compact the message list before sending
+        let messages = apply_fidelity(&messages, &self.config.fidelity_mode);
 
         // Convert tool definitions from tools crate to LLM crate format
         let tools: Vec<attractor_llm::ToolDefinition> = self

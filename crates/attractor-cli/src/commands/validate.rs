@@ -23,7 +23,7 @@ pub fn cmd_validate(path: &std::path::Path) -> anyhow::Result<()> {
     }
 
     if has_error {
-        std::process::exit(1);
+        anyhow::bail!("Validation failed");
     }
     Ok(())
 }

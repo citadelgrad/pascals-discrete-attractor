@@ -49,7 +49,11 @@ pub fn apply_fidelity<T: Clone>(messages: &[T], mode: &FidelityMode) -> Vec<T> {
             }
         }
         FidelityMode::Compact | FidelityMode::Summary => {
-            // These would need LLM calls; for now just keep all
+            // These would need LLM calls to summarize; not yet implemented.
+            tracing::warn!(
+                "FidelityMode::{:?} is not yet implemented, using Full mode",
+                mode
+            );
             messages.to_vec()
         }
     }

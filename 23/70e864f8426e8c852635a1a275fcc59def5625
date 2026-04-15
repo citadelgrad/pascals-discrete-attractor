@@ -1,0 +1,74 @@
+crates/attractor-types/src/lib.rs
+  62c5c642668bea0d 119-121
+crates/attractor-pipeline/src/interviewer.rs
+  777dc75470753b6b 59-65
+crates/attractor-cli/src/commands/decompose.rs
+  777dc75470753b6b 314-316
+crates/attractor-pipeline/src/edge_selection.rs
+  62c5c642668bea0d 68-73
+crates/attractor-llm/src/gemini.rs
+  62c5c642668bea0d 130
+crates/attractor-agent/src/fidelity.rs
+  62c5c642668bea0d 41-43,50-51,53-58,138,140,142
+crates/attractor-tools/src/truncation.rs
+  777dc75470753b6b 40-41,50,60
+crates/attractor-cli/src/commands/generate.rs
+  777dc75470753b6b 143-146,176-177,184-185,214-215
+crates/attractor-agent/src/lib.rs
+  777dc75470753b6b 211-217,285-289,295
+  62c5c642668bea0d 442,881
+crates/attractor-llm/src/anthropic.rs
+  62c5c642668bea0d 286-289
+crates/attractor-dot/src/parser.rs
+  62c5c642668bea0d 46-49,548-553,555
+  777dc75470753b6b 154,156-165,436-448,505
+crates/attractor-pipeline/src/handlers/codergen_handler.rs
+  62c5c642668bea0d 548-549,552
+  777dc75470753b6b 662-666,668-679
+crates/attractor-llm/src/types.rs
+  62c5c642668bea0d 189,390
+crates/attractor-pipeline/src/checkpoint.rs
+  777dc75470753b6b 79,86-87,96-97,231-232
+crates/attractor-cli/src/commands/run.rs
+  777dc75470753b6b 15
+crates/attractor-web/public/js/xterm-setup.js
+  62c5c642668bea0d 140-141
+crates/attractor-pipeline/src/handlers/tool_handler.rs
+  777dc75470753b6b 95-97,100-101,105-106,108,110-118
+  62c5c642668bea0d 107,109
+crates/attractor-pipeline/src/validation.rs
+  777dc75470753b6b 386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "2370e864f8426e8c852635a1a275fcc59def5625",
+  "prompts": {
+    "62c5c642668bea0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0fc3b67b-3cda-4216-b6fc-69e75e085e5c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 20,
+      "accepted_lines": 50,
+      "overriden_lines": 0
+    },
+    "777dc75470753b6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7a70a210-39f4-4cd6-826c-458f7104484f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 114,
+      "total_deletions": 60,
+      "accepted_lines": 106,
+      "overriden_lines": 0
+    }
+  }
+}

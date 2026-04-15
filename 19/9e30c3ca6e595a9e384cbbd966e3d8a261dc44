@@ -1,0 +1,59 @@
+crates/attractor-llm/src/gemini.rs
+  88d67c14e1c3f4bc 218,223
+crates/attractor-types/src/lib.rs
+  88d67c14e1c3f4bc 103
+crates/attractor-pipeline/src/handlers/parallel.rs
+  5b7268d55a7972e9 8-20,46-56,59-60
+crates/attractor-cli/src/commands/validate.rs
+  5b7268d55a7972e9 26
+crates/attractor-llm/src/types.rs
+  5b7268d55a7972e9 52-53,108-113,119,315,321,326
+crates/attractor-llm/src/anthropic.rs
+  5b7268d55a7972e9 172-173
+  88d67c14e1c3f4bc 174-202,204-210,212-230,232-233,235-236,683
+crates/attractor-agent/src/fidelity.rs
+  5b7268d55a7972e9 52-56
+crates/attractor-agent/src/lib.rs
+  88d67c14e1c3f4bc 372
+  5b7268d55a7972e9 42-43,56,129-130,143-147,159,291-317,387-389
+crates/attractor-pipeline/src/engine.rs
+  5b7268d55a7972e9 15,135-137,143-144,152-153,175-178,219-229,245-255,286-295,318-320,322,325-339,346-347,349,354-355,362-384
+  88d67c14e1c3f4bc 183
+crates/attractor-pipeline/src/checkpoint.rs
+  5b7268d55a7972e9 30-35,53-75,94-95
+crates/attractor-cli/src/commands/run.rs
+  5b7268d55a7972e9 10-17,19,28,30,202,232,236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "199e30c3ca6e595a9e384cbbd966e3d8a261dc44",
+  "prompts": {
+    "5b7268d55a7972e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "76a88e54-f498-49e3-8ff2-7d728deedd7e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 236,
+      "total_deletions": 52,
+      "accepted_lines": 223,
+      "overriden_lines": 0
+    },
+    "88d67c14e1c3f4bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "952c6f76-d4bd-4540-84fe-268c53e7673f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 67,
+      "total_deletions": 64,
+      "accepted_lines": 67,
+      "overriden_lines": 0
+    }
+  }
+}

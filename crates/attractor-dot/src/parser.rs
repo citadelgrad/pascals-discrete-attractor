@@ -1,13 +1,15 @@
 use std::collections::HashMap;
-use std::time::Duration;
 
-use winnow::ascii::{digit1, multispace0};
-use winnow::combinator::{alt, opt, preceded, repeat};
+use winnow::combinator::{alt, opt};
 use winnow::error::{ContextError, ErrMode, StrContext, StrContextValue};
-use winnow::token::{literal, take_while};
+use winnow::token::literal;
 use winnow::{ModalResult, Parser};
 
 use crate::ast::*;
+
+#[path = "parser_primitives.rs"]
+mod primitives;
+use primitives::*;
 
 fn make_cut_error(desc: &'static str) -> ErrMode<ContextError<StrContext>> {
     let mut e = ContextError::new();
@@ -16,169 +18,56 @@ fn make_cut_error(desc: &'static str) -> ErrMode<ContextError<StrContext>> {
 }
 
 /// Strip `//` line comments and `/* */` block comments from the input.
-///
-/// Operates on char indices to correctly handle multi-byte UTF-8 sequences.
 pub(crate) fn strip_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    let chars: Vec<char> = input.chars().collect();
-    let len = chars.len();
+    let bytes = input.as_bytes();
+    let len = bytes.len();
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' {
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
             // line comment — skip until newline
             i += 2;
-            while i < len && chars[i] != '\n' {
+            while i < len && bytes[i] != b'\n' {
                 i += 1;
             }
-        } else if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+        } else if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
             // block comment — skip until */
             i += 2;
-            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
                 // preserve newlines so line numbers stay correct
-                if chars[i] == '\n' {
+                if bytes[i] == b'\n' {
                     out.push('\n');
                 }
                 i += 1;
             }
             if i + 1 < len {
                 i += 2; // skip */
-            } else {
-                // Unclosed block comment at EOF — skip remaining char so it
-                // doesn't leak into the output as a normal character.
-                i = len;
             }
-        } else if chars[i] == '"' {
+        } else if bytes[i] == b'"' {
             // inside a string literal — copy verbatim, handling escapes
             out.push('"');
             i += 1;
             while i < len {
-                if chars[i] == '\\' && i + 1 < len {
-                    out.push(chars[i]);
-                    out.push(chars[i + 1]);
+                if bytes[i] == b'\\' && i + 1 < len {
+                    out.push(bytes[i] as char);
+                    out.push(bytes[i + 1] as char);
                     i += 2;
-                } else if chars[i] == '"' {
+                } else if bytes[i] == b'"' {
                     out.push('"');
                     i += 1;
                     break;
                 } else {
-                    out.push(chars[i]);
+                    out.push(bytes[i] as char);
                     i += 1;
                 }
             }
         } else {
-            out.push(chars[i]);
+            out.push(bytes[i] as char);
             i += 1;
         }
     }
     out
-}
-
-/// Whitespace consumer (including newlines).
-fn ws<'i>(input: &mut &'i str) -> ModalResult<&'i str> {
-    multispace0.parse_next(input)
-}
-
-/// Parse an identifier: [A-Za-z_][A-Za-z0-9_]*
-fn identifier<'i>(input: &mut &'i str) -> ModalResult<&'i str> {
-    (
-        take_while(1, |c: char| c.is_ascii_alphabetic() || c == '_'),
-        take_while(0.., |c: char| c.is_ascii_alphanumeric() || c == '_'),
-    )
-        .take()
-        .parse_next(input)
-}
-
-/// Parse a qualified id: identifier ( '.' identifier )+  or plain identifier.
-/// Returns the full dotted string.
-fn qualified_or_plain_id(input: &mut &str) -> ModalResult<String> {
-    let first = identifier.parse_next(input)?;
-    let rest: Vec<&str> = repeat(0.., preceded('.', identifier)).parse_next(input)?;
-    if rest.is_empty() {
-        Ok(first.to_string())
-    } else {
-        let mut s = first.to_string();
-        for part in rest {
-            s.push('.');
-            s.push_str(part);
-        }
-        Ok(s)
-    }
-}
-
-/// Parse a double-quoted string with escape support.
-fn quoted_string(input: &mut &str) -> ModalResult<String> {
-    let _ = '"'.parse_next(input)?;
-    let mut s = String::new();
-    loop {
-        let c = winnow::token::any.parse_next(input)?;
-        match c {
-            '"' => break,
-            '\\' => {
-                let esc = winnow::token::any.parse_next(input)?;
-                match esc {
-                    'n' => s.push('\n'),
-                    't' => s.push('\t'),
-                    '\\' => s.push('\\'),
-                    '"' => s.push('"'),
-                    other => {
-                        s.push('\\');
-                        s.push(other);
-                    }
-                }
-            }
-            other => s.push(other),
-        }
-    }
-    Ok(s)
-}
-
-/// Parse a duration value: integer + suffix (ms, s, m, h, d).
-fn duration_value(input: &mut &str) -> ModalResult<Duration> {
-    let digits: &str = digit1.parse_next(input)?;
-    let val: u64 = digits
-        .parse()
-        .map_err(|_| ErrMode::Backtrack(ContextError::new()))?;
-    let suffix = alt(("ms", "s", "m", "h", "d")).parse_next(input)?;
-    let dur = match suffix {
-        "ms" => Duration::from_millis(val),
-        "s" => Duration::from_secs(val),
-        "m" => Duration::from_secs(val * 60),
-        "h" => Duration::from_secs(val * 3600),
-        "d" => Duration::from_secs(val * 86400),
-        _ => unreachable!(),
-    };
-    Ok(dur)
-}
-
-/// Parse a boolean value, ensuring it is not a prefix of a longer identifier.
-fn boolean_value(input: &mut &str) -> ModalResult<bool> {
-    let val = alt((literal("true").value(true), literal("false").value(false))).parse_next(input)?;
-    // Reject if followed by an alphanumeric char (e.g. "truefoo" is not a boolean)
-    if input
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return Err(ErrMode::Backtrack(ContextError::new()));
-    }
-    Ok(val)
-}
-
-/// Parse a float: optional sign, digits, '.', digits.
-fn float_value(input: &mut &str) -> ModalResult<f64> {
-    let s: &str = (opt(alt(('-', '+'))), digit1, '.', digit1)
-        .take()
-        .parse_next(input)?;
-    s.parse()
-        .map_err(|_| ErrMode::Backtrack(ContextError::new()))
-}
-
-/// Parse an integer: optional sign + digits.
-fn integer_value(input: &mut &str) -> ModalResult<i64> {
-    let s: &str = (opt(alt(('-', '+'))), digit1).take().parse_next(input)?;
-    s.parse()
-        .map_err(|_| ErrMode::Backtrack(ContextError::new()))
 }
 
 /// Parse an attribute value.
@@ -333,9 +222,7 @@ fn node_or_edge_stmt(input: &mut &str) -> ModalResult<Statement> {
 
     // Check for '--' to give a better error
     if opt(literal("--")).parse_next(input)?.is_some() {
-        return Err(make_cut_error(
-            "only directed edges (->); undirected edges (--) are not supported",
-        ));
+        return Err(make_cut_error("only directed edges (->); undirected edges (--) are not supported"));
     }
 
     // Check if there's an attr block => node with attrs
@@ -392,12 +279,12 @@ fn statements(input: &mut &str) -> ModalResult<Vec<Statement>> {
 }
 
 type MergeResult = (
-    HashMap<String, AttributeValue>, // graph attrs
-    HashMap<String, NodeDef>,        // nodes
-    Vec<EdgeDef>,                    // edges
-    Vec<SubgraphDef>,                // subgraphs
-    HashMap<String, AttributeValue>, // node defaults
-    HashMap<String, AttributeValue>, // edge defaults
+    HashMap<String, AttributeValue>,   // graph attrs
+    HashMap<String, NodeDef>,          // nodes
+    Vec<EdgeDef>,                      // edges
+    Vec<SubgraphDef>,                  // subgraphs
+    HashMap<String, AttributeValue>,   // node defaults
+    HashMap<String, AttributeValue>,   // edge defaults
 );
 
 /// Merge statements into a DotGraph-like structure.
@@ -433,19 +320,6 @@ fn merge_statements(
                 nodes.insert(id.clone(), NodeDef { id, attrs });
             }
             Statement::Edge(chain, attrs) => {
-                // Ensure all nodes referenced in edges exist (once, not per pair)
-                for node_id in &chain {
-                    nodes.entry(node_id.clone()).or_insert_with(|| {
-                        let mut na = HashMap::new();
-                        for (k, v) in &node_defaults {
-                            na.insert(k.clone(), v.clone());
-                        }
-                        NodeDef {
-                            id: node_id.clone(),
-                            attrs: na,
-                        }
-                    });
-                }
                 // Expand chained edges: A -> B -> C => (A,B), (B,C)
                 for pair in chain.windows(2) {
                     let mut merged = edge_defaults.clone();
@@ -455,6 +329,19 @@ fn merge_statements(
                         to: pair[1].clone(),
                         attrs: merged,
                     });
+                    // Ensure nodes referenced in edges exist
+                    for node_id in &chain {
+                        nodes.entry(node_id.clone()).or_insert_with(|| {
+                            let mut na = HashMap::new();
+                            for (k, v) in &node_defaults {
+                                na.insert(k.clone(), v.clone());
+                            }
+                            NodeDef {
+                                id: node_id.clone(),
+                                attrs: na,
+                            }
+                        });
+                    }
                 }
             }
             Statement::Subgraph(name, inner_stmts) => {
@@ -480,14 +367,7 @@ fn merge_statements(
         }
     }
 
-    (
-        graph_attrs,
-        nodes,
-        edges,
-        subgraphs,
-        node_defaults,
-        edge_defaults,
-    )
+    (graph_attrs, nodes, edges, subgraphs, node_defaults, edge_defaults)
 }
 
 /// Top-level parser: 'digraph' identifier '{' statements '}'.
@@ -496,18 +376,15 @@ fn parse_digraph(input: &mut &str) -> ModalResult<DotGraph> {
 
     // Reject 'strict'
     if input.starts_with("strict") {
-        return Err(make_cut_error(
-            "'digraph' keyword (strict graphs are not supported)",
-        ));
+        return Err(make_cut_error("'digraph' keyword (strict graphs are not supported)"));
     }
 
     // Reject undirected 'graph'
-    if let Some(after) = input.strip_prefix("graph") {
+    if input.starts_with("graph") && !input.starts_with("graph [") {
+        let after = &input[5..];
         let trimmed = after.trim_start();
         if trimmed.starts_with('{') || trimmed.starts_with(|c: char| c.is_ascii_alphabetic()) {
-            return Err(make_cut_error(
-                "'digraph' keyword (undirected graphs are not supported)",
-            ));
+            return Err(make_cut_error("'digraph' keyword (undirected graphs are not supported)"));
         }
     }
 
@@ -545,14 +422,12 @@ fn parse_digraph(input: &mut &str) -> ModalResult<DotGraph> {
     })
 }
 
-/// Compute (line, col) from byte offset in the stripped (comment-free) text.
-///
-/// Since `strip_comments` preserves newlines, the line count matches the
-/// original source. Column may differ if comments precede the error on the
-/// same line, but this is acceptable for diagnostic purposes.
-fn offset_to_line_col(stripped: &str, remaining_len: usize, stripped_len: usize) -> (usize, usize) {
+/// Compute (line, col) from byte offset in the original (pre-stripped) text.
+fn offset_to_line_col(original: &str, remaining_len: usize, stripped_len: usize) -> (usize, usize) {
     let consumed = stripped_len - remaining_len;
-    let prefix = &stripped[..consumed.min(stripped.len())];
+    // We map back into the original. Since strip_comments preserves newlines,
+    // the line count stays the same. We just count from the stripped text.
+    let prefix = &original[..consumed.min(original.len())];
     let line = prefix.matches('\n').count() + 1;
     let col = match prefix.rfind('\n') {
         Some(pos) => consumed - pos,

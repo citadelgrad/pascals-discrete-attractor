@@ -16,7 +16,9 @@ pub use subagent::{SubagentConfig, SubagentManager, SubagentStatus};
 
 use std::collections::VecDeque;
 
-use attractor_llm::{ContentPart, Message, Request, ToolCallResult};
+use attractor_llm::{
+    ContentPart, Message, Request, ToolCallResult,
+};
 use attractor_tools::{ExecutionEnvironment, ToolRegistry};
 use attractor_types::AttractorError;
 
@@ -39,8 +41,6 @@ pub struct SessionConfig {
     pub enable_loop_detection: bool,
     /// Window size for loop detection (consecutive identical calls).
     pub loop_detection_window: usize,
-    /// Fidelity mode for managing conversation context.
-    pub fidelity_mode: FidelityMode,
 }
 
 impl Default for SessionConfig {
@@ -53,7 +53,6 @@ impl Default for SessionConfig {
             default_command_timeout_ms: 10_000,
             enable_loop_detection: true,
             loop_detection_window: 10,
-            fidelity_mode: FidelityMode::default(),
         }
     }
 }
@@ -126,8 +125,6 @@ pub struct AgentSession {
     followup_queue: VecDeque<String>,
     /// Running count of user turns (for max_turns enforcement).
     user_turn_count: usize,
-    /// Loop detector, active when `enable_loop_detection` is true.
-    loop_detector: Option<LoopDetector>,
 }
 
 impl AgentSession {
@@ -140,11 +137,6 @@ impl AgentSession {
     ) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         tracing::info!(session_id = %id, model = %config.model, "Agent session created");
-        let loop_detector = if config.enable_loop_detection {
-            Some(LoopDetector::new(config.loop_detection_window))
-        } else {
-            None
-        };
         Self {
             id,
             llm_client,
@@ -156,7 +148,6 @@ impl AgentSession {
             steering_queue: Vec::new(),
             followup_queue: VecDeque::new(),
             user_turn_count: 0,
-            loop_detector,
         }
     }
 
@@ -177,15 +168,13 @@ impl AgentSession {
 
     /// Push a steering message to be injected at the next tool round boundary.
     pub fn steer(&mut self, message: String) {
-        let preview: String = message.chars().take(80).collect();
-        tracing::debug!("Steering message queued: {}", preview);
+        tracing::debug!("Steering message queued: {}", &message[..message.len().min(80)]);
         self.steering_queue.push(message);
     }
 
     /// Push a follow-up input to be processed after the current input completes.
     pub fn follow_up(&mut self, message: String) {
-        let preview: String = message.chars().take(80).collect();
-        tracing::debug!("Follow-up queued: {}", preview);
+        tracing::debug!("Follow-up queued: {}", &message[..message.len().min(80)]);
         self.followup_queue.push_back(message);
     }
 
@@ -208,13 +197,7 @@ impl AgentSession {
         let mut current_input = user_input.to_string();
 
         loop {
-            let result = match self.process_single_input(&current_input).await {
-                Ok(r) => r,
-                Err(e) => {
-                    self.state = SessionState::Idle;
-                    return Err(e);
-                }
-            };
+            let result = self.process_single_input(&current_input).await?;
 
             // Check for follow-up messages
             if let Some(followup) = self.followup_queue.pop_front() {
@@ -282,46 +265,17 @@ impl AgentSession {
                 break;
             }
 
-            // Execute each tool call
-            let results = self.execute_tool_calls(&response.tool_calls).await;
-
-            // Check if this is the last allowed round (after executing tools
-            // so results are not silently dropped from history)
+            // Check if this is the last allowed round
             if round + 1 >= self.config.max_tool_rounds {
                 tracing::info!(
                     max_rounds = self.config.max_tool_rounds,
                     "Max tool rounds reached, stopping loop"
                 );
-                self.history.push(Turn::ToolResults { results });
                 break;
             }
 
-            // Check for tool-call loops before appending results
-            if let Some(ref mut detector) = self.loop_detector {
-                // Check each tool call; if any triggers a loop, inject steering and break
-                let mut loop_detected = false;
-                let mut loop_tool_name = String::new();
-                for tc in &response.tool_calls {
-                    if detector.record_and_check(&tc.name, &tc.arguments) {
-                        loop_detected = true;
-                        loop_tool_name = tc.name.clone();
-                        break;
-                    }
-                }
-                if loop_detected {
-                    let window = self.config.loop_detection_window;
-                    let msg = SteeringInjector::loop_detected_message(&loop_tool_name, window);
-                    tracing::warn!(
-                        tool = %loop_tool_name,
-                        window,
-                        "Loop detected — injecting steering and breaking tool loop"
-                    );
-                    detector.reset();
-                    self.history.push(Turn::ToolResults { results });
-                    self.history.push(Turn::Steering { content: msg });
-                    break;
-                }
-            }
+            // Execute each tool call
+            let results = self.execute_tool_calls(&response.tool_calls).await;
 
             // Append tool results turn
             self.history.push(Turn::ToolResults { results });
@@ -377,7 +331,6 @@ impl AgentSession {
                     for result in results {
                         messages.push(Message::tool_result(
                             &result.tool_call_id,
-                            &result.tool_name,
                             &result.content,
                             result.is_error,
                         ));
@@ -391,9 +344,6 @@ impl AgentSession {
                 }
             }
         }
-
-        // Apply fidelity mode to trim/compact the message list before sending
-        let messages = apply_fidelity(&messages, &self.config.fidelity_mode);
 
         // Convert tool definitions from tools crate to LLM crate format
         let tools: Vec<attractor_llm::ToolDefinition> = self
@@ -429,30 +379,27 @@ impl AgentSession {
             tracing::debug!(tool = %tc.name, id = %tc.id, "Executing tool call");
 
             let (content, is_error) = match self.tool_registry.get(&tc.name) {
-                Some(tool) => match tool.execute(tc.arguments.clone(), self.env.as_ref()).await {
-                    Ok(output) => {
-                        let truncated = if output.len() > MAX_TOOL_OUTPUT_LEN {
-                            // Find a char-boundary-safe split point
-                            let mut split = MAX_TOOL_OUTPUT_LEN;
-                            while split > 0 && !output.is_char_boundary(split) {
-                                split -= 1;
-                            }
-                            let mut t = output[..split].to_string();
-                            t.push_str(&format!(
-                                "\n\n[WARNING: Output truncated. {} bytes removed.]",
-                                output.len() - split
-                            ));
-                            t
-                        } else {
-                            output
-                        };
-                        (truncated, false)
+                Some(tool) => {
+                    match tool.execute(tc.arguments.clone(), self.env.as_ref()).await {
+                        Ok(output) => {
+                            let truncated = if output.len() > MAX_TOOL_OUTPUT_LEN {
+                                let mut t = output[..MAX_TOOL_OUTPUT_LEN].to_string();
+                                t.push_str(&format!(
+                                    "\n\n[WARNING: Output truncated. {} characters removed.]",
+                                    output.len() - MAX_TOOL_OUTPUT_LEN
+                                ));
+                                t
+                            } else {
+                                output
+                            };
+                            (truncated, false)
+                        }
+                        Err(e) => {
+                            tracing::debug!(tool = %tc.name, error = %e, "Tool execution failed");
+                            (format!("Error: {}", e), true)
+                        }
                     }
-                    Err(e) => {
-                        tracing::debug!(tool = %tc.name, error = %e, "Tool execution failed");
-                        (format!("Error: {}", e), true)
-                    }
-                },
+                }
                 None => {
                     let msg = format!("Unknown tool: {}", tc.name);
                     tracing::debug!("{}", msg);
@@ -477,407 +424,5 @@ impl AgentSession {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_utils::{make_client, EchoTool, MockEnv, SequenceMockProvider};
-    use async_trait::async_trait;
-    use attractor_llm::{FinishReason, Response, Usage};
-    use attractor_tools::{Tool, ToolDefinition as ToolsToolDef};
-
-    // -----------------------------------------------------------------------
-    // Test 1: Session creation with config
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn session_creation_with_config() {
-        let client = make_client(SequenceMockProvider::single_text("hello"));
-        let registry = ToolRegistry::new();
-        let env = Box::new(MockEnv);
-        let config = SessionConfig {
-            model: "test-model".to_string(),
-            system_prompt: "You are helpful.".to_string(),
-            max_turns: 10,
-            max_tool_rounds: 50,
-            ..Default::default()
-        };
-
-        let session = AgentSession::new(client, registry, env, config);
-
-        assert!(!session.id().is_empty());
-        assert_eq!(*session.state(), SessionState::Idle);
-        assert!(session.history().is_empty());
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 2: Process input with no tools -> returns LLM text
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn process_input_no_tools_returns_text() {
-        let provider = SequenceMockProvider::single_text("Hello, world!");
-        let client = make_client(provider);
-        let registry = ToolRegistry::new();
-        let env = Box::new(MockEnv);
-        let config = SessionConfig::default();
-
-        let mut session = AgentSession::new(client, registry, env, config);
-        let result = session.process_input("Hi there").await.unwrap();
-
-        assert_eq!(result, "Hello, world!");
-        assert_eq!(session.history().len(), 2); // User + Assistant
-        assert!(matches!(&session.history()[0], Turn::User { content } if content == "Hi there"));
-        assert!(
-            matches!(&session.history()[1], Turn::Assistant { content, tool_calls } if content == "Hello, world!" && tool_calls.is_empty())
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 3: Process input with tool call -> executes tool and returns
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn process_input_with_tool_call() {
-        // First response: tool call. Second response: final text.
-        let responses = vec![
-            Response {
-                id: "resp-1".into(),
-                text: String::new(),
-                tool_calls: vec![ToolCallResult {
-                    id: "tc-1".into(),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"text": "ping"}),
-                }],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::ToolUse,
-            },
-            Response {
-                id: "resp-2".into(),
-                text: "The echo returned: ping".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-        ];
-
-        let client = make_client(SequenceMockProvider::new(responses));
-        let mut registry = ToolRegistry::new();
-        registry.register(EchoTool);
-        let env = Box::new(MockEnv);
-        let config = SessionConfig::default();
-
-        let mut session = AgentSession::new(client, registry, env, config);
-        let result = session.process_input("Echo ping for me").await.unwrap();
-
-        assert_eq!(result, "The echo returned: ping");
-
-        // History: User, Assistant(tool_call), ToolResults, Assistant(final)
-        assert_eq!(session.history().len(), 4);
-        assert!(matches!(&session.history()[0], Turn::User { .. }));
-        assert!(matches!(
-            &session.history()[1],
-            Turn::Assistant { tool_calls, .. } if tool_calls.len() == 1
-        ));
-        assert!(
-            matches!(&session.history()[2], Turn::ToolResults { results } if results.len() == 1 && !results[0].is_error && results[0].content == "ping")
-        );
-        assert!(
-            matches!(&session.history()[3], Turn::Assistant { content, .. } if content == "The echo returned: ping")
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 4: Steering queue drained between rounds
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn steering_queue_drained_between_rounds() {
-        // Response sequence: tool call -> final text
-        let responses = vec![
-            Response {
-                id: "resp-1".into(),
-                text: String::new(),
-                tool_calls: vec![ToolCallResult {
-                    id: "tc-1".into(),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"text": "hello"}),
-                }],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::ToolUse,
-            },
-            Response {
-                id: "resp-2".into(),
-                text: "Done".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-        ];
-
-        let client = make_client(SequenceMockProvider::new(responses));
-        let mut registry = ToolRegistry::new();
-        registry.register(EchoTool);
-        let env = Box::new(MockEnv);
-        let config = SessionConfig::default();
-
-        let mut session = AgentSession::new(client, registry, env, config);
-
-        // Queue steering before processing
-        session.steer("Focus on security.".to_string());
-
-        let result = session.process_input("Do something").await.unwrap();
-        assert_eq!(result, "Done");
-
-        // Verify steering turns appear in history.
-        // History should be: User, Steering("Focus on security."), Assistant(tool), ToolResults, Assistant(final)
-        let steering_count = session
-            .history()
-            .iter()
-            .filter(|t| matches!(t, Turn::Steering { .. }))
-            .count();
-        assert!(
-            steering_count >= 1,
-            "Expected at least 1 steering turn, found {}",
-            steering_count
-        );
-
-        // The first steering should be right after the user turn (drained before loop starts)
-        assert!(matches!(
-            &session.history()[1],
-            Turn::Steering { content } if content == "Focus on security."
-        ));
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 5: Max tool rounds limit stops loop
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn max_tool_rounds_stops_loop() {
-        // Provider always returns a tool call, never stops on its own.
-        let infinite_tool_calls: Vec<Response> = (0..10)
-            .map(|i| Response {
-                id: format!("resp-{}", i),
-                text: format!("round {}", i),
-                tool_calls: vec![ToolCallResult {
-                    id: format!("tc-{}", i),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"text": "loop"}),
-                }],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::ToolUse,
-            })
-            .collect();
-
-        let client = make_client(SequenceMockProvider::new(infinite_tool_calls));
-        let mut registry = ToolRegistry::new();
-        registry.register(EchoTool);
-        let env = Box::new(MockEnv);
-        let config = SessionConfig {
-            max_tool_rounds: 3,
-            ..Default::default()
-        };
-
-        let mut session = AgentSession::new(client, registry, env, config);
-        let result = session.process_input("Loop forever").await.unwrap();
-
-        // Should have stopped after 3 rounds. The last response's text is returned.
-        assert_eq!(result, "round 2"); // 0-indexed: rounds 0, 1, 2
-
-        // Count assistant turns to verify we only had 3 LLM calls
-        let assistant_count = session
-            .history()
-            .iter()
-            .filter(|t| matches!(t, Turn::Assistant { .. }))
-            .count();
-        assert_eq!(assistant_count, 3);
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 6: Unknown tool returns error result
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn unknown_tool_returns_error_result() {
-        let responses = vec![
-            Response {
-                id: "resp-1".into(),
-                text: String::new(),
-                tool_calls: vec![ToolCallResult {
-                    id: "tc-1".into(),
-                    name: "nonexistent_tool".into(),
-                    arguments: serde_json::json!({}),
-                }],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::ToolUse,
-            },
-            Response {
-                id: "resp-2".into(),
-                text: "Tool not found, sorry.".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "mock-model".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-        ];
-
-        let client = make_client(SequenceMockProvider::new(responses));
-        let registry = ToolRegistry::new(); // No tools registered
-        let env = Box::new(MockEnv);
-        let config = SessionConfig::default();
-
-        let mut session = AgentSession::new(client, registry, env, config);
-        let result = session.process_input("Use nonexistent tool").await.unwrap();
-
-        assert_eq!(result, "Tool not found, sorry.");
-
-        // Check the tool result was an error
-        let tool_results = session.history().iter().find_map(|t| {
-            if let Turn::ToolResults { results } = t {
-                Some(results)
-            } else {
-                None
-            }
-        });
-        let results = tool_results.expect("Expected ToolResults turn");
-        assert_eq!(results.len(), 1);
-        assert!(results[0].is_error);
-        assert!(results[0].content.contains("Unknown tool"));
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 7: Turn limit enforcement
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn turn_limit_enforcement() {
-        let provider = SequenceMockProvider::new(vec![
-            Response {
-                id: "r1".into(),
-                text: "first".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "m".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-            Response {
-                id: "r2".into(),
-                text: "second".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "m".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-        ]);
-        let client = make_client(provider);
-        let registry = ToolRegistry::new();
-        let env = Box::new(MockEnv);
-        let config = SessionConfig {
-            max_turns: 1,
-            ..Default::default()
-        };
-
-        let mut session = AgentSession::new(client, registry, env, config);
-
-        // First turn should work
-        let r1 = session.process_input("first").await.unwrap();
-        assert_eq!(r1, "first");
-
-        // Second turn should fail with TurnLimitReached
-        let r2 = session.process_input("second").await;
-        assert!(r2.is_err());
-        assert!(matches!(
-            r2.unwrap_err(),
-            AttractorError::TurnLimitReached { .. }
-        ));
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 8: Tool output truncation
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn tool_output_truncation() {
-        // Create a tool that returns a very long output
-        struct BigOutputTool;
-
-        #[async_trait]
-        impl Tool for BigOutputTool {
-            fn definition(&self) -> ToolsToolDef {
-                ToolsToolDef {
-                    name: "big_output".to_string(),
-                    description: "Returns a large output".to_string(),
-                    parameters: serde_json::json!({"type": "object"}),
-                }
-            }
-            async fn execute(
-                &self,
-                _arguments: serde_json::Value,
-                _env: &dyn ExecutionEnvironment,
-            ) -> attractor_types::Result<String> {
-                Ok("x".repeat(50_000))
-            }
-        }
-
-        let responses = vec![
-            Response {
-                id: "r1".into(),
-                text: String::new(),
-                tool_calls: vec![ToolCallResult {
-                    id: "tc-1".into(),
-                    name: "big_output".into(),
-                    arguments: serde_json::json!({}),
-                }],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "m".into(),
-                finish_reason: FinishReason::ToolUse,
-            },
-            Response {
-                id: "r2".into(),
-                text: "Got it".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                usage: Usage::default(),
-                model: "m".into(),
-                finish_reason: FinishReason::EndTurn,
-            },
-        ];
-
-        let client = make_client(SequenceMockProvider::new(responses));
-        let mut registry = ToolRegistry::new();
-        registry.register(BigOutputTool);
-        let env = Box::new(MockEnv);
-        let config = SessionConfig::default();
-
-        let mut session = AgentSession::new(client, registry, env, config);
-        let result = session.process_input("big output").await.unwrap();
-        assert_eq!(result, "Got it");
-
-        // Verify the tool result was truncated
-        let tool_results = session.history().iter().find_map(|t| {
-            if let Turn::ToolResults { results } = t {
-                Some(results)
-            } else {
-                None
-            }
-        });
-        let results = tool_results.unwrap();
-        assert!(results[0].content.contains("[WARNING: Output truncated."));
-        assert!(results[0].content.contains("20000 bytes removed"));
-    }
-}
+#[path = "tests.rs"]
+mod tests;

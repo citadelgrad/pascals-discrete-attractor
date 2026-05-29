@@ -1,0 +1,158 @@
+digraph EpicRunner {
+    label="Process all tasks in an epic"
+    goal="Implement all child tasks of epic attractor-5b8: pas init + quality handler (SPEC-005). Implement the pas init subcommand, pas.toml manifest schema, walk-up resolution, direnv-style trust model, quality pipeline handler with sequential stage execution + telemetry, loop control + checkpoint integration, and preflight warning when pas.toml is missing. See docs/plans/2026-05-29-feat-pas-init-quality-handler-plan.md for full design."
+    model="sonnet"
+
+    start [shape="Mdiamond"]
+    done  [shape="Msquare"]
+
+    // --- Pick the next task ---
+    pick_task [
+        shape="diamond"
+        label="Pick Next Task"
+        node_type="conditional"
+        llm_model="haiku"
+        allowed_tools="Bash(bd:*)"
+        prompt="Run: bd show attractor-5b8
+Look at the BLOCKS section to see child tasks.
+
+Then run: bd ready
+Find the first ready (unblocked, open) child task of epic attractor-5b8.
+
+If you find one:
+- Run: bd update <task-id> --status=in_progress
+- Write the task ID and full description to .pas/current_task.md
+- Respond with MORE on the last line
+
+If all child tasks are closed (no more ready tasks for this epic):
+- Respond with DONE on the last line"
+    ]
+
+    // --- Investigate ---
+    investigate [
+        shape="box"
+        label="Investigate"
+        allowed_tools="Read,Grep,Glob,Bash(bd:*),Bash(cargo:*),Bash(ls:*),Bash(fd:*),Bash(rg:*)"
+        prompt="Read .pas/current_task.md to get the current task ID and description.
+Run bd show <task-id> to get full details.
+
+This is a Rust workspace at /Volumes/qwiizlab/projects/pascals-discrete-attractor:
+  crates/attractor-cli/src/main.rs           — CLI binary (clap commands)
+  crates/attractor-cli/src/commands/         — Subcommand handlers
+  crates/attractor-pipeline/src/             — Pipeline engine, handlers, validation, checkpoint
+  crates/attractor-pipeline/src/handlers/   — Handler implementations (codergen_handler.rs, etc.)
+  docs/plans/2026-05-29-feat-pas-init-quality-handler-plan.md — Full plan with phase details
+  Cargo.toml                                 — Workspace manifest
+
+Investigate the codebase to understand what needs to change:
+- Find the relevant files and functions
+- Understand the current behavior
+- Identify what needs to change
+
+Write your findings to .pas/investigation.md including:
+- Files to modify
+- Current behavior
+- Required changes
+- Any risks or dependencies"
+    ]
+
+    // --- Implement ---
+    implement [
+        shape="box"
+        label="Implement"
+        allowed_tools="Read,Write,Edit,Grep,Glob,Bash(cargo:*),Bash(git:*),Bash(bd:*),Bash(fd:*),Bash(rg:*)"
+        prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
+Read docs/plans/2026-05-29-feat-pas-init-quality-handler-plan.md for the detailed phase spec, research insights, and acceptance criteria for this task.
+
+Implement the changes described. Follow existing code patterns and conventions in this Rust workspace.
+Keep changes minimal and focused on the task requirements.
+Use tokio::process::Command (not std::process::Command) for any process spawning."
+    ]
+
+    // --- Test ---
+    run_tests [
+        shape="box"
+        label="Run Tests"
+        allowed_tools="Read,Bash(cargo:*),Bash(bd:*)"
+        prompt="Read .pas/current_task.md to understand what was changed.
+Run the relevant test suite:
+  cargo test -p <affected-crate>
+  cargo clippy -p <affected-crate> -- -D warnings
+  cargo fmt --check
+
+If tests fail, fix the issues and re-run until green.
+Write the test results to .pas/test-results.md"
+    ]
+
+    // --- Verify ---
+    verify [
+        shape="diamond"
+        label="Verify"
+        node_type="conditional"
+        allowed_tools="Read,Bash(cargo:*),Bash(git:*)"
+        prompt="Read .pas/current_task.md for the task requirements.
+Check the changes:
+1. Review the git diff
+2. Verify cargo clippy passes with no warnings
+3. Verify tests pass (read .pas/test-results.md)
+4. Check that the task's acceptance criteria are met (from bd show <task-id>)
+
+If everything looks good, respond with PASS on the last line.
+If there are problems, respond with FAIL on the last line."
+    ]
+
+    fixup [
+        shape="box"
+        label="Fix Issues"
+        allowed_tools="Read,Write,Edit,Bash(cargo:*),Bash(bd:*)"
+        prompt="Read .pas/current_task.md and .pas/investigation.md for context.
+The verification step found problems. Fix any failing tests, lint errors, or unmet acceptance criteria.
+Re-run cargo test and cargo clippy after fixing."
+    ]
+
+    // --- Close this task ---
+    close_task [
+        shape="box"
+        label="Close Task"
+        allowed_tools="Bash(bd:*),Bash(git:*)"
+        prompt="Read .pas/current_task.md to get the task ID.
+1. Stage changes: git add -A
+2. Commit with a descriptive message referencing the task ID
+3. Close the task: bd close <task-id> --reason='Implemented successfully'
+4. Run: bd sync --flush-only"
+    ]
+
+    // --- Check if more tasks remain ---
+    check_remaining [
+        shape="diamond"
+        label="More Tasks?"
+        node_type="conditional"
+        llm_model="haiku"
+        allowed_tools="Bash(bd:*)"
+        prompt="Run: bd show attractor-5b8
+Look at the BLOCKS section. Count how many child tasks are still open.
+
+Run: bd ready
+Check if any remaining child tasks of this epic are ready (unblocked, open).
+
+If there are more ready tasks, respond with MORE on the last line.
+If all tasks are closed or remaining tasks are blocked, respond with DONE on the last line."
+    ]
+
+    // --- Edges ---
+    start -> pick_task
+
+    pick_task -> investigate [label="MORE", condition="preferred_label=MORE"]
+    pick_task -> done        [label="DONE", condition="preferred_label=DONE"]
+
+    investigate -> implement -> run_tests -> verify
+
+    verify -> close_task [label="PASS", condition="preferred_label=PASS"]
+    verify -> fixup      [label="FAIL", condition="preferred_label=FAIL"]
+    fixup  -> verify
+
+    close_task -> check_remaining
+
+    check_remaining -> pick_task [label="MORE", condition="preferred_label=MORE", loop_restart=true]
+    check_remaining -> done      [label="DONE", condition="preferred_label=DONE"]
+}

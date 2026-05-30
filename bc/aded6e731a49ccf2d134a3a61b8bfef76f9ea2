@@ -1,0 +1,23 @@
+CHANGELOG.md
+  s_6f413a3374f34b::t_78271ca78fba5b 5-10
+crates/attractor-web/src/server/db.rs
+  s_6f413a3374f34b::t_8286c36136e6cd 26,31
+Cargo.toml
+  s_6f413a3374f34b::t_27617f81566dc0 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "bcaded6e731a49ccf2d134a3a61b8bfef76f9ea2",
+  "prompts": {},
+  "sessions": {
+    "s_6f413a3374f34b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87f805c9-afd2-45b7-905b-05929337a6c0",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

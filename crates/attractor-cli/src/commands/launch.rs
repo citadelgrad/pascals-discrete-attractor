@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 /// End-to-end: discover PRD+spec pairs → generate .dot files → validate → run.
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_launch(
     docs_dir: &std::path::Path,
     output_dir: Option<&std::path::Path>,

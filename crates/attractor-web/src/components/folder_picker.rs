@@ -217,14 +217,14 @@ where
                                         <div class="error-message">{move || browser_error.get()}</div>
                                     }.into_any()
                                 } else {
-                                    let on_nav = handle_nav.clone();
+                                    let on_nav = handle_nav;
                                     view! {
                                         <For
                                             each=move || dir_entries.get()
                                             key=|entry| entry.path.clone()
                                             children=move |entry: DirEntry| {
                                                 let path = entry.path.clone();
-                                                let on_nav_click = on_nav.clone();
+                                                let on_nav_click = on_nav;
                                                 view! {
                                                     <div
                                                         class="dir-entry"

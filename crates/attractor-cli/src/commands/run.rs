@@ -131,7 +131,7 @@ pub async fn cmd_run_dir(
     let mut dot_files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |ext| ext == "dot"))
+        .filter(|p| p.extension().is_some_and(|ext| ext == "dot"))
         .collect();
     dot_files.sort();
 

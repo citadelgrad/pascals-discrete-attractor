@@ -18,13 +18,7 @@ fn start_spinner(message: &str) -> SpinnerGuard {
             let elapsed = start.elapsed().as_secs();
             let mins = elapsed / 60;
             let secs = elapsed % 60;
-            eprint!(
-                "\r\x1b[2K\x1b[36m{}\x1b[0m {} \x1b[2m{}:{:02}\x1b[0m",
-                FRAMES[i % FRAMES.len()],
-                msg,
-                mins,
-                secs
-            );
+            eprint!("\r\x1b[2K\x1b[36m{}\x1b[0m {} \x1b[2m{}:{:02}\x1b[0m", FRAMES[i % FRAMES.len()], msg, mins, secs);
             let _ = std::io::stderr().flush();
             std::thread::sleep(std::time::Duration::from_millis(80));
             i += 1;
@@ -34,10 +28,7 @@ fn start_spinner(message: &str) -> SpinnerGuard {
         let _ = std::io::stderr().flush();
     });
 
-    SpinnerGuard {
-        done,
-        handle: Some(handle),
-    }
+    SpinnerGuard { done, handle: Some(handle) }
 }
 
 struct SpinnerGuard {
@@ -61,31 +52,22 @@ pub async fn cmd_generate(
     verbose: bool,
 ) -> anyhow::Result<()> {
     // Read spec (required)
-    let spec_content = std::fs::read_to_string(spec_path).map_err(|e| {
-        anyhow::anyhow!("Failed to read spec file '{}': {}", spec_path.display(), e)
-    })?;
+    let spec_content = std::fs::read_to_string(spec_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read spec file '{}': {}", spec_path.display(), e))?;
 
     // Read PRD (optional)
-    let prd_content =
-        match prd_path {
-            Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
-                anyhow::anyhow!("Failed to read PRD file '{}': {}", path.display(), e)
-            })?),
-            None => None,
-        };
+    let prd_content = match prd_path {
+        Some(path) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("Failed to read PRD file '{}': {}", path.display(), e))?,
+        ),
+        None => None,
+    };
 
     if verbose {
-        eprintln!(
-            "[debug] spec: {} ({} bytes)",
-            spec_path.display(),
-            spec_content.len()
-        );
+        eprintln!("[debug] spec: {} ({} bytes)", spec_path.display(), spec_content.len());
         if let Some(p) = prd_path {
-            eprintln!(
-                "[debug] prd: {} ({} bytes)",
-                p.display(),
-                prd_content.as_ref().map_or(0, |c| c.len())
-            );
+            eprintln!("[debug] prd: {} ({} bytes)", p.display(), prd_content.as_ref().map_or(0, |c| c.len()));
         }
     }
 
@@ -140,10 +122,8 @@ pub async fn cmd_generate(
         if verbose {
             let stdout = String::from_utf8_lossy(&output_result.stdout);
             eprintln!("[debug] exit code: {:?}", output_result.status.code());
-            let stdout_preview: String = stdout.chars().take(1000).collect();
-            let stderr_preview: String = stderr.chars().take(1000).collect();
-            eprintln!("[debug] stdout: {}", stdout_preview);
-            eprintln!("[debug] stderr: {}", stderr_preview);
+            eprintln!("[debug] stdout: {}", &stdout[..stdout.len().min(1000)]);
+            eprintln!("[debug] stderr: {}", &stderr[..stderr.len().min(1000)]);
         }
         anyhow::bail!("Claude CLI failed: {}", stderr);
     }
@@ -173,16 +153,14 @@ pub async fn cmd_generate(
         Some(d) => d,
         None => {
             eprintln!("No digraph found in Claude's response. First 500 chars:");
-            let preview: String = result_str.chars().take(500).collect();
-            eprintln!("{}", preview);
+            eprintln!("{}", &result_str[..result_str.len().min(500)]);
             anyhow::bail!("Claude did not produce a valid digraph");
         }
     };
 
     if verbose {
         eprintln!("[debug] extracted DOT: {} bytes", dot_content.len());
-        let dot_preview: String = dot_content.chars().take(200).collect();
-        eprintln!("[debug] first 200 chars:\n{}", dot_preview);
+        eprintln!("[debug] first 200 chars:\n{}", &dot_content[..dot_content.len().min(200)]);
     }
 
     // Determine output path
@@ -211,16 +189,15 @@ pub async fn cmd_generate(
         Err(e) => {
             eprintln!("Generated file written to: {}", output_path.display());
             eprintln!("DOT parse failed — first 500 chars of output:");
-            let err_preview: String = dot_content.chars().take(500).collect();
-            eprintln!("{}", err_preview);
+            eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
             anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
         }
     };
     let diagnostics = attractor_pipeline::validate(&graph);
 
-    let has_error = diagnostics
-        .iter()
-        .any(|d| matches!(d.severity, attractor_pipeline::Severity::Error));
+    let has_error = diagnostics.iter().any(|d| {
+        matches!(d.severity, attractor_pipeline::Severity::Error)
+    });
 
     if has_error {
         println!("Warning: pipeline has validation errors:");
@@ -240,10 +217,7 @@ pub async fn cmd_generate(
         println!("  PRD: {}", prd.display());
     }
     println!("  Nodes: {}", node_count);
-    println!(
-        "  Validation: {}",
-        if has_error { "FAILED" } else { "PASSED" }
-    );
+    println!("  Validation: {}", if has_error { "FAILED" } else { "PASSED" });
 
     if !has_error {
         println!("\nNext steps:");
@@ -256,7 +230,10 @@ pub async fn cmd_generate(
 
 fn build_prompt(spec: &str, prd: Option<&str>) -> String {
     let prd_section = match prd {
-        Some(content) => format!("## PRD (Product Requirements Document)\n\n{}\n\n", content),
+        Some(content) => format!(
+            "## PRD (Product Requirements Document)\n\n{}\n\n",
+            content
+        ),
         None => String::new(),
     };
 
@@ -267,47 +244,28 @@ fn build_prompt(spec: &str, prd: Option<&str>) -> String {
 
 {spec}
 
-## DOT syntax constraints (CRITICAL — violating these causes parse failures)
-
-The parser accepts a STRICT SUBSET of Graphviz DOT. These constraints are non-negotiable:
-- ONLY `digraph Name {{ }}` — no `graph`, no `strict`, no `--` edges
-- Node IDs MUST be bare identifiers: `[A-Za-z_][A-Za-z0-9_]*` — use snake_case
-- NO quoted node IDs (`"my node"`), numeric IDs (`42`), HTML labels (`<B>text</B>`), or port syntax (`node:port`)
-- ALL attribute values MUST be double-quoted strings. Use `shape="Mdiamond"` not `shape=Mdiamond`.
-- Only one `[ ]` block per node/edge. NO chained blocks (`[a=1][b=2]`).
-- String concatenation (`"a" + "b"`) is NOT supported.
-- Attribute separators: commas, semicolons, or whitespace inside `[ ]` blocks.
-- Comments: `//` line and `/* */` block only. No `#` comments.
-- Use multi-line node declarations with one attribute per line for readability.
-
 ## Pipeline conventions
 
-Shapes: `"Mdiamond"` = start, `"Msquare"` = done, `"box"` = work, `"diamond"` (node_type="conditional") = decision, `"hexagon"` (node_type="wait.human") = human gate, `"parallelogram"` = tool node (runs a shell command via `tool_command`).
+IMPORTANT: ALL attribute values MUST be double-quoted. Use `shape="Mdiamond"` not `shape=Mdiamond`. Use multi-line node declarations with one attribute per line.
+
+Shapes: `"Mdiamond"` = start, `"Msquare"` = done, `"box"` = work, `"diamond"` (node_type="conditional") = decision, `"hexagon"` (node_type="wait.human") = human gate.
 Graph attrs: `label`, `goal`, `model="sonnet"`.
 Node attrs: `label`, `shape`, `prompt` (self-contained instructions with ALL context from the spec — no references to external tickets).
-Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`, `tool_command` (for parallelogram nodes).
+Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`.
 Edge attrs: `label` (e.g. "PASS","FAIL"), `condition` (e.g. preferred_label=PASS), `loop_restart="true"` on back-edges.
-
-## Human gates — use sparingly
-
-Do NOT create human gates (`hexagon`) unless the spec EXPLICITLY requests human approval or the task is inherently non-automatable (e.g. visual design review, business sign-off). Verification tasks like checking HTTP endpoints, running health checks, querying APIs, or validating service responses MUST be automated as `parallelogram` tool nodes (using curl/wget) or `box` work nodes — never put automatable checks in a human gate prompt. The pipeline engine exists to automate these steps.
 
 ## Timeouts
 
-Every node MUST have a `timeout` attribute. Claude Code sessions have startup overhead and often iterate multiple times, so timeouts must be generous. Set based on complexity:
-- Trivial (conditionals, haiku routing, reading a single file): `timeout="120s"`
-- Light (linting, formatting checks, simple single-step verification): `timeout="300s"`
-- Standard (investigation, verification with iteration, fixups, most work nodes): `timeout="600s"`
-- Heavy (implementing features, writing substantial new code, multi-file changes): `timeout="900s"`
-- Intensive (full test suites, large refactors, multi-step builds): `timeout="1200s"`
-
-When in doubt, use 600s. Underestimating causes pipeline failures; overestimating just means unused budget. Most work+verify nodes should be 600s or higher.
+Every node MUST have a `timeout` attribute. Set it based on complexity:
+- Lightweight (conditionals, haiku routing, simple file reads): `timeout="120s"`
+- Medium (investigation, verification, fixups, linting): `timeout="300s"`
+- Heavy (implementation, full test suites, multi-step builds): `timeout="900s"`
 
 Example node format:
     my_node [
         label="Short Label"
         shape="box"
-        timeout="600s"
+        timeout="300s"
         prompt="Detailed instructions here."
     ]
 
@@ -375,7 +333,7 @@ fn strip_code_fences(s: &str) -> String {
     let lines: Vec<&str> = s.lines().collect();
     if lines.len() > 2
         && lines[0].starts_with("```")
-        && lines.last().map_or(false, |l| l.trim() == "```")
+        && lines.last().is_some_and(|l| l.trim() == "```")
     {
         lines[1..lines.len() - 1].join("\n")
     } else {
@@ -398,10 +356,10 @@ pub async fn cmd_generate_dir(
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.extension().map_or(false, |ext| ext == "md")
+            p.extension().is_some_and(|ext| ext == "md")
                 && p.file_stem()
                     .and_then(|s| s.to_str())
-                    .map_or(false, |s| s.ends_with("-spec"))
+                    .is_some_and(|s| s.ends_with("-spec"))
         })
         .collect();
     specs.sort();
@@ -423,21 +381,13 @@ pub async fn cmd_generate_dir(
         .unwrap_or_else(|| std::path::PathBuf::from("pipelines"));
     std::fs::create_dir_all(&out_dir)?;
 
-    println!(
-        "Found {} spec(s) in {} (lexical order):",
-        specs.len(),
-        dir.display()
-    );
+    println!("Found {} spec(s) in {} (lexical order):", specs.len(), dir.display());
     for spec in &specs {
         let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
         let prd_stem = stem.replace("-spec", "-prd");
         let prd_path = dir.join(format!("{}.md", prd_stem));
         let prd_status = if prd_path.exists() { "+ PRD" } else { "no PRD" };
-        println!(
-            "  {} ({})",
-            spec.file_name().unwrap_or_default().to_string_lossy(),
-            prd_status
-        );
+        println!("  {} ({})", spec.file_name().unwrap_or_default().to_string_lossy(), prd_status);
     }
     println!();
 
@@ -478,197 +428,5 @@ pub async fn cmd_generate_dir(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── strip_code_fences ──────────────────────────────────────────
-
-    #[test]
-    fn strip_fences_dot() {
-        let input = "```dot\ndigraph { a -> b }\n```";
-        assert_eq!(strip_code_fences(input), "digraph { a -> b }");
-    }
-
-    #[test]
-    fn strip_fences_plain() {
-        let input = "```\ndigraph { a -> b }\n```";
-        assert_eq!(strip_code_fences(input), "digraph { a -> b }");
-    }
-
-    #[test]
-    fn strip_fences_graphviz() {
-        let input = "```graphviz\ndigraph G {\n  start -> done\n}\n```";
-        assert_eq!(strip_code_fences(input), "digraph G {\n  start -> done\n}");
-    }
-
-    #[test]
-    fn strip_fences_trailing_whitespace() {
-        let input = "```dot\ndigraph { a -> b }\n```  ";
-        assert_eq!(strip_code_fences(input), "digraph { a -> b }");
-    }
-
-    #[test]
-    fn strip_fences_noop_when_no_fences() {
-        let input = "digraph { a -> b }";
-        assert_eq!(strip_code_fences(input), input);
-    }
-
-    #[test]
-    fn strip_fences_noop_single_line() {
-        let input = "```dot```";
-        assert_eq!(strip_code_fences(input), input);
-    }
-
-    #[test]
-    fn strip_fences_preserves_inner_content() {
-        let input = "```dot\nline1\nline2\nline3\n```";
-        assert_eq!(strip_code_fences(input), "line1\nline2\nline3");
-    }
-
-    // ── build_prompt ───────────────────────────────────────────────
-
-    #[test]
-    fn build_prompt_spec_only() {
-        let result = build_prompt("my spec content", None);
-        assert!(result.contains("## Technical Specification"));
-        assert!(result.contains("my spec content"));
-        assert!(!result.contains("## PRD"));
-    }
-
-    #[test]
-    fn build_prompt_with_prd() {
-        let result = build_prompt("my spec", Some("my prd"));
-        assert!(result.contains("## PRD (Product Requirements Document)"));
-        assert!(result.contains("my prd"));
-        assert!(result.contains("my spec"));
-    }
-
-    #[test]
-    fn build_prompt_contains_pipeline_conventions() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("Mdiamond"));
-        assert!(result.contains("Msquare"));
-        assert!(result.contains("node_type=\"conditional\""));
-        assert!(result.contains("loop_restart"));
-        assert!(result.contains("parallelogram"));
-        assert!(result.contains("tool_command"));
-    }
-
-    #[test]
-    fn build_prompt_discourages_unnecessary_human_gates() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("Do NOT create human gates"));
-        assert!(result.contains("EXPLICITLY requests human approval"));
-    }
-
-    #[test]
-    fn build_prompt_contains_dot_syntax_constraints() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("DOT syntax constraints"));
-        assert!(result.contains("ONLY `digraph Name"));
-        assert!(result.contains("[A-Za-z_][A-Za-z0-9_]*"));
-        assert!(result.contains("NO quoted node IDs"));
-        assert!(result.contains("NO chained blocks"));
-    }
-
-    #[test]
-    fn build_prompt_contains_timeout_guidance() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("timeout"));
-        assert!(result.contains("timeout=\"120s\""));
-        assert!(result.contains("timeout=\"300s\""));
-        assert!(result.contains("timeout=\"600s\""));
-        assert!(result.contains("timeout=\"900s\""));
-        assert!(result.contains("timeout=\"1200s\""));
-        assert!(result.contains("Trivial"));
-        assert!(result.contains("Intensive"));
-        assert!(result.contains("When in doubt, use 600s"));
-    }
-
-    #[test]
-    fn build_prompt_requires_commit_step() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("commit_changes"));
-        assert!(result.contains("Commit Changes"));
-        assert!(result.contains("git add -A"));
-        assert!(result.contains("Bash(git:*)"));
-    }
-
-    #[test]
-    fn build_prompt_asks_for_raw_digraph() {
-        let result = build_prompt("spec", None);
-        assert!(result.contains("Output ONLY the raw digraph"));
-        assert!(result.contains("No markdown fences"));
-    }
-
-    #[test]
-    fn build_prompt_prd_before_spec() {
-        let result = build_prompt("SPEC_CONTENT", Some("PRD_CONTENT"));
-        let prd_pos = result.find("PRD_CONTENT").unwrap();
-        let spec_pos = result.find("SPEC_CONTENT").unwrap();
-        assert!(
-            prd_pos < spec_pos,
-            "PRD should appear before spec in prompt"
-        );
-    }
-
-    // ── extract_digraph ────────────────────────────────────────────
-
-    #[test]
-    fn extract_raw_digraph() {
-        let input = "digraph G { a -> b }";
-        assert_eq!(extract_digraph(input).unwrap(), "digraph G { a -> b }");
-    }
-
-    #[test]
-    fn extract_from_fenced() {
-        let input = "```dot\ndigraph G { a -> b }\n```";
-        assert_eq!(extract_digraph(input).unwrap(), "digraph G { a -> b }");
-    }
-
-    #[test]
-    fn extract_from_preamble() {
-        let input = "Looking for skills...\n<function_calls>\n</function_calls>\n\ndigraph G {\n  start -> done\n}";
-        let result = extract_digraph(input).unwrap();
-        assert!(result.starts_with("digraph G {"));
-        assert!(result.ends_with('}'));
-        assert!(result.contains("start -> done"));
-    }
-
-    #[test]
-    fn extract_nested_braces() {
-        let input = r#"digraph G {
-  subgraph cluster_0 {
-    a -> b
-  }
-  b -> c
-}"#;
-        let result = extract_digraph(input).unwrap();
-        assert_eq!(result, input);
-    }
-
-    #[test]
-    fn extract_from_fenced_with_preamble() {
-        let input = "Here's the pipeline:\n\n```dot\ndigraph Pipeline {\n  start -> work\n  work -> done\n}\n```\n\nHope that helps!";
-        let result = extract_digraph(input).unwrap();
-        assert!(result.starts_with("digraph Pipeline {"));
-        assert!(result.contains("start -> work"));
-    }
-
-    #[test]
-    fn extract_none_when_no_digraph() {
-        assert!(extract_digraph("no graph here").is_none());
-        assert!(extract_digraph("").is_none());
-        assert!(extract_digraph("graph { a -> b }").is_none());
-    }
-
-    #[test]
-    fn extract_with_braces_in_prompts() {
-        let input = r#"digraph G {
-  node1 [prompt="if (x) { return true; }"]
-  node1 -> done
-}"#;
-        let result = extract_digraph(input).unwrap();
-        assert!(result.contains("node1 -> done"));
-    }
-}
+#[path = "generate_tests.rs"]
+mod tests;

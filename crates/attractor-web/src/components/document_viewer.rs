@@ -48,7 +48,7 @@ where
     let (spec_content, set_spec_content) = signal(String::new());
 
     // Load cached documents from SQLite on mount
-    let cached = Resource::new(move || project_id, |id| get_cached_documents(id));
+    let cached = Resource::new(move || project_id, get_cached_documents);
 
     // Update signals when cached data loads
     Effect::new(move || {

@@ -39,6 +39,11 @@ pas run <PIPELINE> [OPTIONS]
 | `--dry-run` | — | false | Parse and validate the pipeline without executing any nodes. No Claude Code sessions are spawned, no cost incurred. |
 | `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes. Pipeline aborts with an error if exceeded. **Strongly recommended for pipelines with loops.** |
 | `--max-steps <COUNT>` | — | 200 | Maximum number of node executions before aborting. Prevents runaway loops. A 6-node pipeline that loops 3 times = 18 steps. |
+| `--fresh` | — | false | Discard any saved checkpoint and start from the beginning. By default, re-running the same command resumes from the last completed node. |
+
+#### Directory mode
+
+When `PIPELINE` is a directory, `run` collects all `*.dot` files and executes them sequentially in lexical order. Use zero-padded names to control execution order (`phase-01.dot`, `phase-02.dot`, `phase-11.dot`). Checkpoints apply per-pipeline within the run.
 
 #### Output
 
@@ -310,6 +315,62 @@ pas scaffold attractor-asr --output pipelines/auth-feature.dot
 
 # Then run it
 pas run pipelines/attractor-asr.dot -w .
+```
+
+---
+
+### `launch` — Generate, validate, and run end-to-end
+
+Takes a directory of spec files, generates `.dot` pipelines from them, validates all of them, then runs them sequentially. Equivalent to running `generate` → `validate` → `run` on each pipeline in order.
+
+```
+pas launch <DOCS_DIR> [OPTIONS]
+```
+
+#### Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `DOCS_DIR` | Yes | Directory containing `*-spec.md` (required) and `*-prd.md` (optional) files |
+
+#### Options
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--workdir <DIR>` | `-w` | current directory | Working directory for Claude Code sessions during the run phase. |
+| `--output <DIR>` | `-o` | `pipelines/` | Directory where generated `.dot` files are written. |
+| `--dry-run` | — | false | Generate and validate pipelines but don't execute them. |
+| `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes in all pipelines. |
+| `--max-steps <COUNT>` | — | 200 | Maximum node executions per pipeline. |
+| `--fresh` | — | false | Ignore checkpoints and start each pipeline from scratch. |
+
+#### How it works
+
+1. **Generate** — discovers `*-spec.md` files in `DOCS_DIR`, pairs each with a `*-prd.md` if one exists (matched by replacing `-spec` with `-prd`), and generates one `.dot` pipeline per spec. Files are sorted lexically — use zero-padded prefixes to control order (`phase-01-spec.md`, `phase-02-spec.md`).
+2. **Validate** — runs all lint rules against every generated pipeline. Stops if any pipeline has errors.
+3. **Run** — executes each validated pipeline sequentially with checkpoint/resume.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All pipelines completed successfully |
+| 1 | Generation failed, validation error, or pipeline execution failed |
+
+#### Examples
+
+```bash
+# Generate + validate + run all specs in docs/implementation/
+pas launch docs/implementation/ -w .
+
+# With a budget cap (recommended for unattended runs)
+pas launch docs/implementation/ -w . --max-budget-usd 30.00
+
+# Dry run to preview what would be generated and validated
+pas launch docs/implementation/ --dry-run
+
+# Write generated .dot files to a custom directory
+pas launch docs/implementation/ -w . -o build/pipelines/
 ```
 
 ---

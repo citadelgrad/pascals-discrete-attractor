@@ -71,6 +71,7 @@ For nodes that only need a single LLM completion without tool use, PAS also prov
 - **Claude Code as execution engine** -- Pipeline nodes run via your local `claude` CLI, getting full agentic tool use with no extra API keys
 - **DOT pipeline definitions** -- Standard Graphviz digraph syntax with typed attributes (strings, integers, floats, booleans, durations)
 - **Direct pipeline generation** -- Pass a PRD and/or spec file to generate a self-contained .dot pipeline (no external issue tracker required)
+- **End-to-end launch** -- `pas launch <docs/>` discovers spec+PRD pairs, generates pipelines, validates, and runs them sequentially in one command
 - **Planning workflow** -- Generate PRD and spec documents from templates or AI prompts, decompose specs into beads issues, scaffold pipelines from epics
 - **Beads integration** -- Decompose specs into epics and tasks, scaffold pipelines from beads epics, close issues as pipeline nodes complete
 - **Multi-provider LLM support** -- OpenAI, Anthropic, and Gemini adapters with unified request/response types
@@ -125,6 +126,14 @@ pas info pipeline.dot
 ```sh
 pas run pipeline.dot --dry-run
 ```
+
+### Launch end-to-end from a docs directory
+
+```sh
+pas launch docs/implementation/ -w .
+```
+
+Discovers all `*-spec.md` files in the directory, pairs each with a `*-prd.md` if present, generates `.dot` pipelines, validates them all, then runs them sequentially. Use zero-padded prefixes to control order (`phase-01-spec.md`, `phase-02-spec.md`).
 
 ### Generate a pipeline from a spec (no beads)
 
@@ -203,7 +212,8 @@ export GEMINI_API_KEY=...
 | `attractor-tools` | Tool trait, registry, built-in tools, execution environment |
 | `attractor-agent` | Agent session loop with steering and loop detection |
 | `attractor-pipeline` | Pipeline graph, engine, handlers, validation, stylesheets |
-| `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`) |
+| `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`, `launch`) |
+| `attractor-web` | Web interface (Leptos) |
 
 ## Reference
 

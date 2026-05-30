@@ -1,0 +1,36 @@
+crates/attractor-web/src/components/folder_picker.rs
+  s_d2b966aabf682f::t_10214054ea9e6e 223,230
+crates/attractor-cli/src/commands/decompose_validate.rs
+  s_d2b966aabf682f::t_c0bad681331677 139
+crates/attractor-cli/src/commands/run.rs
+  s_d2b966aabf682f::t_f8e57246ee2297 133
+crates/attractor-pipeline/src/handlers/codergen_handler.rs
+  s_d2b966aabf682f::t_1455f136852593 13-14
+  s_d2b966aabf682f::t_d4d74291259a0d 12
+crates/attractor-cli/src/commands/decompose.rs
+  s_d2b966aabf682f::t_a24688f5843134 271
+  s_d2b966aabf682f::t_f968f97b4306eb 291
+crates/attractor-web/src/components/document_viewer.rs
+  s_d2b966aabf682f::t_6f0bfe8456b645 51
+crates/attractor-cli/src/commands/generate.rs
+  s_d2b966aabf682f::t_2cf769dc4017a0 359,362
+  s_d2b966aabf682f::t_9b214a8bd9685d 336
+crates/attractor-cli/src/commands/launch.rs
+  s_d2b966aabf682f::t_f707d3800fe9cd 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5738a06dbe3fe497f265db8ee78091b3f65ca4d9",
+  "prompts": {},
+  "sessions": {
+    "s_d2b966aabf682f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c97c2a6b-0ad3-46c0-becd-6fdaef61b998",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

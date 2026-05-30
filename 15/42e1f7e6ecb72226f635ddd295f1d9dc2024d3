@@ -1,0 +1,19 @@
+.gitignore
+  s_d2b966aabf682f::t_05c74ac9c93515 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1542e1f7e6ecb72226f635ddd295f1d9dc2024d3",
+  "prompts": {},
+  "sessions": {
+    "s_d2b966aabf682f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c97c2a6b-0ad3-46c0-becd-6fdaef61b998",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

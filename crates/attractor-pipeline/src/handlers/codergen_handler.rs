@@ -9,10 +9,9 @@ use crate::handler::NodeHandler;
 
 #[path = "codergen_provider.rs"]
 mod provider;
-use provider::{
-    build_cli_command, parse_cli_output, parse_claude_output, parse_codex_output,
-    parse_gemini_output, CliRunConfig, LlmCliProvider, NormalizedCliResult,
-};
+use provider::{build_cli_command, parse_cli_output, CliRunConfig, LlmCliProvider};
+#[cfg(test)]
+use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, NormalizedCliResult};
 
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)

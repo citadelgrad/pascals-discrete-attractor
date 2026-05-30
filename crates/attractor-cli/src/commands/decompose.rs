@@ -268,7 +268,7 @@ fn strip_code_fences(s: &str) -> String {
     let lines: Vec<&str> = s.lines().collect();
     if lines.len() > 2
         && lines[0].starts_with("```")
-        && lines.last().map_or(false, |l| l.trim() == "```")
+        && lines.last().is_some_and(|l| l.trim() == "```")
     {
         lines[1..lines.len() - 1].join("\n")
     } else {
@@ -288,4 +288,4 @@ fn truncate_for_display(s: &str, max_len: usize) -> String {
 
 #[path = "decompose_validate.rs"]
 mod validate;
-use validate::validate_decomposition;
+pub use validate::validate_decomposition;

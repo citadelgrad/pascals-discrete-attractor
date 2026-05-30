@@ -136,7 +136,7 @@ pub async fn validate_decomposition(
             .filter(|&&field| {
                 ticket[field]
                     .as_str()
-                    .map_or(true, |v| v.trim().is_empty())
+                    .is_none_or(|v| v.trim().is_empty())
             })
             .copied()
             .collect();

@@ -333,7 +333,7 @@ fn strip_code_fences(s: &str) -> String {
     let lines: Vec<&str> = s.lines().collect();
     if lines.len() > 2
         && lines[0].starts_with("```")
-        && lines.last().map_or(false, |l| l.trim() == "```")
+        && lines.last().is_some_and(|l| l.trim() == "```")
     {
         lines[1..lines.len() - 1].join("\n")
     } else {
@@ -356,10 +356,10 @@ pub async fn cmd_generate_dir(
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.extension().map_or(false, |ext| ext == "md")
+            p.extension().is_some_and(|ext| ext == "md")
                 && p.file_stem()
                     .and_then(|s| s.to_str())
-                    .map_or(false, |s| s.ends_with("-spec"))
+                    .is_some_and(|s| s.ends_with("-spec"))
         })
         .collect();
     specs.sort();

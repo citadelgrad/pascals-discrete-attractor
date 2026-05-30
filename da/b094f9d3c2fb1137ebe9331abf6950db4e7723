@@ -1,0 +1,32 @@
+crates/attractor-agent/src/fidelity.rs
+  s_60f423df7934e7::t_cd3ca7707e1042 54-56,58-60
+  s_c1558d05d4c605::t_c1ca1779243df7 9-10
+  s_60f423df7934e7::t_189f33a861f9d8 156-163
+crates/attractor-tools/src/truncation.rs
+  s_c1558d05d4c605::t_e9de2570ccc8e2 16,20-24,28-41,49-54,58,99-109,119-128
+  s_60f423df7934e7::t_99fde5c26e5514 76-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "dab094f9d3c2fb1137ebe9331abf6950db4e7723",
+  "prompts": {},
+  "sessions": {
+    "s_60f423df7934e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "396b777d-ed5c-46be-9354-c50233902ef0",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    },
+    "s_c1558d05d4c605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3497d39e-dfd0-4d5c-b122-8ef75ab15919",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

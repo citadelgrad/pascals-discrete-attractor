@@ -6,7 +6,8 @@ pub enum FidelityMode {
     /// Keep full history — no truncation.
     #[default]
     Full,
-    /// Truncate old messages, keeping the most recent N messages.
+    /// Keep the system prompt (first message) plus the most recent `keep_last - 1`
+    /// messages, for `keep_last` total. The first message is always preserved.
     Truncate { keep_last: usize },
     /// Compact old messages into a summary.
     Compact,
@@ -47,14 +48,16 @@ pub fn apply_fidelity<T: Clone>(messages: &[T], mode: &FidelityMode) -> Vec<T> {
         FidelityMode::Truncate { keep_last } => {
             if messages.len() <= *keep_last {
                 messages.to_vec()
-            } else if *keep_last == 0 {
-                Vec::new()
             } else {
                 // Always preserve the first message (system prompt), then
                 // keep the most recent (keep_last - 1) messages.
-                let tail_count = keep_last - 1;
+                // saturating_sub handles keep_last=0 without underflow and
+                // ensures the system prompt is always included.
+                let tail_count = keep_last.saturating_sub(1);
                 let mut result = vec![messages[0].clone()];
-                result.extend_from_slice(&messages[messages.len() - tail_count..]);
+                if tail_count > 0 {
+                    result.extend_from_slice(&messages[messages.len() - tail_count..]);
+                }
                 result
             }
         }
@@ -147,6 +150,15 @@ mod tests {
         let msgs = vec![1, 2];
         let result = apply_fidelity(&msgs, &FidelityMode::Truncate { keep_last: 10 });
         assert_eq!(result, vec![1, 2]);
+    }
+
+    #[test]
+    fn apply_fidelity_truncate_keep_last_zero_preserves_first() {
+        // keep_last=0 should still preserve the system prompt (first message),
+        // consistent with the invariant that the first message is never dropped.
+        let msgs = vec![1, 2, 3, 4, 5];
+        let result = apply_fidelity(&msgs, &FidelityMode::Truncate { keep_last: 0 });
+        assert_eq!(result, vec![1]);
     }
 
     #[test]

@@ -188,6 +188,7 @@ fn convert_content_parts(parts: &[ContentPart]) -> Vec<serde_json::Value> {
                 tool_call_id,
                 content,
                 is_error,
+                ..
             } => {
                 let mut v = json!({
                     "type": "tool_result",

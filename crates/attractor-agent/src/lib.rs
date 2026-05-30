@@ -331,6 +331,7 @@ impl AgentSession {
                     for result in results {
                         messages.push(Message::tool_result(
                             &result.tool_call_id,
+                            &result.tool_name,
                             &result.content,
                             result.is_error,
                         ));

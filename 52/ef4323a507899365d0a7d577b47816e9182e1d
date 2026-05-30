@@ -1,0 +1,21 @@
+crates/attractor-agent/src/lib.rs
+  s_c1558d05d4c605::t_24ec1662d23301 334
+crates/attractor-llm/src/anthropic.rs
+  s_c1558d05d4c605::t_2487985edb4f46 191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "52ef4323a507899365d0a7d577b47816e9182e1d",
+  "prompts": {},
+  "sessions": {
+    "s_c1558d05d4c605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3497d39e-dfd0-4d5c-b122-8ef75ab15919",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

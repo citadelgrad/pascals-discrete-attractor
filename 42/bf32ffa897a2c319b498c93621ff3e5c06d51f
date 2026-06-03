@@ -1,0 +1,35 @@
+crates/attractor-quality/src/enrich.rs
+  s_d63719cebeb69b::t_d352df074b663b 1
+crates/attractor-quality/src/trust.rs
+  s_d63719cebeb69b::t_04de7116960a82 1
+crates/attractor-quality/Cargo.toml
+  s_d63719cebeb69b::t_a49b8ec6c060e2 1-16
+crates/attractor-quality/src/manifest.rs
+  s_d63719cebeb69b::t_3ea544ea6e12e1 1-45
+crates/attractor-quality/src/detect.rs
+  s_d63719cebeb69b::t_f72a60ceb0f713 1
+crates/attractor-quality/src/telemetry.rs
+  s_d63719cebeb69b::t_890a6b1a38faa9 1
+crates/attractor-quality/src/lib.rs
+  s_d63719cebeb69b::t_cca569259c4aaa 1-9
+Cargo.toml
+  s_d63719cebeb69b::t_091e193973af10 12
+crates/attractor-quality/src/resolution.rs
+  s_d63719cebeb69b::t_7aaa4ec3a7e306 1-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "42bf32ffa897a2c319b498c93621ff3e5c06d51f",
+  "prompts": {},
+  "sessions": {
+    "s_d63719cebeb69b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ece9d6b9-119d-4417-86ed-b55300b22eb2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

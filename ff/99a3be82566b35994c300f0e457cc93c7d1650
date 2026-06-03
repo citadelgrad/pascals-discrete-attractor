@@ -1,0 +1,28 @@
+crates/attractor-pipeline/tests/integration_advanced.rs
+  s_d63719cebeb69b::t_efec7f16bf3a00 375-385
+  s_d63719cebeb69b::t_b6bd80af8c77cd 425-560
+  s_d63719cebeb69b::t_b71a54c76d76b9 13-14
+crates/attractor-pipeline/src/handlers/quality_handler.rs
+  s_d63719cebeb69b::t_ad779ff705191c 156
+crates/attractor-pipeline/src/lib.rs
+  s_d63719cebeb69b::t_0833e8ea9f49df 36
+docs/cli-reference.md
+  s_d63719cebeb69b::t_3c9e023e45b3c8 62-69
+  s_d63719cebeb69b::t_cbe17f724a4456 385-523
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ff99a3be82566b35994c300f0e457cc93c7d1650",
+  "prompts": {},
+  "sessions": {
+    "s_d63719cebeb69b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ece9d6b9-119d-4417-86ed-b55300b22eb2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

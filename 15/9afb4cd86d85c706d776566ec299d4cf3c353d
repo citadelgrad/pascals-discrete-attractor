@@ -1,0 +1,25 @@
+crates/attractor-pipeline/src/engine.rs
+  s_d63719cebeb69b::t_236ccec2d35f9c 385,390-393,397
+  s_d63719cebeb69b::t_a5629a00b58bc2 128-133,140-153,166-170
+  s_d63719cebeb69b::t_528ae5e15ed3bd 238-297,300-315
+crates/attractor-pipeline/src/checkpoint.rs
+  s_d63719cebeb69b::t_a9fa1f44ed0f94 66-68,90-92
+  s_d63719cebeb69b::t_619bc7be17aa98 115-144
+  s_d63719cebeb69b::t_83fc742cba40b7 36-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "159afb4cd86d85c706d776566ec299d4cf3c353d",
+  "prompts": {},
+  "sessions": {
+    "s_d63719cebeb69b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ece9d6b9-119d-4417-86ed-b55300b22eb2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

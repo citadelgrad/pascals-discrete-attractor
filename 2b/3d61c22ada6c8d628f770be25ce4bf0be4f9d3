@@ -1,0 +1,29 @@
+crates/attractor-cli/Cargo.toml
+  s_d63719cebeb69b::t_bd289f0951fe68 28
+  s_d63719cebeb69b::t_ceb7c668159ef2 29-31
+crates/attractor-cli/src/commands/init.rs
+  s_d63719cebeb69b::t_bd627baeb9a22a 1-44,46-373
+  s_d63719cebeb69b::t_d21ad49f4aabd6 45
+crates/attractor-cli/src/main.rs
+  s_d63719cebeb69b::t_eeeb3ac90446dc 357-370
+  s_d63719cebeb69b::t_f1be56fd0e031c 155-177
+  s_d63719cebeb69b::t_386ee27d7c31fc 9-10
+crates/attractor-cli/src/commands/mod.rs
+  s_d63719cebeb69b::t_ba42e6ac9973d5 4,14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2b3d61c22ada6c8d628f770be25ce4bf0be4f9d3",
+  "prompts": {},
+  "sessions": {
+    "s_d63719cebeb69b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ece9d6b9-119d-4417-86ed-b55300b22eb2",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

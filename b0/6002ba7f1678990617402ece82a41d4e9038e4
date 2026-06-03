@@ -1,0 +1,20 @@
+docs/superpowers/specs/2026-06-03-quality-handler-design.md
+  s_8b1b2ebd2ce996::t_7c948226515341 1-63,65-201
+  s_8b1b2ebd2ce996::t_9b8c4c75600ba7 64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b06002ba7f1678990617402ece82a41d4e9038e4",
+  "prompts": {},
+  "sessions": {
+    "s_8b1b2ebd2ce996": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b54a95d-127b-4d2a-bcde-603cc55a64a9",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

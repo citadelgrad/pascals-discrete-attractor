@@ -1,0 +1,23 @@
+crates/attractor-pipeline/src/handlers/quality_handler_tests.rs
+  s_ba6349c3b7c6b8::t_124e26495528e8 272-286
+crates/attractor-pipeline/src/engine_tests.rs
+  s_ba6349c3b7c6b8::t_311f72e27d1e5e 738-739,746
+  s_ba6349c3b7c6b8::t_01c9accb8fac5d 480-737,740-743,745,747-767
+  s_ba6349c3b7c6b8::t_c3404fa3a5e6d4 744
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "5670d82cc47fbefb3f45a6131dd51be823c910fd",
+  "prompts": {},
+  "sessions": {
+    "s_ba6349c3b7c6b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "92de40a8-a895-4f5c-83e6-ead0c517a8b9",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

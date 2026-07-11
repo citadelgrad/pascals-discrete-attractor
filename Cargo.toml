@@ -6,11 +6,11 @@ members = [
     "crates/attractor-llm",
     "crates/attractor-tools",
     "crates/attractor-agent",
+    "crates/attractor-cache",
     "crates/attractor-pipeline",
     "crates/attractor-quality",
     "crates/attractor-cli",
     "crates/attractor-web",
-    "crates/attractor-quality",
 ]
 
 [workspace.package]

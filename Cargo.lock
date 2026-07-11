@@ -163,11 +163,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "attractor-cache"
+version = "0.7.2"
+dependencies = [
+ "blake3",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "attractor-cli"
 version = "0.7.2"
 dependencies = [
  "anyhow",
  "attractor-agent",
+ "attractor-cache",
  "attractor-dot",
  "attractor-llm",
  "attractor-pipeline",
@@ -221,6 +235,7 @@ version = "0.7.2"
 dependencies = [
  "async-trait",
  "attractor-agent",
+ "attractor-cache",
  "attractor-dot",
  "attractor-llm",
  "attractor-quality",

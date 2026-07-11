@@ -298,3 +298,175 @@ fn extract_label_returns_none_when_no_match() {
     let response = "This player is interesting but I need more data.";
     assert_eq!(extract_label(response, &labels), None);
 }
+
+// --- Response cache ---
+
+use attractor_dot::AttributeValue;
+
+#[test]
+fn is_cacheable_conditional_by_default() {
+    let mut node = make_node("route", "diamond", Some("decide"), HashMap::new());
+    assert!(is_cacheable_node(&node));
+    node.shape = "box".into();
+    node.node_type = Some("conditional".into());
+    assert!(is_cacheable_node(&node));
+}
+
+#[test]
+fn is_cacheable_box_node_default_off() {
+    let node = make_node("work", "box", Some("do it"), HashMap::new());
+    assert!(!is_cacheable_node(&node));
+}
+
+#[test]
+fn is_cacheable_respects_ro_and_off_attrs() {
+    let mut ro = HashMap::new();
+    ro.insert("cache".to_string(), AttributeValue::String("ro".into()));
+    let node = make_node("analyze", "box", Some("read"), ro);
+    assert!(is_cacheable_node(&node));
+
+    let mut off = HashMap::new();
+    off.insert("cache".to_string(), AttributeValue::String("off".into()));
+    let node = make_node("route", "diamond", Some("decide"), off);
+    assert!(!is_cacheable_node(&node)); // explicit off overrides the diamond default
+}
+
+#[test]
+fn assemble_prompt_is_deterministic_and_contains_task() {
+    let node = make_node("n", "box", Some("Do the thing"), HashMap::new());
+    let graph = make_minimal_graph();
+    let mut snap = HashMap::new();
+    snap.insert("a.result".to_string(), serde_json::json!("alpha"));
+    snap.insert("b.output".to_string(), serde_json::json!("beta"));
+
+    let p1 = assemble_prompt(&node, &graph, &snap);
+    let p2 = assemble_prompt(&node, &graph, &snap);
+    assert_eq!(p1, p2);
+    assert!(p1.contains("Task (n): Do the thing"));
+    assert!(p1.contains("a.result"));
+}
+
+#[test]
+fn build_cache_key_is_stable_and_input_sensitive() {
+    let node = make_node("n", "box", Some("x"), HashMap::new());
+    let k1 = build_cache_key(
+        LlmCliProvider::Claude,
+        Some("opus"),
+        &node,
+        None,
+        "prompt A",
+    );
+    let k2 = build_cache_key(
+        LlmCliProvider::Claude,
+        Some("opus"),
+        &node,
+        None,
+        "prompt A",
+    );
+    assert_eq!(k1, k2);
+
+    let k_diff_prompt = build_cache_key(
+        LlmCliProvider::Claude,
+        Some("opus"),
+        &node,
+        None,
+        "prompt B",
+    );
+    assert_ne!(k1, k_diff_prompt);
+
+    let k_diff_model = build_cache_key(
+        LlmCliProvider::Claude,
+        Some("sonnet"),
+        &node,
+        None,
+        "prompt A",
+    );
+    assert_ne!(k1, k_diff_model);
+}
+
+#[tokio::test]
+async fn codergen_cache_hit_skips_cli() {
+    use attractor_types::Context;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let handler = CodergenHandler;
+
+    let mut node = make_node("route", "diamond", Some("Decide the route"), HashMap::new());
+    node.node_type = Some("conditional".into());
+    let graph = make_minimal_graph();
+
+    let ctx = Context::default();
+    ctx.set(
+        "__cache_mode",
+        serde_json::Value::String("readwrite".into()),
+    )
+    .await;
+    ctx.set(
+        "__cache_dir",
+        serde_json::Value::String(tmp.path().to_string_lossy().into_owned()),
+    )
+    .await;
+
+    // Compute the key exactly as execute() will, and seed a result at it.
+    let snapshot = ctx.snapshot().await;
+    let full_prompt = assemble_prompt(&node, &graph, &snapshot);
+    let key = build_cache_key(LlmCliProvider::Claude, None, &node, None, &full_prompt);
+
+    let cache = attractor_cache::Cache::new(attractor_cache::CacheConfig::new(
+        attractor_cache::CacheMode::ReadWrite,
+        Some(tmp.path().to_path_buf()),
+        None,
+    ));
+    let entry = attractor_cache::CacheEntry::new(
+        "Claude Code",
+        "Decision: GO\nGO",
+        Some(0.42),
+        Some(2),
+        Some("GO".into()),
+    );
+    cache.put(&key, &entry).unwrap();
+
+    // Execute — a hit must return the cached result without spawning `claude`.
+    let outcome = handler.execute(&node, &ctx, &graph).await.unwrap();
+    assert_eq!(outcome.status, StageStatus::Success);
+    assert_eq!(outcome.preferred_label.as_deref(), Some("GO"));
+    assert_eq!(outcome.notes, "Decision: GO\nGO");
+    assert_eq!(
+        outcome.context_updates.get("route.cache_hit"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        outcome.context_updates.get("route.cost_usd"),
+        Some(&serde_json::json!(0.0))
+    );
+    assert_eq!(
+        outcome.context_updates.get("route.cache_saved_usd"),
+        Some(&serde_json::json!(0.42))
+    );
+}
+
+#[test]
+fn cached_outcome_reports_zero_cost_and_saved() {
+    let node = make_node("route", "diamond", Some("decide"), HashMap::new());
+    let entry = attractor_cache::CacheEntry::new(
+        "Claude Code",
+        "result text",
+        Some(0.5),
+        Some(1),
+        Some("YES".into()),
+    );
+    let outcome = cached_outcome(&node, LlmCliProvider::Claude, &entry);
+    assert_eq!(outcome.preferred_label.as_deref(), Some("YES"));
+    assert_eq!(
+        outcome.context_updates.get("route.completed"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        outcome.context_updates.get("route.cost_usd"),
+        Some(&serde_json::json!(0.0))
+    );
+    assert_eq!(
+        outcome.context_updates.get("route.cache_saved_usd"),
+        Some(&serde_json::json!(0.5))
+    );
+}

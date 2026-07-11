@@ -1,2 +1,0 @@
-crates/attractor-pipeline/src/handlers/codergen_handler.rs:462:5: replace cache_from_context -> attractor_cache::Cache with Default::default()
-crates/attractor-pipeline/src/handlers/codergen_handler.rs:490:5: replace cached_outcome -> Outcome with Default::default()

@@ -1,0 +1,24 @@
+--- crates/attractor-pipeline/src/graph.rs
++++ replace get_string_attr -> Option<String> with Some("xyzzy".into())
+@@ -48,20 +48,17 @@
+     pub fidelity: Option<String>,
+     pub thread_id: Option<String>,
+     pub loop_restart: bool,
+ }
+ 
+ // --- Attribute extraction helpers ---
+ 
+ fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+-    attrs.get(key).and_then(|v| match v {
+-        AttributeValue::String(s) => Some(s.clone()),
+-        _ => None,
+-    })
++    Some("xyzzy".into()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn get_bool_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<bool> {
+     attrs.get(key).and_then(|v| match v {
+         AttributeValue::Boolean(b) => Some(*b),
+         AttributeValue::String(s) => Some(s == "true"),
+         _ => None,
+     })

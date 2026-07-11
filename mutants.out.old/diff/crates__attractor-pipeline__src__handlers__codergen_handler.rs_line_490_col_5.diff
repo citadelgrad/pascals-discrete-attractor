@@ -1,0 +1,58 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace cached_outcome -> Outcome with Default::default()
+@@ -482,54 +482,14 @@
+ 
+ /// Synthesize the same `Outcome` a live call would produce, from a cache hit.
+ /// Cost is reported as 0 (the saved amount is surfaced under `.cache_saved_usd`).
+ fn cached_outcome(
+     node: &PipelineNode,
+     provider: LlmCliProvider,
+     entry: &attractor_cache::CacheEntry,
+ ) -> Outcome {
+-    let mut updates = HashMap::new();
+-    updates.insert(
+-        format!("{}.completed", node.id),
+-        serde_json::Value::Bool(true),
+-    );
+-    updates.insert(
+-        format!("{}.result", node.id),
+-        serde_json::Value::String(entry.result_text.clone()),
+-    );
+-    updates.insert(
+-        format!("{}.provider", node.id),
+-        serde_json::Value::String(provider.display_name().into()),
+-    );
+-    // A hit costs nothing; record the avoided spend for the run summary.
+-    updates.insert(format!("{}.cost_usd", node.id), serde_json::json!(0.0));
+-    updates.insert(
+-        format!("{}.cache_hit", node.id),
+-        serde_json::Value::Bool(true),
+-    );
+-    updates.insert(
+-        format!("{}.cache_saved_usd", node.id),
+-        serde_json::json!(entry.cost_usd.unwrap_or(0.0)),
+-    );
+-    if let Some(turns) = entry.turns {
+-        updates.insert(format!("{}.turns", node.id), serde_json::json!(turns));
+-    }
+-    if let Some(ref lbl) = entry.label {
+-        updates.insert(
+-            format!("{}.label", node.id),
+-            serde_json::Value::String(lbl.clone()),
+-        );
+-    }
+-
+-    Outcome {
+-        status: StageStatus::Success,
+-        preferred_label: entry.label.clone(),
+-        suggested_next_ids: vec![],
+-        context_updates: updates,
+-        notes: entry.result_text.clone(),
+-        failure_reason: None,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ #[path = "codergen_handler_tests.rs"]
+ mod tests;

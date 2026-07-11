@@ -469,15 +469,20 @@ async fn cache_from_context(context: &Context) -> attractor_cache::Cache {
         .get("__cache_dir")
         .await
         .and_then(|v| v.as_str().map(std::path::PathBuf::from));
-    let ttl = context
-        .get("__cache_ttl_days")
-        .await
-        .and_then(|v| v.as_u64())
-        // 0 days means "no expiry" (matches the unset default); saturate to avoid
-        // an overflow panic on absurd values.
-        .filter(|&d| d > 0)
-        .map(|d| std::time::Duration::from_secs(d.saturating_mul(86_400)));
+    let ttl = ttl_from_days(
+        context
+            .get("__cache_ttl_days")
+            .await
+            .and_then(|v| v.as_u64()),
+    );
     attractor_cache::Cache::new(attractor_cache::CacheConfig::new(mode, root, ttl))
+}
+
+/// Convert a `--cache-ttl-days` value into a cache TTL. `None` and `Some(0)` both
+/// mean "no expiry"; large values saturate rather than overflowing.
+fn ttl_from_days(days: Option<u64>) -> Option<std::time::Duration> {
+    days.filter(|&d| d > 0)
+        .map(|d| std::time::Duration::from_secs(d.saturating_mul(86_400)))
 }
 
 /// Synthesize the same `Outcome` a live call would produce, from a cache hit.

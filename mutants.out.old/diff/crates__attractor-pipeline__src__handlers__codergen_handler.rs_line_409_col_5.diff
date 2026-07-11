@@ -1,0 +1,29 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace is_cacheable_node -> bool with true
+@@ -401,25 +401,17 @@
+ ///
+ /// Conditional/routing nodes are cacheable by default because their output is a
+ /// single label consumed by edge selection, with nothing to replay — **except**
+ /// when the node sits in a directed cycle. A cached routing label would pin a
+ /// retry/fix loop forever (a live, non-deterministic run eventually routes out;
+ /// a cached one cannot), forcing a `max_steps` abort. Loop-resident routing must
+ /// re-evaluate live, so those nodes are not cached unless explicitly `cache="ro"`.
+ fn is_cacheable_node(node: &PipelineNode, graph: &PipelineGraph) -> bool {
+-    match node.raw_attrs.get("cache") {
+-        Some(AttributeValue::String(s)) if s.eq_ignore_ascii_case("off") => return false,
+-        Some(AttributeValue::String(s)) if s.eq_ignore_ascii_case("ro") => return true,
+-        Some(AttributeValue::Boolean(false)) => return false,
+-        _ => {}
+-    }
+-    let is_conditional =
+-        node.shape == "diamond" || node.node_type.as_deref() == Some("conditional");
+-    is_conditional && !graph.node_in_cycle(&node.id)
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn string_attr<'a>(node: &'a PipelineNode, key: &str) -> Option<&'a str> {
+     match node.raw_attrs.get(key) {
+         Some(AttributeValue::String(s)) => Some(s.as_str()),
+         _ => None,
+     }
+ }

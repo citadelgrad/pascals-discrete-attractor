@@ -1,0 +1,28 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace build_cache_key -> String with "xyzzy".into()
+@@ -431,24 +431,17 @@
+ /// project trees can never collide (the CLI reads/writes files relative to it).
+ fn build_cache_key(
+     provider: LlmCliProvider,
+     model: Option<&str>,
+     node: &PipelineNode,
+     workdir: &str,
+     full_prompt: &str,
+ ) -> String {
+-    attractor_cache::CacheKey::new()
+-        .field("provider", provider.binary_name())
+-        .field_opt("model", model)
+-        .field_opt("allowed_tools", string_attr(node, "allowed_tools"))
+-        .field_opt("max_budget_usd", string_attr(node, "max_budget_usd"))
+-        .field("workdir", workdir)
+-        .field("prompt", full_prompt)
+-        .finish()
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The directory the CLI will actually run in: the node's explicit workdir, or
+ /// the process current directory when unset (which the spawned CLI inherits).
+ fn effective_workdir(workdir: Option<&str>) -> String {
+     workdir.map(str::to_string).unwrap_or_else(|| {
+         std::env::current_dir()
+             .map(|p| p.to_string_lossy().into_owned())

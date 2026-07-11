@@ -437,6 +437,9 @@ async fn codergen_cache_hit_skips_cli() {
 
     let mut node = make_node("route", "diamond", Some("Decide the route"), HashMap::new());
     node.node_type = Some("conditional".into());
+    // Short timeout so that if a regression ever defeats the cache and the CLI is
+    // actually spawned, the test fails fast instead of hanging on a real process.
+    node.timeout = Some(std::time::Duration::from_millis(200));
     let graph = make_minimal_graph();
 
     let ctx = Context::default();
@@ -518,4 +521,150 @@ fn cached_outcome_reports_zero_cost_and_saved() {
         outcome.context_updates.get("route.cache_saved_usd"),
         Some(&serde_json::json!(0.5))
     );
+}
+
+// --- Mutation-coverage tests for the pure cache helpers ---
+
+#[test]
+fn ttl_from_days_none_and_zero_mean_no_expiry() {
+    assert_eq!(ttl_from_days(None), None);
+    assert_eq!(ttl_from_days(Some(0)), None);
+}
+
+#[test]
+fn ttl_from_days_positive_is_days_in_seconds() {
+    assert_eq!(
+        ttl_from_days(Some(7)),
+        Some(std::time::Duration::from_secs(7 * 86_400))
+    );
+    // Absurd values saturate rather than overflowing.
+    assert_eq!(
+        ttl_from_days(Some(u64::MAX)),
+        Some(std::time::Duration::from_secs(u64::MAX))
+    );
+}
+
+#[test]
+fn string_attr_reads_present_and_absent() {
+    let mut attrs = HashMap::new();
+    attrs.insert(
+        "allowed_tools".to_string(),
+        AttributeValue::String("Read,Write".into()),
+    );
+    attrs.insert("weight".to_string(), AttributeValue::Integer(3));
+    let node = make_node("n", "box", Some("x"), attrs);
+
+    assert_eq!(string_attr(&node, "allowed_tools"), Some("Read,Write"));
+    assert_eq!(string_attr(&node, "missing"), None);
+    // Non-string attribute value is not returned as a string.
+    assert_eq!(string_attr(&node, "weight"), None);
+}
+
+#[test]
+fn build_cache_key_reflects_allowed_tools() {
+    let plain = make_node("n", "box", Some("x"), HashMap::new());
+    let mut with_tools = HashMap::new();
+    with_tools.insert(
+        "allowed_tools".to_string(),
+        AttributeValue::String("Read".into()),
+    );
+    let toolful = make_node("n", "box", Some("x"), with_tools);
+
+    let k_plain = build_cache_key(LlmCliProvider::Claude, None, &plain, "/w", "p");
+    let k_tools = build_cache_key(LlmCliProvider::Claude, None, &toolful, "/w", "p");
+    assert_ne!(k_plain, k_tools);
+}
+
+#[test]
+fn effective_workdir_uses_explicit_then_cwd() {
+    assert_eq!(effective_workdir(Some("/explicit/dir")), "/explicit/dir");
+    // Unset resolves to a non-empty current directory (never a fixed constant).
+    let cwd = effective_workdir(None);
+    assert!(!cwd.is_empty());
+    assert_eq!(
+        cwd,
+        std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    );
+}
+
+#[test]
+fn is_cacheable_boolean_false_opts_out() {
+    let graph = make_minimal_graph();
+    let mut attrs = HashMap::new();
+    attrs.insert("cache".to_string(), AttributeValue::Boolean(false));
+    let node = make_node("route", "diamond", Some("decide"), attrs);
+    assert!(!is_cacheable_node(&node, &graph));
+}
+
+#[test]
+fn is_cacheable_unrecognized_cache_value_falls_through_to_shape() {
+    let graph = make_minimal_graph();
+    let mut attrs = HashMap::new();
+    // A cache value that is neither "off" nor "ro" must not opt a box node in.
+    attrs.insert("cache".to_string(), AttributeValue::String("maybe".into()));
+    let box_node = make_node("work", "box", Some("x"), attrs.clone());
+    assert!(!is_cacheable_node(&box_node, &graph));
+    // ...but a conditional node stays cacheable by the shape rule.
+    let diamond = make_node("route", "diamond", Some("x"), attrs);
+    assert!(is_cacheable_node(&diamond, &graph));
+}
+
+#[test]
+fn assemble_prompt_includes_goal_only_when_present() {
+    let node = make_node("n", "box", Some("task"), HashMap::new());
+    let empty_snap = HashMap::new();
+
+    let with_goal = parse_graph(r#"digraph G { goal="Ship it"  A -> B }"#);
+    let p = assemble_prompt(&node, &with_goal, &empty_snap);
+    assert!(p.contains("Pipeline goal: Ship it"));
+
+    // make_minimal_graph has no goal.
+    let no_goal = make_minimal_graph();
+    let p2 = assemble_prompt(&node, &no_goal, &empty_snap);
+    assert!(!p2.contains("Pipeline goal:"));
+}
+
+#[test]
+fn assemble_prompt_adds_label_instruction_only_for_labeled_conditional() {
+    let empty_snap = HashMap::new();
+    let node = make_node("route", "diamond", Some("decide"), HashMap::new());
+
+    let labeled = parse_graph(
+        r#"digraph C {
+            route [shape="diamond"]
+            route -> a [label="YES"]
+            route -> b [label="NO"]
+        }"#,
+    );
+    let p = assemble_prompt(&node, &labeled, &empty_snap);
+    assert!(p.contains("You MUST end your response with exactly one of these labels"));
+    assert!(p.contains("YES") && p.contains("NO"));
+
+    // A conditional node whose out-edges have no labels gets no instruction.
+    let unlabeled =
+        parse_graph(r#"digraph C2 { route [shape="diamond"]  route -> a  route -> b }"#);
+    let p2 = assemble_prompt(&node, &unlabeled, &empty_snap);
+    assert!(!p2.contains("You MUST end your response"));
+}
+
+#[test]
+fn assemble_prompt_label_instruction_for_box_typed_conditional() {
+    // shape != "diamond" but type == "conditional" must still add the label
+    // instruction. This pins the node_type branch of the condition independently
+    // of the shape branch (which otherwise short-circuits it).
+    let empty_snap = HashMap::new();
+    let mut node = make_node("route", "box", Some("decide"), HashMap::new());
+    node.node_type = Some("conditional".into());
+
+    let g = parse_graph(
+        r#"digraph C3 {
+            route -> a [label="YES"]
+            route -> b [label="NO"]
+        }"#,
+    );
+    let p = assemble_prompt(&node, &g, &empty_snap);
+    assert!(p.contains("You MUST end your response with exactly one of these labels"));
 }

@@ -1,0 +1,2023 @@
+
+*** crates/attractor-pipeline/src/graph.rs:56:5: replace get_string_attr -> Option<String> with Some(String::new())
+
+*** mutation diff:
+--- crates/attractor-pipeline/src/graph.rs
++++ replace get_string_attr -> Option<String> with Some(String::new())
+@@ -48,20 +48,17 @@
+     pub fidelity: Option<String>,
+     pub thread_id: Option<String>,
+     pub loop_restart: bool,
+ }
+ 
+ // --- Attribute extraction helpers ---
+ 
+ fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+-    attrs.get(key).and_then(|v| match v {
+-        AttributeValue::String(s) => Some(s.clone()),
+-        _ => None,
+-    })
++    Some(String::new()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn get_bool_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<bool> {
+     attrs.get(key).and_then(|v| match v {
+         AttributeValue::Boolean(b) => Some(*b),
+         AttributeValue::String(s) => Some(s == "true"),
+         _ => None,
+     })
+
+
+*** /root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=attractor-pipeline@0.7.2
+       Fresh unicode-ident v1.0.23
+       Fresh cfg-if v1.0.4
+       Fresh proc-macro2 v1.0.106
+       Fresh smallvec v1.15.1
+       Fresh pin-project-lite v0.2.16
+       Fresh quote v1.0.44
+       Fresh libc v0.2.181
+       Fresh bytes v1.11.1
+       Fresh shlex v1.3.0
+       Fresh syn v2.0.114
+       Fresh itoa v1.0.17
+       Fresh find-msvc-tools v0.1.9
+       Fresh scopeguard v1.2.0
+       Fresh synstructure v0.13.2
+       Fresh parking_lot_core v0.9.12
+       Fresh cc v1.2.55
+       Fresh lock_api v0.4.14
+       Fresh zerofrom-derive v0.1.6
+       Fresh yoke-derive v0.8.1
+       Fresh errno v0.3.14
+       Fresh stable_deref_trait v1.2.1
+       Fresh zerofrom v0.1.6
+       Fresh signal-hook-registry v1.4.8
+       Fresh serde_core v1.0.228
+       Fresh parking_lot v0.12.5
+       Fresh tokio-macros v2.6.0
+       Fresh yoke v0.8.1
+       Fresh mio v1.1.1
+       Fresh socket2 v0.6.2
+       Fresh once_cell v1.21.3
+       Fresh zerovec-derive v0.11.2
+       Fresh tokio v1.49.0
+       Fresh memchr v2.8.0
+       Fresh futures-core v0.3.31
+       Fresh zerovec v0.11.5
+       Fresh displaydoc v0.2.5
+       Fresh tracing-core v0.1.36
+       Fresh serde_derive v1.0.228
+       Fresh tracing-attributes v0.1.31
+       Fresh autocfg v1.5.0
+       Fresh tracing v0.1.44
+       Fresh serde v1.0.228
+       Fresh tinystr v0.8.2
+       Fresh litemap v0.8.1
+       Fresh writeable v0.6.2
+       Fresh getrandom v0.3.4
+       Fresh icu_locale_core v2.1.1
+       Fresh zmij v1.0.20
+       Fresh zerotrie v0.2.3
+       Fresh potential_utf v0.1.4
+       Fresh http v1.4.0
+       Fresh zeroize v1.8.2
+       Fresh pin-utils v0.1.0
+       Fresh icu_collections v2.1.1
+       Fresh rustls-pki-types v1.14.0
+       Fresh http-body v1.0.1
+       Fresh serde_json v1.0.149
+       Fresh icu_provider v2.1.1
+       Fresh num-traits v0.2.19
+       Fresh getrandom v0.2.17
+       Fresh percent-encoding v2.3.2
+       Fresh futures-task v0.3.31
+       Fresh untrusted v0.9.0
+       Fresh iana-time-zone v0.1.65
+       Fresh bitflags v2.10.0
+       Fresh futures-util v0.3.31
+       Fresh ring v0.17.14
+       Fresh chrono v0.4.43
+       Fresh icu_properties_data v2.1.2
+       Fresh icu_normalizer_data v2.1.1
+       Fresh thiserror-impl v2.0.18
+       Fresh tower-service v0.3.3
+       Fresh try-lock v0.2.5
+       Fresh icu_normalizer v2.1.1
+       Fresh icu_properties v2.1.2
+       Fresh want v0.3.1
+       Fresh thiserror v2.0.18
+       Fresh httparse v1.10.1
+       Fresh rustls-webpki v0.103.13
+       Fresh futures-channel v0.3.31
+       Fresh subtle v2.6.1
+       Fresh atomic-waker v1.1.2
+       Fresh idna_adapter v1.2.1
+       Fresh form_urlencoded v1.2.2
+       Fresh hyper v1.8.1
+       Fresh rustls v0.23.36
+       Fresh uuid v1.20.0
+       Fresh sync_wrapper v1.0.2
+       Fresh aho-corasick v1.1.4
+       Fresh ipnet v2.11.0
+       Fresh base64 v0.22.1
+       Fresh utf8_iter v1.0.4
+       Fresh regex-syntax v0.8.9
+       Fresh tower-layer v0.3.3
+       Fresh log v0.4.29
+       Fresh tower v0.5.3
+       Fresh regex-automata v0.4.14
+       Fresh hyper-util v0.1.20
+       Fresh idna v1.1.0
+       Fresh tokio-rustls v0.26.4
+       Fresh attractor-types v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-types)
+       Fresh webpki-roots v1.0.6
+       Fresh ryu v1.0.23
+       Fresh iri-string v0.7.10
+       Fresh linux-raw-sys v0.11.0
+       Fresh futures-sink v0.3.31
+       Fresh option-ext v0.2.0
+       Fresh rustix v1.1.3
+       Fresh tokio-util v0.7.18
+       Fresh tower-http v0.6.8
+       Fresh dirs-sys v0.4.1
+       Fresh serde_urlencoded v0.7.1
+       Fresh url v2.5.8
+       Fresh hyper-rustls v0.27.7
+       Fresh http-body-util v0.1.3
+       Fresh bstr v1.12.1
+       Fresh async-trait v0.1.89
+       Fresh arrayvec v0.7.6
+       Fresh constant_time_eq v0.4.2
+       Fresh cpufeatures v0.3.0
+       Fresh winnow v1.0.3
+       Fresh arrayref v0.3.9
+       Fresh fastrand v2.3.0
+       Fresh globset v0.4.18
+       Fresh dirs v5.0.1
+       Fresh toml_parser v1.1.2+spec-1.1.0
+       Fresh tempfile v3.25.0
+       Fresh blake3 v1.8.5
+       Fresh reqwest v0.12.28
+       Fresh regex v1.12.3
+       Fresh tokio-stream v0.1.18
+       Fresh toml_datetime v1.1.1+spec-1.1.0
+       Fresh serde_spanned v1.1.1
+       Fresh toml_writer v1.1.1+spec-1.1.0
+       Fresh attractor-tools v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-tools)
+       Fresh toml v1.1.2+spec-1.1.0
+       Fresh attractor-llm v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-llm)
+       Fresh winnow v0.7.14
+       Fresh attractor-cache v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-cache)
+       Fresh attractor-agent v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-agent)
+       Fresh attractor-quality v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-quality)
+       Fresh attractor-dot v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-dot)
+       Dirty attractor-pipeline v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-pipeline): the file `crates/attractor-pipeline/src/graph.rs` has changed (1783790352.700221783s, 2s after last build at 1783790350.582962674s)
+   Compiling attractor-pipeline v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-pipeline)
+     Running `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name attractor_pipeline --edition=2021 crates/attractor-pipeline/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=87e6c046b42df151 -C extra-filename=-53d2f20af9db50d5 --out-dir /tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps --extern async_trait=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libasync_trait-d440a1bc6bb02540.so --extern attractor_agent=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_agent-f68a550b0a42ca15.rlib --extern attractor_cache=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_cache-707eddb840bdbf22.rlib --extern attractor_dot=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_dot-f3e07cd093e0febc.rlib --extern attractor_llm=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_llm-cc4adc90f802e3c2.rlib --extern attractor_quality=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_quality-213534f61bc6fd2b.rlib --extern attractor_tools=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_tools-23a7c921d5105e1a.rlib --extern attractor_types=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_types-e37127f599fffb9e.rlib --extern blake3=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libblake3-c918c2470a938b30.rlib --extern chrono=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libchrono-9da1a5957b428fa7.rlib --extern libc=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/liblibc-32fcc9eeba854d0b.rlib --extern regex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libregex-7f3852679806c0a5.rlib --extern serde=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde-eb10f3593c51b526.rlib --extern serde_json=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde_json-c681c820a00139b9.rlib --extern shlex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libshlex-9371f4510f7fff97.rlib --extern tempfile=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtempfile-cacdd849809834bd.rlib --extern thiserror=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libthiserror-ca59d0e048229e07.rlib --extern tokio=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtokio-5ae23dac84d7e408.rlib --extern tracing=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtracing-b4cb96a2c380748a.rlib --extern uuid=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libuuid-8d3c8fefd9efaa22.rlib -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/ring-0c161d6b79c4b84b/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out`
+     Running `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name attractor_pipeline --edition=2021 crates/attractor-pipeline/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=158b0ee8aa2c69e4 -C extra-filename=-6ed6e5bc9a87f451 --out-dir /tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps --extern async_trait=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libasync_trait-d440a1bc6bb02540.so --extern attractor_agent=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_agent-f68a550b0a42ca15.rmeta --extern attractor_cache=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_cache-707eddb840bdbf22.rmeta --extern attractor_dot=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_dot-f3e07cd093e0febc.rmeta --extern attractor_llm=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_llm-cc4adc90f802e3c2.rmeta --extern attractor_quality=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_quality-213534f61bc6fd2b.rmeta --extern attractor_tools=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_tools-23a7c921d5105e1a.rmeta --extern attractor_types=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_types-e37127f599fffb9e.rmeta --extern blake3=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libblake3-c918c2470a938b30.rmeta --extern chrono=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libchrono-9da1a5957b428fa7.rmeta --extern libc=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/liblibc-32fcc9eeba854d0b.rmeta --extern regex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libregex-7f3852679806c0a5.rmeta --extern serde=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde-eb10f3593c51b526.rmeta --extern serde_json=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde_json-c681c820a00139b9.rmeta --extern shlex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libshlex-9371f4510f7fff97.rmeta --extern thiserror=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libthiserror-ca59d0e048229e07.rmeta --extern tokio=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtokio-5ae23dac84d7e408.rmeta --extern tracing=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtracing-b4cb96a2c380748a.rmeta --extern uuid=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libuuid-8d3c8fefd9efaa22.rmeta -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/ring-0c161d6b79c4b84b/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out`
+warning: unused variable: `attrs`
+  --> crates/attractor-pipeline/src/graph.rs:55:20
+   |
+55 | fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+   |                    ^^^^^ help: if this is intentional, prefix it with an underscore: `_attrs`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `key`
+  --> crates/attractor-pipeline/src/graph.rs:55:61
+   |
+55 | fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+   |                                                             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused import: `attractor_dot::AttributeValue`
+   --> crates/attractor-pipeline/src/preflight.rs:132:9
+    |
+132 |     use attractor_dot::AttributeValue;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_node_with_type` is never used
+   --> crates/attractor-pipeline/src/preflight.rs:137:8
+    |
+137 |     fn make_node_with_type(id: &str, node_type: &str) -> crate::graph::PipelineNode {
+    |        ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_plain_node` is never used
+   --> crates/attractor-pipeline/src/preflight.rs:161:8
+    |
+161 |     fn make_plain_node(id: &str) -> crate::graph::PipelineNode {
+    |        ^^^^^^^^^^^^^^^
+
+warning: `attractor-pipeline` (lib) generated 2 warnings (run `cargo fix --lib -p attractor-pipeline` to apply 2 suggestions)
+     Running `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name integration_advanced --edition=2021 crates/attractor-pipeline/tests/integration_advanced.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=7c88bc1b63a0873d -C extra-filename=-14cacf50326130fe --out-dir /tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps --extern async_trait=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libasync_trait-d440a1bc6bb02540.so --extern attractor_agent=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_agent-f68a550b0a42ca15.rlib --extern attractor_cache=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_cache-707eddb840bdbf22.rlib --extern attractor_dot=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_dot-f3e07cd093e0febc.rlib --extern attractor_llm=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_llm-cc4adc90f802e3c2.rlib --extern attractor_pipeline=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_pipeline-6ed6e5bc9a87f451.rlib --extern attractor_quality=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_quality-213534f61bc6fd2b.rlib --extern attractor_tools=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_tools-23a7c921d5105e1a.rlib --extern attractor_types=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_types-e37127f599fffb9e.rlib --extern blake3=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libblake3-c918c2470a938b30.rlib --extern chrono=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libchrono-9da1a5957b428fa7.rlib --extern libc=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/liblibc-32fcc9eeba854d0b.rlib --extern regex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libregex-7f3852679806c0a5.rlib --extern serde=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde-eb10f3593c51b526.rlib --extern serde_json=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde_json-c681c820a00139b9.rlib --extern shlex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libshlex-9371f4510f7fff97.rlib --extern tempfile=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtempfile-cacdd849809834bd.rlib --extern thiserror=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libthiserror-ca59d0e048229e07.rlib --extern tokio=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtokio-5ae23dac84d7e408.rlib --extern tracing=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtracing-b4cb96a2c380748a.rlib --extern uuid=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libuuid-8d3c8fefd9efaa22.rlib -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/ring-0c161d6b79c4b84b/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out`
+     Running `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name integration --edition=2021 crates/attractor-pipeline/tests/integration.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=9ecc632fdda48079 -C extra-filename=-d99d66d751953e44 --out-dir /tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps --extern async_trait=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libasync_trait-d440a1bc6bb02540.so --extern attractor_agent=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_agent-f68a550b0a42ca15.rlib --extern attractor_cache=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_cache-707eddb840bdbf22.rlib --extern attractor_dot=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_dot-f3e07cd093e0febc.rlib --extern attractor_llm=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_llm-cc4adc90f802e3c2.rlib --extern attractor_pipeline=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_pipeline-6ed6e5bc9a87f451.rlib --extern attractor_quality=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_quality-213534f61bc6fd2b.rlib --extern attractor_tools=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_tools-23a7c921d5105e1a.rlib --extern attractor_types=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libattractor_types-e37127f599fffb9e.rlib --extern blake3=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libblake3-c918c2470a938b30.rlib --extern chrono=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libchrono-9da1a5957b428fa7.rlib --extern libc=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/liblibc-32fcc9eeba854d0b.rlib --extern regex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libregex-7f3852679806c0a5.rlib --extern serde=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde-eb10f3593c51b526.rlib --extern serde_json=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libserde_json-c681c820a00139b9.rlib --extern shlex=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libshlex-9371f4510f7fff97.rlib --extern tempfile=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtempfile-cacdd849809834bd.rlib --extern thiserror=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libthiserror-ca59d0e048229e07.rlib --extern tokio=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtokio-5ae23dac84d7e408.rlib --extern tracing=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libtracing-b4cb96a2c380748a.rlib --extern uuid=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/libuuid-8d3c8fefd9efaa22.rlib -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/ring-0c161d6b79c4b84b/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out -L native=/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/build/blake3-df5b519c3e9841e9/out`
+warning: unused imports: `AtomicUsize` and `Ordering`
+ --> crates/attractor-pipeline/tests/integration.rs:6:25
+  |
+6 | use std::sync::atomic::{AtomicUsize, Ordering};
+  |                         ^^^^^^^^^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::sync::Arc`
+ --> crates/attractor-pipeline/tests/integration.rs:7:5
+  |
+7 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: `attractor-pipeline` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p attractor-pipeline` to apply 2 suggestions)
+warning: `attractor-pipeline` (lib test) generated 5 warnings (2 duplicates) (run `cargo fix --lib -p attractor-pipeline --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.63s
+  Executable `/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/attractor_pipeline-53d2f20af9db50d5`
+  Executable `/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/integration-d99d66d751953e44`
+  Executable `/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/integration_advanced-14cacf50326130fe`
+
+*** result: Success
+
+*** /root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=attractor-pipeline@0.7.2
+       Fresh unicode-ident v1.0.23
+       Fresh cfg-if v1.0.4
+       Fresh proc-macro2 v1.0.106
+       Fresh smallvec v1.15.1
+       Fresh pin-project-lite v0.2.16
+       Fresh quote v1.0.44
+       Fresh libc v0.2.181
+       Fresh bytes v1.11.1
+       Fresh find-msvc-tools v0.1.9
+       Fresh syn v2.0.114
+       Fresh itoa v1.0.17
+       Fresh shlex v1.3.0
+       Fresh synstructure v0.13.2
+       Fresh scopeguard v1.2.0
+       Fresh cc v1.2.55
+       Fresh parking_lot_core v0.9.12
+       Fresh zerofrom-derive v0.1.6
+       Fresh lock_api v0.4.14
+       Fresh yoke-derive v0.8.1
+       Fresh errno v0.3.14
+       Fresh stable_deref_trait v1.2.1
+       Fresh zerofrom v0.1.6
+       Fresh signal-hook-registry v1.4.8
+       Fresh parking_lot v0.12.5
+       Fresh serde_core v1.0.228
+       Fresh tokio-macros v2.6.0
+       Fresh yoke v0.8.1
+       Fresh socket2 v0.6.2
+       Fresh mio v1.1.1
+       Fresh once_cell v1.21.3
+       Fresh zerovec-derive v0.11.2
+       Fresh tokio v1.49.0
+       Fresh futures-core v0.3.31
+       Fresh memchr v2.8.0
+       Fresh zerovec v0.11.5
+       Fresh displaydoc v0.2.5
+       Fresh tracing-core v0.1.36
+       Fresh serde_derive v1.0.228
+       Fresh tracing-attributes v0.1.31
+       Fresh autocfg v1.5.0
+       Fresh tracing v0.1.44
+       Fresh serde v1.0.228
+       Fresh tinystr v0.8.2
+       Fresh litemap v0.8.1
+       Fresh writeable v0.6.2
+       Fresh zmij v1.0.20
+       Fresh icu_locale_core v2.1.1
+       Fresh getrandom v0.3.4
+       Fresh potential_utf v0.1.4
+       Fresh zerotrie v0.2.3
+       Fresh http v1.4.0
+       Fresh pin-utils v0.1.0
+       Fresh zeroize v1.8.2
+       Fresh icu_provider v2.1.1
+       Fresh http-body v1.0.1
+       Fresh rustls-pki-types v1.14.0
+       Fresh serde_json v1.0.149
+       Fresh num-traits v0.2.19
+       Fresh icu_collections v2.1.1
+       Fresh getrandom v0.2.17
+       Fresh bitflags v2.10.0
+       Fresh futures-task v0.3.31
+       Fresh iana-time-zone v0.1.65
+       Fresh percent-encoding v2.3.2
+       Fresh untrusted v0.9.0
+       Fresh chrono v0.4.43
+       Fresh futures-util v0.3.31
+       Fresh ring v0.17.14
+       Fresh icu_normalizer_data v2.1.1
+       Fresh icu_properties_data v2.1.2
+       Fresh thiserror-impl v2.0.18
+       Fresh tower-service v0.3.3
+       Fresh try-lock v0.2.5
+       Fresh httparse v1.10.1
+       Fresh icu_properties v2.1.2
+       Fresh want v0.3.1
+       Fresh rustls-webpki v0.103.13
+       Fresh icu_normalizer v2.1.1
+       Fresh thiserror v2.0.18
+       Fresh futures-channel v0.3.31
+       Fresh atomic-waker v1.1.2
+       Fresh subtle v2.6.1
+       Fresh idna_adapter v1.2.1
+       Fresh form_urlencoded v1.2.2
+       Fresh rustls v0.23.36
+       Fresh hyper v1.8.1
+       Fresh uuid v1.20.0
+       Fresh aho-corasick v1.1.4
+       Fresh sync_wrapper v1.0.2
+       Fresh utf8_iter v1.0.4
+       Fresh base64 v0.22.1
+       Fresh ipnet v2.11.0
+       Fresh regex-syntax v0.8.9
+       Fresh tower-layer v0.3.3
+       Fresh log v0.4.29
+       Fresh idna v1.1.0
+       Fresh regex-automata v0.4.14
+       Fresh hyper-util v0.1.20
+       Fresh tower v0.5.3
+       Fresh attractor-types v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-types)
+       Fresh tokio-rustls v0.26.4
+       Fresh webpki-roots v1.0.6
+       Fresh ryu v1.0.23
+       Fresh futures-sink v0.3.31
+       Fresh iri-string v0.7.10
+       Fresh linux-raw-sys v0.11.0
+       Fresh option-ext v0.2.0
+       Fresh tokio-util v0.7.18
+       Fresh tower-http v0.6.8
+       Fresh rustix v1.1.3
+       Fresh dirs-sys v0.4.1
+       Fresh serde_urlencoded v0.7.1
+       Fresh hyper-rustls v0.27.7
+       Fresh url v2.5.8
+       Fresh http-body-util v0.1.3
+       Fresh bstr v1.12.1
+       Fresh async-trait v0.1.89
+       Fresh constant_time_eq v0.4.2
+       Fresh arrayvec v0.7.6
+       Fresh winnow v1.0.3
+       Fresh fastrand v2.3.0
+       Fresh arrayref v0.3.9
+       Fresh cpufeatures v0.3.0
+       Fresh toml_parser v1.1.2+spec-1.1.0
+       Fresh globset v0.4.18
+       Fresh blake3 v1.8.5
+       Fresh tempfile v3.25.0
+       Fresh dirs v5.0.1
+       Fresh reqwest v0.12.28
+       Fresh regex v1.12.3
+       Fresh tokio-stream v0.1.18
+       Fresh toml_datetime v1.1.1+spec-1.1.0
+       Fresh serde_spanned v1.1.1
+       Fresh toml_writer v1.1.1+spec-1.1.0
+       Fresh attractor-tools v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-tools)
+       Fresh attractor-llm v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-llm)
+       Fresh toml v1.1.2+spec-1.1.0
+       Fresh winnow v0.7.14
+       Fresh attractor-cache v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-cache)
+       Fresh attractor-quality v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-quality)
+       Fresh attractor-dot v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-dot)
+       Fresh attractor-agent v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-agent)
+warning: unused variable: `attrs`
+  --> crates/attractor-pipeline/src/graph.rs:55:20
+   |
+55 | fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+   |                    ^^^^^ help: if this is intentional, prefix it with an underscore: `_attrs`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `key`
+  --> crates/attractor-pipeline/src/graph.rs:55:61
+   |
+55 | fn get_string_attr(attrs: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
+   |                                                             ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused import: `attractor_dot::AttributeValue`
+   --> crates/attractor-pipeline/src/preflight.rs:132:9
+    |
+132 |     use attractor_dot::AttributeValue;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_node_with_type` is never used
+   --> crates/attractor-pipeline/src/preflight.rs:137:8
+    |
+137 |     fn make_node_with_type(id: &str, node_type: &str) -> crate::graph::PipelineNode {
+    |        ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `make_plain_node` is never used
+   --> crates/attractor-pipeline/src/preflight.rs:161:8
+    |
+161 |     fn make_plain_node(id: &str) -> crate::graph::PipelineNode {
+    |        ^^^^^^^^^^^^^^^
+
+warning: `attractor-pipeline` (lib) generated 2 warnings (run `cargo fix --lib -p attractor-pipeline` to apply 2 suggestions)
+warning: `attractor-pipeline` (lib test) generated 5 warnings (2 duplicates) (run `cargo fix --lib -p attractor-pipeline --tests` to apply 1 suggestion)
+warning: unused imports: `AtomicUsize` and `Ordering`
+ --> crates/attractor-pipeline/tests/integration.rs:6:25
+  |
+6 | use std::sync::atomic::{AtomicUsize, Ordering};
+  |                         ^^^^^^^^^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::sync::Arc`
+ --> crates/attractor-pipeline/tests/integration.rs:7:5
+  |
+7 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+       Fresh attractor-pipeline v0.7.2 (/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/crates/attractor-pipeline)
+warning: `attractor-pipeline` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p attractor-pipeline` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running `/tmp/cargo-mutants-pascals-discrete-attractor-WgfdkG.tmp/target/debug/deps/attractor_pipeline-53d2f20af9db50d5`
+
+running 192 tests
+test checkpoint::tests::backward_compatibility_without_session_id ... ok
+test checkpoint::tests::load_from_nonexistent_directory_returns_none ... ok
+test checkpoint::tests::serialization_preserves_all_fields ... ok
+test condition::tests::compound_condition ... ok
+test checkpoint::tests::session_id_serialization ... ok
+test condition::tests::empty_condition_always_true ... ok
+test condition::tests::integer_values_as_strings ... ok
+test condition::tests::not_equal ... ok
+test condition::tests::missing_context_key_empty_string ... ok
+test checkpoint::tests::clear_removes_the_file ... ok
+test condition::tests::quoted_string_values ... ok
+test condition::tests::parse_error_invalid_syntax ... ok
+test condition::tests::simple_equality ... ok
+test checkpoint::tests::save_and_load_round_trip ... ok
+test edge_selection::tests::no_edges_returns_none ... ok
+test edge_selection::tests::step1_condition_match_takes_priority ... ok
+test edge_selection::tests::step2_preferred_label_match ... ok
+test edge_selection::tests::step4_highest_weight_wins ... ok
+test edge_selection::tests::step5_lexical_tiebreak ... ok
+test edge_selection::tests::label_normalization_strips_accelerators ... ok
+test edge_selection::tests::condition_false_skips_to_next_step ... FAILED
+test edge_selection::tests::step3_suggested_next_id ... FAILED
+test engine::tests::branching_pipeline_routes_on_condition ... FAILED
+test engine::tests::budget_limit_aborts_pipeline ... FAILED
+test engine::tests::executor_constructors ... ok
+test engine::tests::context_updates_propagate ... FAILED
+test engine::tests::context_based_conditions_resolve_from_context ... FAILED
+test engine::tests::goal_gate_failure_with_retry_loops_back ... FAILED
+test engine::tests::goal_gate_failure_with_retry_target_retries ... FAILED
+test engine::tests::goal_gate_failure_without_retry_returns_error ... FAILED
+test engine::tests::no_start_node_returns_error ... ok
+test engine::tests::linear_pipeline_completes ... FAILED
+test events::tests::emit_with_no_subscribers_does_not_panic ... ok
+test events::tests::emitter_sends_and_receives ... ok
+test engine::tests::step_limit_aborts_pipeline ... FAILED
+test events::tests::event_serialization_round_trip ... ok
+test goal_gate::tests::all_goal_gates_satisfied ... ok
+test events::tests::multiple_subscribers_receive_same_event ... ok
+test goal_gate::tests::non_goal_gate_nodes_ignored_even_if_failed ... ok
+test goal_gate::tests::only_visited_nodes_checked ... ok
+test goal_gate::tests::failed_goal_gate_without_retry_returns_error ... FAILED
+test goal_gate::tests::partial_success_counts_as_satisfied ... ok
+test goal_gate::tests::failed_goal_gate_with_retry_target ... FAILED
+test goal_gate::tests::four_level_retry_fallback_chain ... FAILED
+test graph::tests::default_shape_is_box ... FAILED
+test graph::tests::exit_node_finds_msquare ... FAILED
+test graph::tests::edge_weight_and_condition ... FAILED
+test graph::tests::goal_extracted_from_graph_attrs ... FAILED
+test graph::tests::node_in_cycle_detects_loops ... ok
+test graph::tests::from_dot_simple_linear_pipeline ... FAILED
+test graph::tests::start_node_finds_mdiamond ... FAILED
+test graph::tests::outgoing_edges_returns_correct_edges ... FAILED
+test graph::tests::start_node_falls_back_to_id ... ok
+test graph::tests::subgraph_nodes_included ... FAILED
+test graph::tests::typed_attribute_extraction ... ok
+test handler::tests::default_registry_has_builtins ... ok
+test handler::tests::exit_handler_returns_success ... ok
+test handler::tests::register_and_get_handler ... ok
+test handler::tests::resolve_type_conditional_with_prompt_becomes_codergen ... ok
+test handler::tests::resolve_type_conditional_without_prompt_stays_conditional ... ok
+test handler::tests::resolve_type_defaults_to_codergen ... ok
+test handler::tests::resolve_type_explicit_attribute ... ok
+test handler::tests::resolve_type_shape_mapping ... ok
+test handler::tests::resolve_type_explicit_conditional_with_prompt_becomes_codergen ... ok
+test handlers::codergen_handler::provider::head_tests::returns_whole_string_when_shorter_than_max ... ok
+test handlers::codergen_handler::provider::head_tests::truncates_multibyte_without_panicking ... ok
+test handler::tests::start_handler_returns_success ... ok
+test handlers::codergen_handler::tests::assemble_prompt_is_deterministic_and_contains_task ... ok
+test handlers::codergen_handler::tests::assemble_prompt_label_instruction_for_box_typed_conditional ... ok
+test handlers::codergen_handler::tests::build_cache_key_reflects_allowed_tools ... ok
+test handlers::codergen_handler::tests::build_cache_key_is_stable_and_input_sensitive ... ok
+test handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present ... FAILED
+test handlers::codergen_handler::tests::build_cli_command_codex_prompt_is_positional ... ok
+test handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional ... FAILED
+test handlers::codergen_handler::tests::build_cli_command_gemini_uses_approval_mode ... ok
+test handlers::codergen_handler::tests::cached_outcome_reports_zero_cost_and_saved ... ok
+test handlers::codergen_handler::tests::build_cli_command_claude_has_json_output ... ok
+test handlers::codergen_handler::tests::effective_workdir_uses_explicit_then_cwd ... ok
+test handlers::codergen_handler::tests::extract_label_fallback_to_body_scan ... ok
+test handlers::codergen_handler::tests::extract_label_case_insensitive ... ok
+test handlers::codergen_handler::tests::codergen_dry_run_includes_provider ... ok
+test handlers::codergen_handler::tests::extract_label_returns_none_when_no_match ... ok
+test handlers::codergen_handler::tests::extract_label_finds_exact_last_line ... ok
+test handlers::codergen_handler::tests::is_cacheable_boolean_false_opts_out ... ok
+test handlers::codergen_handler::tests::is_cacheable_box_node_default_off ... ok
+test handlers::codergen_handler::tests::is_cacheable_conditional_by_default ... ok
+test handlers::codergen_handler::tests::codergen_cache_hit_skips_cli ... ok
+test handlers::codergen_handler::tests::is_cacheable_respects_ro_and_off_attrs ... ok
+test handlers::codergen_handler::tests::is_cacheable_excludes_conditional_in_a_loop ... ok
+test handlers::codergen_handler::tests::is_cacheable_unrecognized_cache_value_falls_through_to_shape ... ok
+test handlers::codergen_handler::tests::parse_claude_output_error ... ok
+test handlers::codergen_handler::tests::parse_claude_output_invalid_json ... ok
+test handlers::codergen_handler::tests::parse_cli_output_empty_stdout_errors ... ok
+test handlers::codergen_handler::tests::parse_claude_output_success ... ok
+test handlers::codergen_handler::tests::parse_codex_output_extracts_last_message ... ok
+test handlers::codergen_handler::tests::parse_codex_output_handles_turn_failed ... ok
+test handlers::codergen_handler::tests::parse_codex_output_handles_stream_error ... ok
+test handlers::codergen_handler::tests::parse_codex_output_skips_unknown_events ... ok
+test handlers::codergen_handler::tests::parse_gemini_output_error ... ok
+test handlers::codergen_handler::tests::parse_gemini_output_invalid_json ... ok
+test handlers::codergen_handler::tests::parse_gemini_output_success ... ok
+test handlers::codergen_handler::tests::provider_binary_names ... ok
+test handlers::codergen_handler::tests::provider_from_node_defaults_to_claude ... ok
+test handlers::codergen_handler::tests::provider_from_node_reads_llm_provider ... ok
+test handlers::codergen_handler::tests::provider_from_str_claude_variants ... ok
+test handlers::codergen_handler::tests::provider_from_str_codex_variants ... ok
+test handlers::codergen_handler::tests::provider_from_str_unknown_defaults_to_claude ... ok
+test handlers::codergen_handler::tests::string_attr_reads_present_and_absent ... ok
+test handlers::codergen_handler::tests::ttl_from_days_none_and_zero_mean_no_expiry ... ok
+test handlers::codergen_handler::tests::ttl_from_days_positive_is_days_in_seconds ... ok
+test handlers::codergen_handler::tests::provider_from_str_gemini_variants ... ok
+test handlers::manager::tests::manager_handler_type ... ok
+test handlers::manager::tests::manager_handler_default_prompt ... ok
+test handlers::manager::tests::manager_handler_returns_success ... ok
+test handlers::parallel::tests::fan_in_handler_returns_success ... ok
+test handlers::parallel::tests::parallel_handler_returns_branch_targets ... ok
+test handlers::quality_handler_tests::tests::quality_handler_disabled_via_node_attribute_returns_success ... ok
+test handlers::quality_handler_tests::tests::quality_handler_disabled_via_runtime_flag_returns_success ... ok
+test handlers::quality_handler_tests::tests::quality_handler_errors_on_missing_quality_checks ... ok
+test handlers::quality_handler_tests::tests::quality_handler_empty_manifest_stages_fall_back_to_attr ... ok
+test handlers::quality_handler_tests::tests::quality_handler_fail_fast_on_first_failure ... ok
+test handlers::quality_handler_tests::tests::quality_handler_all_checks_pass_returns_success ... ok
+test handlers::quality_handler_tests::tests::quality_handler_registers_in_default_registry ... ok
+test handlers::quality_handler_tests::tests::quality_handler_failure_footprint_set_on_fail ... ok
+test handlers::quality_handler_tests::tests::truncate_head_tail_keeps_head_and_tail ... ok
+test handlers::quality_handler_tests::tests::truncate_head_tail_short_text_unchanged ... ok
+test handlers::quality_handler_tests::tests::quality_handler_failure_summary_contains_stderr ... ok
+test handlers::tool_handler::tests::tool_handler_dry_run_skips_execution ... ok
+test handlers::tool_handler::tests::tool_handler_captures_failure ... ok
+test handlers::quality_handler_tests::tests::quality_handler_two_node_pipeline_pass_then_fail ... ok
+test handlers::tool_handler::tests::tool_handler_errors_on_missing_command ... ok
+test handlers::wait_human::tests::returns_preferred_label_from_answer ... ok
+test handlers::wait_human::tests::derives_choices_from_edges ... FAILED
+test handlers::tool_handler::tests::tool_handler_executes_command ... ok
+test handlers::quality_handler_tests::tests::quality_handler_manifest_stages_run_in_order ... ok
+test handlers::wait_human::tests::uses_continue_when_no_edge_labels ... FAILED
+test handlers::wait_human::tests::uses_label_as_prompt_fallback ... ok
+test interviewer::tests::auto_approve_picks_default_when_set ... ok
+test interviewer::tests::auto_approve_picks_first_choice ... ok
+test interviewer::tests::recording_plays_back_answers ... ok
+test preflight::tests::detects_quality_via_handler_attr ... ok
+test preflight::tests::no_quality_node_detection ... ok
+test preflight::tests::no_quality_node_produces_no_warnings_even_without_manifest ... ok
+test retry::tests::default_backoff_is_exponential ... ok
+test preflight::tests::quality_with_manifest_produces_no_warnings ... ok
+test retry::tests::exponential_backoff_doubles_and_caps ... ok
+test retry::tests::fixed_backoff_constant_delay ... ok
+test retry::tests::non_retryable_error_no_retry ... ok
+test preflight::tests::quality_without_manifest_produces_exactly_one_warning ... FAILED
+test preflight::tests::resolve_called_once_per_run_call_not_accumulated ... FAILED
+test retry::tests::none_backoff_zero_delay ... ok
+test retry::tests::retry_on_retryable_error_succeeds ... ok
+test retry::tests::success_on_first_try ... ok
+test retry::tests::max_retries_exhausted ... ok
+test stylesheet::tests::apply_id_overrides_class_specificity ... FAILED
+test retry::tests::retry_on_retry_status_outcome ... ok
+test stylesheet::tests::explicit_node_attribute_overrides_stylesheet ... FAILED
+test retry::tests::retry_status_on_final_attempt_returned ... ok
+test stylesheet::tests::parse_class_selector_rule ... ok
+test stylesheet::tests::apply_universal_sets_model_on_all_nodes ... FAILED
+test stylesheet::tests::parse_empty_input_is_error ... ok
+test stylesheet::tests::parse_id_selector_rule ... ok
+test stylesheet::tests::parse_multiple_rules ... ok
+test stylesheet::tests::parse_trailing_semicolon_optional ... ok
+test stylesheet::tests::parse_universal_selector_rule ... ok
+test stylesheet::tests::specificity_ordering ... ok
+test transforms::tests::apply_transforms_no_stylesheet_is_ok ... ok
+test transforms::tests::apply_transforms_expands_prompt_variables ... FAILED
+test transforms::tests::expand_empty_template ... ok
+test transforms::tests::apply_transforms_prompt_without_variables_unchanged ... FAILED
+test transforms::tests::expand_multiple_variables ... ok
+test transforms::tests::apply_transforms_with_model_stylesheet ... FAILED
+test transforms::tests::expand_no_matches_leaves_template_unchanged ... ok
+test transforms::tests::expand_same_variable_multiple_times ... ok
+test transforms::tests::expand_single_variable ... ok
+test validation::tests::edge_to_nonexistent_node_error ... ok
+test validation::tests::exit_with_outgoing_edges_error ... ok
+test validation::tests::fidelity_valid_rule ... ok
+test validation::tests::missing_start_node_error ... ok
+test validation::tests::missing_terminal_node_error ... ok
+test validation::tests::goal_gate_without_retry_target_warning ... FAILED
+test validation::tests::invalid_condition_syntax_error ... FAILED
+test validation::tests::provider_valid_skips_nodes_without_provider ... ok
+test validation::tests::retry_target_nonexistent_warning ... ok
+test validation::tests::provider_valid_warns_on_unknown ... FAILED
+test validation::tests::start_with_incoming_edges_error ... ok
+test validation::tests::valid_fidelity_values_accepted ... ok
+test validation::tests::provider_valid_accepts_known_providers ... ok
+test validation::tests::unreachable_node_error ... ok
+test validation::tests::validate_or_raise_errors_for_invalid_graph ... ok
+test validation::tests::valid_pipeline_passes ... ok
+test validation::tests::validate_or_raise_ok_for_valid_graph ... ok
+
+failures:
+
+---- edge_selection::tests::condition_false_skips_to_next_step stdout ----
+
+thread 'edge_selection::tests::condition_false_skips_to_next_step' (27413) panicked at crates/attractor-pipeline/src/edge_selection.rs:229:9:
+assertion `left == right` failed
+  left: "B"
+ right: "C"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::edge_selection::tests::condition_false_skips_to_next_step
+             at ./src/edge_selection.rs:229:9
+   5: attractor_pipeline::edge_selection::tests::condition_false_skips_to_next_step::{{closure}}
+             at ./src/edge_selection.rs:218:44
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- edge_selection::tests::step3_suggested_next_id stdout ----
+
+thread 'edge_selection::tests::step3_suggested_next_id' (27418) panicked at crates/attractor-pipeline/src/edge_selection.rs:170:9:
+assertion `left == right` failed
+  left: "B"
+ right: "C"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::edge_selection::tests::step3_suggested_next_id
+             at ./src/edge_selection.rs:170:9
+   5: attractor_pipeline::edge_selection::tests::step3_suggested_next_id::{{closure}}
+             at ./src/edge_selection.rs:159:33
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::branching_pipeline_routes_on_condition stdout ----
+
+thread 'engine::tests::branching_pipeline_routes_on_condition' (27421) panicked at crates/attractor-pipeline/src/engine_tests.rs:102:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::branching_pipeline_routes_on_condition::{{closure}}
+             at ./src/engine_tests.rs:102:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::branching_pipeline_routes_on_condition
+             at ./src/engine_tests.rs:105:70
+  27: attractor_pipeline::engine::tests::branching_pipeline_routes_on_condition::{{closure}}
+             at ./src/engine_tests.rs:84:50
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::budget_limit_aborts_pipeline stdout ----
+
+thread 'engine::tests::budget_limit_aborts_pipeline' (27422) panicked at crates/attractor-pipeline/src/engine_tests.rs:475:5:
+Expected budget error, got: Handler '' failed on node 'start': No handler registered for type ''
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::engine::tests::budget_limit_aborts_pipeline::{{closure}}
+             at ./src/engine_tests.rs:475:5
+   3: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   4: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   5: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   6: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   7: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+   8: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+   9: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  11: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  12: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  13: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  14: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  15: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  16: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  17: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  18: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  19: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  20: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  22: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  23: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  24: attractor_pipeline::engine::tests::budget_limit_aborts_pipeline
+             at ./src/engine_tests.rs:478:6
+  25: attractor_pipeline::engine::tests::budget_limit_aborts_pipeline::{{closure}}
+             at ./src/engine_tests.rs:417:40
+  26: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  27: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::context_updates_propagate stdout ----
+
+thread 'engine::tests::context_updates_propagate' (27424) panicked at crates/attractor-pipeline/src/engine_tests.rs:148:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::context_updates_propagate::{{closure}}
+             at ./src/engine_tests.rs:148:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::context_updates_propagate
+             at ./src/engine_tests.rs:165:6
+  27: attractor_pipeline::engine::tests::context_updates_propagate::{{closure}}
+             at ./src/engine_tests.rs:136:37
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::context_based_conditions_resolve_from_context stdout ----
+
+thread 'engine::tests::context_based_conditions_resolve_from_context' (27423) panicked at crates/attractor-pipeline/src/engine_tests.rs:362:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::context_based_conditions_resolve_from_context::{{closure}}
+             at ./src/engine_tests.rs:362:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::context_based_conditions_resolve_from_context
+             at ./src/engine_tests.rs:373:6
+  27: attractor_pipeline::engine::tests::context_based_conditions_resolve_from_context::{{closure}}
+             at ./src/engine_tests.rs:305:57
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::goal_gate_failure_with_retry_loops_back stdout ----
+
+thread 'engine::tests::goal_gate_failure_with_retry_loops_back' (27426) panicked at crates/attractor-pipeline/src/engine_tests.rs:182:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_loops_back::{{closure}}
+             at ./src/engine_tests.rs:182:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_loops_back
+             at ./src/engine_tests.rs:185:66
+  27: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_loops_back::{{closure}}
+             at ./src/engine_tests.rs:170:51
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::goal_gate_failure_with_retry_target_retries stdout ----
+
+thread 'engine::tests::goal_gate_failure_with_retry_target_retries' (27427) panicked at crates/attractor-pipeline/src/engine_tests.rs:294:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_target_retries::{{closure}}
+             at ./src/engine_tests.rs:294:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_target_retries
+             at ./src/engine_tests.rs:300:53
+  27: attractor_pipeline::engine::tests::goal_gate_failure_with_retry_target_retries::{{closure}}
+             at ./src/engine_tests.rs:243:55
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::goal_gate_failure_without_retry_returns_error stdout ----
+
+thread 'engine::tests::goal_gate_failure_without_retry_returns_error' (27428) panicked at crates/attractor-pipeline/src/engine_tests.rs:237:18:
+Expected GoalGateUnsatisfied, got: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::engine::tests::goal_gate_failure_without_retry_returns_error::{{closure}}
+             at ./src/engine_tests.rs:237:18
+   3: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   4: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   5: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   6: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   7: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+   8: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+   9: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  11: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  12: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  13: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  14: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  15: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  16: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  17: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  18: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  19: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  20: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  22: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  23: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  24: attractor_pipeline::engine::tests::goal_gate_failure_without_retry_returns_error
+             at ./src/engine_tests.rs:233:15
+  25: attractor_pipeline::engine::tests::goal_gate_failure_without_retry_returns_error::{{closure}}
+             at ./src/engine_tests.rs:190:57
+  26: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  27: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::linear_pipeline_completes stdout ----
+
+thread 'engine::tests::linear_pipeline_completes' (27429) panicked at crates/attractor-pipeline/src/engine_tests.rs:71:45:
+called `Result::unwrap()` on an `Err` value: HandlerError { handler: "", node: "start", message: "No handler registered for type ''" }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1233:23
+   4: attractor_pipeline::engine::tests::linear_pipeline_completes::{{closure}}
+             at ./src/engine_tests.rs:71:45
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::engine::tests::linear_pipeline_completes
+             at ./src/engine_tests.rs:79:74
+  27: attractor_pipeline::engine::tests::linear_pipeline_completes::{{closure}}
+             at ./src/engine_tests.rs:61:37
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- engine::tests::step_limit_aborts_pipeline stdout ----
+
+thread 'engine::tests::step_limit_aborts_pipeline' (27431) panicked at crates/attractor-pipeline/src/engine_tests.rs:409:5:
+Expected step limit error, got: Handler '' failed on node 'start': No handler registered for type ''
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::engine::tests::step_limit_aborts_pipeline::{{closure}}
+             at ./src/engine_tests.rs:409:5
+   3: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   4: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   5: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   6: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   7: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+   8: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+   9: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  11: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  12: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  13: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  14: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  15: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  16: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  17: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  18: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  19: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  20: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  22: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  23: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  24: attractor_pipeline::engine::tests::step_limit_aborts_pipeline
+             at ./src/engine_tests.rs:412:6
+  25: attractor_pipeline::engine::tests::step_limit_aborts_pipeline::{{closure}}
+             at ./src/engine_tests.rs:390:38
+  26: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  27: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- goal_gate::tests::failed_goal_gate_without_retry_returns_error stdout ----
+
+thread 'goal_gate::tests::failed_goal_gate_without_retry_returns_error' (27438) panicked at crates/attractor-pipeline/src/goal_gate.rs:155:54:
+called `Result::unwrap_err()` on an `Ok` value: GoalGateResult { all_satisfied: false, failed_node_id: Some("review"), retry_target: Some("") }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1867:5
+   3: core::result::Result<T,E>::unwrap_err
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/result.rs:1329:22
+   4: attractor_pipeline::goal_gate::tests::failed_goal_gate_without_retry_returns_error
+             at ./src/goal_gate.rs:155:54
+   5: attractor_pipeline::goal_gate::tests::failed_goal_gate_without_retry_returns_error::{{closure}}
+             at ./src/goal_gate.rs:144:54
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- goal_gate::tests::failed_goal_gate_with_retry_target stdout ----
+
+thread 'goal_gate::tests::failed_goal_gate_with_retry_target' (27437) panicked at crates/attractor-pipeline/src/goal_gate.rs:140:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("draft")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::goal_gate::tests::failed_goal_gate_with_retry_target
+             at ./src/goal_gate.rs:140:9
+   5: attractor_pipeline::goal_gate::tests::failed_goal_gate_with_retry_target::{{closure}}
+             at ./src/goal_gate.rs:126:44
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- goal_gate::tests::four_level_retry_fallback_chain stdout ----
+
+thread 'goal_gate::tests::four_level_retry_fallback_chain' (27439) panicked at crates/attractor-pipeline/src/goal_gate.rs:211:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("node_rt")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::goal_gate::tests::four_level_retry_fallback_chain
+             at ./src/goal_gate.rs:211:9
+   5: attractor_pipeline::goal_gate::tests::four_level_retry_fallback_chain::{{closure}}
+             at ./src/goal_gate.rs:201:41
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::default_shape_is_box stdout ----
+
+thread 'graph::tests::default_shape_is_box' (27443) panicked at crates/attractor-pipeline/src/graph.rs:473:9:
+assertion `left == right` failed
+  left: ""
+ right: "box"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::graph::tests::default_shape_is_box
+             at ./src/graph.rs:473:9
+   5: attractor_pipeline::graph::tests::default_shape_is_box::{{closure}}
+             at ./src/graph.rs:466:30
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::exit_node_finds_msquare stdout ----
+
+thread 'graph::tests::exit_node_finds_msquare' (27445) panicked at crates/attractor-pipeline/src/graph.rs:351:35:
+called `Option::unwrap()` on a `None` value
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: core::option::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/option.rs:2199:5
+   4: core::option::Option<T>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/option.rs:1016:21
+   5: attractor_pipeline::graph::tests::exit_node_finds_msquare
+             at ./src/graph.rs:351:35
+   6: attractor_pipeline::graph::tests::exit_node_finds_msquare::{{closure}}
+             at ./src/graph.rs:343:33
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   8: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::edge_weight_and_condition stdout ----
+
+thread 'graph::tests::edge_weight_and_condition' (27444) panicked at crates/attractor-pipeline/src/graph.rs:444:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("status == success")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::graph::tests::edge_weight_and_condition
+             at ./src/graph.rs:444:9
+   5: attractor_pipeline::graph::tests::edge_weight_and_condition::{{closure}}
+             at ./src/graph.rs:434:35
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::goal_extracted_from_graph_attrs stdout ----
+
+thread 'graph::tests::goal_extracted_from_graph_attrs' (27447) panicked at crates/attractor-pipeline/src/graph.rs:430:9:
+assertion `left == right` failed
+  left: ""
+ right: "Complete the pipeline"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::graph::tests::goal_extracted_from_graph_attrs
+             at ./src/graph.rs:430:9
+   5: attractor_pipeline::graph::tests::goal_extracted_from_graph_attrs::{{closure}}
+             at ./src/graph.rs:422:41
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::from_dot_simple_linear_pipeline stdout ----
+
+thread 'graph::tests::from_dot_simple_linear_pipeline' (27446) panicked at crates/attractor-pipeline/src/graph.rs:310:9:
+assertion `left == right` failed
+  left: ""
+ right: "Process Data"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::graph::tests::from_dot_simple_linear_pipeline
+             at ./src/graph.rs:310:9
+   5: attractor_pipeline::graph::tests::from_dot_simple_linear_pipeline::{{closure}}
+             at ./src/graph.rs:295:41
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::start_node_finds_mdiamond stdout ----
+
+thread 'graph::tests::start_node_finds_mdiamond' (27451) panicked at crates/attractor-pipeline/src/graph.rs:323:37:
+called `Option::unwrap()` on a `None` value
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: core::option::unwrap_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/option.rs:2199:5
+   4: core::option::Option<T>::unwrap
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/option.rs:1016:21
+   5: attractor_pipeline::graph::tests::start_node_finds_mdiamond
+             at ./src/graph.rs:323:37
+   6: attractor_pipeline::graph::tests::start_node_finds_mdiamond::{{closure}}
+             at ./src/graph.rs:314:35
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   8: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::outgoing_edges_returns_correct_edges stdout ----
+
+thread 'graph::tests::outgoing_edges_returns_correct_edges' (27449) panicked at crates/attractor-pipeline/src/graph.rs:369:9:
+assertion failed: labels.contains(&"first")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: attractor_pipeline::graph::tests::outgoing_edges_returns_correct_edges
+             at ./src/graph.rs:369:9
+   4: attractor_pipeline::graph::tests::outgoing_edges_returns_correct_edges::{{closure}}
+             at ./src/graph.rs:357:46
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- graph::tests::subgraph_nodes_included stdout ----
+
+thread 'graph::tests::subgraph_nodes_included' (27452) panicked at crates/attractor-pipeline/src/graph.rs:415:9:
+assertion `left == right` failed
+  left: ""
+ right: "ellipse"
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::graph::tests::subgraph_nodes_included
+             at ./src/graph.rs:415:9
+   5: attractor_pipeline::graph::tests::subgraph_nodes_included::{{closure}}
+             at ./src/graph.rs:397:33
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present stdout ----
+
+thread 'handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present' (27467) panicked at crates/attractor-pipeline/src/handlers/codergen_handler_tests.rs:619:5:
+assertion failed: p.contains("Pipeline goal: Ship it")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: attractor_pipeline::handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present
+             at ./src/handlers/codergen_handler_tests.rs:619:5
+   4: attractor_pipeline::handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present::{{closure}}
+             at ./src/handlers/codergen_handler_tests.rs:613:53
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional stdout ----
+
+thread 'handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional' (27466) panicked at crates/attractor-pipeline/src/handlers/codergen_handler_tests.rs:641:5:
+assertion failed: p.contains("YES") && p.contains("NO")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: attractor_pipeline::handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional
+             at ./src/handlers/codergen_handler_tests.rs:641:5
+   4: attractor_pipeline::handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional::{{closure}}
+             at ./src/handlers/codergen_handler_tests.rs:628:73
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- handlers::wait_human::tests::derives_choices_from_edges stdout ----
+
+thread 'handlers::wait_human::tests::derives_choices_from_edges' (27545) panicked at crates/attractor-pipeline/src/handlers/wait_human.rs:132:9:
+assertion failed: questions[0].choices.contains(&"Approve".to_string())
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::panic
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:150:5
+   3: attractor_pipeline::handlers::wait_human::tests::derives_choices_from_edges::{{closure}}
+             at ./src/handlers/wait_human.rs:132:9
+   4: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   7: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   8: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+   9: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  10: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  11: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  13: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  14: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  15: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  16: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  17: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  18: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  20: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  21: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  22: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  23: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  24: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  25: attractor_pipeline::handlers::wait_human::tests::derives_choices_from_edges
+             at ./src/handlers/wait_human.rs:133:70
+  26: attractor_pipeline::handlers::wait_human::tests::derives_choices_from_edges::{{closure}}
+             at ./src/handlers/wait_human.rs:111:42
+  27: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- handlers::wait_human::tests::uses_continue_when_no_edge_labels stdout ----
+
+thread 'handlers::wait_human::tests::uses_continue_when_no_edge_labels' (27548) panicked at crates/attractor-pipeline/src/handlers/wait_human.rs:178:9:
+assertion `left == right` failed
+  left: [""]
+ right: ["Continue"]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::handlers::wait_human::tests::uses_continue_when_no_edge_labels::{{closure}}
+             at ./src/handlers/wait_human.rs:178:9
+   5: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   6: <core::pin::Pin<P> as core::future::future::Future>::poll
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/future/future.rs:133:9
+   7: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:70
+   8: tokio::task::coop::with_budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:167:5
+   9: tokio::task::coop::budget
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/task/coop/mod.rs:133:5
+  10: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:753:25
+  11: tokio::runtime::scheduler::current_thread::Context::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:442:19
+  12: tokio::runtime::scheduler::current_thread::CoreGuard::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:752:44
+  13: tokio::runtime::scheduler::current_thread::CoreGuard::enter::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:68
+  14: tokio::runtime::context::scoped::Scoped<T>::set
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/scoped.rs:40:9
+  15: tokio::runtime::context::set_scheduler::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:38
+  16: std::thread::local::LocalKey<T>::try_with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:513:12
+  17: std::thread::local::LocalKey<T>::with
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/thread/local.rs:477:20
+  18: tokio::runtime::context::set_scheduler
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context.rs:176:17
+  19: tokio::runtime::scheduler::current_thread::CoreGuard::enter
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:840:27
+  20: tokio::runtime::scheduler::current_thread::CoreGuard::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:740:24
+  21: tokio::runtime::scheduler::current_thread::CurrentThread::block_on::{{closure}}
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:200:33
+  22: tokio::runtime::context::runtime::enter_runtime
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/context/runtime.rs:65:16
+  23: tokio::runtime::scheduler::current_thread::CurrentThread::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/scheduler/current_thread/mod.rs:188:9
+  24: tokio::runtime::runtime::Runtime::block_on_inner
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:368:52
+  25: tokio::runtime::runtime::Runtime::block_on
+             at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.49.0/src/runtime/runtime.rs:342:18
+  26: attractor_pipeline::handlers::wait_human::tests::uses_continue_when_no_edge_labels
+             at ./src/handlers/wait_human.rs:178:71
+  27: attractor_pipeline::handlers::wait_human::tests::uses_continue_when_no_edge_labels::{{closure}}
+             at ./src/handlers/wait_human.rs:155:49
+  28: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+  29: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- preflight::tests::quality_without_manifest_produces_exactly_one_warning stdout ----
+
+thread 'preflight::tests::quality_without_manifest_produces_exactly_one_warning' (27557) panicked at crates/attractor-pipeline/src/preflight.rs:249:9:
+assertion `left == right` failed: expected exactly 1 finding, got: []
+  left: 0
+ right: 1
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:434:23
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::preflight::tests::quality_without_manifest_produces_exactly_one_warning
+             at ./src/preflight.rs:249:9
+   5: attractor_pipeline::preflight::tests::quality_without_manifest_produces_exactly_one_warning::{{closure}}
+             at ./src/preflight.rs:242:63
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- preflight::tests::resolve_called_once_per_run_call_not_accumulated stdout ----
+
+thread 'preflight::tests::resolve_called_once_per_run_call_not_accumulated' (27558) panicked at crates/attractor-pipeline/src/preflight.rs:287:13:
+assertion `left == right` failed: iteration 0: expected exactly 1 finding (resolve called once per run)
+  left: 0
+ right: 1
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:434:23
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::preflight::tests::resolve_called_once_per_run_call_not_accumulated
+             at ./src/preflight.rs:287:13
+   5: attractor_pipeline::preflight::tests::resolve_called_once_per_run_call_not_accumulated::{{closure}}
+             at ./src/preflight.rs:280:58
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- stylesheet::tests::apply_id_overrides_class_specificity stdout ----
+
+thread 'stylesheet::tests::apply_id_overrides_class_specificity' (27569) panicked at crates/attractor-pipeline/src/stylesheet.rs:422:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("analyze-model")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::stylesheet::tests::apply_id_overrides_class_specificity
+             at ./src/stylesheet.rs:422:9
+   5: attractor_pipeline::stylesheet::tests::apply_id_overrides_class_specificity::{{closure}}
+             at ./src/stylesheet.rs:410:46
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- stylesheet::tests::explicit_node_attribute_overrides_stylesheet stdout ----
+
+thread 'stylesheet::tests::explicit_node_attribute_overrides_stylesheet' (27571) panicked at crates/attractor-pipeline/src/stylesheet.rs:437:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("explicit-model")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::stylesheet::tests::explicit_node_attribute_overrides_stylesheet
+             at ./src/stylesheet.rs:437:9
+   5: attractor_pipeline::stylesheet::tests::explicit_node_attribute_overrides_stylesheet::{{closure}}
+             at ./src/stylesheet.rs:426:54
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- stylesheet::tests::apply_universal_sets_model_on_all_nodes stdout ----
+
+thread 'stylesheet::tests::apply_universal_sets_model_on_all_nodes' (27570) panicked at crates/attractor-pipeline/src/stylesheet.rs:400:13:
+assertion `left == right` failed: node 'analyze' should have llm_model set
+  left: Some("")
+ right: Some("default-model")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:434:23
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::stylesheet::tests::apply_universal_sets_model_on_all_nodes
+             at ./src/stylesheet.rs:400:13
+   5: attractor_pipeline::stylesheet::tests::apply_universal_sets_model_on_all_nodes::{{closure}}
+             at ./src/stylesheet.rs:394:49
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- transforms::tests::apply_transforms_expands_prompt_variables stdout ----
+
+thread 'transforms::tests::apply_transforms_expands_prompt_variables' (27579) panicked at crates/attractor-pipeline/src/transforms.rs:163:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("Write a Rust program for 2024")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::transforms::tests::apply_transforms_expands_prompt_variables
+             at ./src/transforms.rs:163:9
+   5: attractor_pipeline::transforms::tests::apply_transforms_expands_prompt_variables::{{closure}}
+             at ./src/transforms.rs:150:51
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- transforms::tests::apply_transforms_prompt_without_variables_unchanged stdout ----
+
+thread 'transforms::tests::apply_transforms_prompt_without_variables_unchanged' (27581) panicked at crates/attractor-pipeline/src/transforms.rs:193:9:
+assertion `left == right` failed
+  left: Some("")
+ right: Some("No variables here")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:439:17
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::transforms::tests::apply_transforms_prompt_without_variables_unchanged
+             at ./src/transforms.rs:193:9
+   5: attractor_pipeline::transforms::tests::apply_transforms_prompt_without_variables_unchanged::{{closure}}
+             at ./src/transforms.rs:182:61
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- transforms::tests::apply_transforms_with_model_stylesheet stdout ----
+
+thread 'transforms::tests::apply_transforms_with_model_stylesheet' (27582) panicked at crates/attractor-pipeline/src/transforms.rs:140:13:
+assertion `left == right` failed: node 'done' should have llm_model set by stylesheet
+  left: Some("")
+ right: Some("test-model")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:434:23
+   3: core::panicking::assert_failed
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:394:5
+   4: attractor_pipeline::transforms::tests::apply_transforms_with_model_stylesheet
+             at ./src/transforms.rs:140:13
+   5: attractor_pipeline::transforms::tests::apply_transforms_with_model_stylesheet::{{closure}}
+             at ./src/transforms.rs:127:48
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- validation::tests::goal_gate_without_retry_target_warning stdout ----
+
+thread 'validation::tests::goal_gate_without_retry_target_warning' (27591) panicked at crates/attractor-pipeline/src/validation_tests.rs:147:5:
+Expected goal_gate_has_retry warning, got: [Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'gate' has invalid fidelity value ''", node_id: Some("gate"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'start' has invalid fidelity value ''", node_id: Some("start"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'done' has invalid fidelity value ''", node_id: Some("done"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge gate -> done has invalid fidelity value ''", node_id: None, edge: Some(("gate", "done")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge start -> gate has invalid fidelity value ''", node_id: None, edge: Some(("start", "gate")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'gate' has retry_target '' which does not exist", node_id: Some("gate"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'gate' has fallback_retry_target '' which does not exist", node_id: Some("gate"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has fallback_retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has fallback_retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::validation::tests::goal_gate_without_retry_target_warning
+             at ./src/validation_tests.rs:147:5
+   3: attractor_pipeline::validation::tests::goal_gate_without_retry_target_warning::{{closure}}
+             at ./src/validation_tests.rs:137:44
+   4: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- validation::tests::invalid_condition_syntax_error stdout ----
+
+thread 'validation::tests::invalid_condition_syntax_error' (27592) panicked at crates/attractor-pipeline/src/validation_tests.rs:128:5:
+Expected condition_syntax error, got: [Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'start' has invalid fidelity value ''", node_id: Some("start"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'done' has invalid fidelity value ''", node_id: Some("done"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'a' has invalid fidelity value ''", node_id: Some("a"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge a -> done has invalid fidelity value ''", node_id: None, edge: Some(("a", "done")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge start -> a has invalid fidelity value ''", node_id: None, edge: Some(("start", "a")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has fallback_retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has fallback_retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'a' has retry_target '' which does not exist", node_id: Some("a"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'a' has fallback_retry_target '' which does not exist", node_id: Some("a"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::validation::tests::invalid_condition_syntax_error
+             at ./src/validation_tests.rs:128:5
+   3: attractor_pipeline::validation::tests::invalid_condition_syntax_error::{{closure}}
+             at ./src/validation_tests.rs:117:36
+   4: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- validation::tests::provider_valid_warns_on_unknown stdout ----
+
+thread 'validation::tests::provider_valid_warns_on_unknown' (27597) panicked at crates/attractor-pipeline/src/validation_tests.rs:244:5:
+Expected provider_valid warning for unknown provider, got: [Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'done' has invalid fidelity value ''", node_id: Some("done"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'start' has invalid fidelity value ''", node_id: Some("start"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Node 'step' has invalid fidelity value ''", node_id: Some("step"), edge: None, fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge start -> step has invalid fidelity value ''", node_id: None, edge: Some(("start", "step")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "fidelity_valid", severity: Warning, message: "Edge step -> done has invalid fidelity value ''", node_id: None, edge: Some(("step", "done")), fix: Some("Use one of: full, truncate, compact, summary, summary:<level>") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'done' has fallback_retry_target '' which does not exist", node_id: Some("done"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'start' has fallback_retry_target '' which does not exist", node_id: Some("start"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'step' has retry_target '' which does not exist", node_id: Some("step"), edge: None, fix: Some("Add node '' or fix retry_target") }, Diagnostic { rule: "retry_target_exists", severity: Warning, message: "Node 'step' has fallback_retry_target '' which does not exist", node_id: Some("step"), edge: None, fix: Some("Add node '' or fix fallback_retry_target") }]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/panicking.rs:80:14
+   2: attractor_pipeline::validation::tests::provider_valid_warns_on_unknown
+             at ./src/validation_tests.rs:244:5
+   3: attractor_pipeline::validation::tests::provider_valid_warns_on_unknown::{{closure}}
+             at ./src/validation_tests.rs:234:37
+   4: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+   5: core::ops::function::FnOnce::call_once
+             at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    edge_selection::tests::condition_false_skips_to_next_step
+    edge_selection::tests::step3_suggested_next_id
+    engine::tests::branching_pipeline_routes_on_condition
+    engine::tests::budget_limit_aborts_pipeline
+    engine::tests::context_based_conditions_resolve_from_context
+    engine::tests::context_updates_propagate
+    engine::tests::goal_gate_failure_with_retry_loops_back
+    engine::tests::goal_gate_failure_with_retry_target_retries
+    engine::tests::goal_gate_failure_without_retry_returns_error
+    engine::tests::linear_pipeline_completes
+    engine::tests::step_limit_aborts_pipeline
+    goal_gate::tests::failed_goal_gate_with_retry_target
+    goal_gate::tests::failed_goal_gate_without_retry_returns_error
+    goal_gate::tests::four_level_retry_fallback_chain
+    graph::tests::default_shape_is_box
+    graph::tests::edge_weight_and_condition
+    graph::tests::exit_node_finds_msquare
+    graph::tests::from_dot_simple_linear_pipeline
+    graph::tests::goal_extracted_from_graph_attrs
+    graph::tests::outgoing_edges_returns_correct_edges
+    graph::tests::start_node_finds_mdiamond
+    graph::tests::subgraph_nodes_included
+    handlers::codergen_handler::tests::assemble_prompt_adds_label_instruction_only_for_labeled_conditional
+    handlers::codergen_handler::tests::assemble_prompt_includes_goal_only_when_present
+    handlers::wait_human::tests::derives_choices_from_edges
+    handlers::wait_human::tests::uses_continue_when_no_edge_labels
+    preflight::tests::quality_without_manifest_produces_exactly_one_warning
+    preflight::tests::resolve_called_once_per_run_call_not_accumulated
+    stylesheet::tests::apply_id_overrides_class_specificity
+    stylesheet::tests::apply_universal_sets_model_on_all_nodes
+    stylesheet::tests::explicit_node_attribute_overrides_stylesheet
+    transforms::tests::apply_transforms_expands_prompt_variables
+    transforms::tests::apply_transforms_prompt_without_variables_unchanged
+    transforms::tests::apply_transforms_with_model_stylesheet
+    validation::tests::goal_gate_without_retry_target_warning
+    validation::tests::invalid_condition_syntax_error
+    validation::tests::provider_valid_warns_on_unknown
+
+test result: FAILED. 155 passed; 37 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p attractor-pipeline --lib`
+
+*** result: Failure(101)

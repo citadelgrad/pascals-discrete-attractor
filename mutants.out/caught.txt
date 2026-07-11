@@ -1,0 +1,3 @@
+crates/attractor-cli/src/main.rs:288:5: replace resolve_cache_mode -> attractor_cache::CacheMode with Default::default()
+crates/attractor-cli/src/main.rs:293:21: replace || with && in resolve_cache_mode
+crates/attractor-cli/src/main.rs:293:62: replace == with != in resolve_cache_mode

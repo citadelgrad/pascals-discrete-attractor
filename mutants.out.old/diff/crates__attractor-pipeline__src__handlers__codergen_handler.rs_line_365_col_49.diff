@@ -1,0 +1,21 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace || with && in assemble_prompt
+@@ -357,17 +357,17 @@
+     let mut full_prompt = String::new();
+ 
+     if !graph.goal.is_empty() {
+         full_prompt.push_str(&format!("Pipeline goal: {}\n\n", graph.goal));
+     }
+ 
+     let mut context_keys: Vec<_> = snapshot
+         .iter()
+-        .filter(|(k, _)| k.ends_with(".result") || k.ends_with(".output"))
++        .filter(|(k, _)| k.ends_with(".result") && /* ~ changed by cargo-mutants ~ */ k.ends_with(".output"))
+         .collect();
+     context_keys.sort_by(|a, b| a.0.cmp(b.0));
+     if !context_keys.is_empty() {
+         full_prompt.push_str("Context from prior pipeline steps:\n");
+         for (k, v) in &context_keys {
+             if let serde_json::Value::String(s) = v {
+                 full_prompt.push_str(&format!("- {}: {}\n", k, s));
+             } else {

@@ -1,0 +1,25 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace effective_workdir -> String with String::new()
+@@ -444,21 +444,17 @@
+         .field("workdir", workdir)
+         .field("prompt", full_prompt)
+         .finish()
+ }
+ 
+ /// The directory the CLI will actually run in: the node's explicit workdir, or
+ /// the process current directory when unset (which the spawned CLI inherits).
+ fn effective_workdir(workdir: Option<&str>) -> String {
+-    workdir.map(str::to_string).unwrap_or_else(|| {
+-        std::env::current_dir()
+-            .map(|p| p.to_string_lossy().into_owned())
+-            .unwrap_or_default()
+-    })
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build a [`Cache`](attractor_cache::Cache) from run-level settings carried in
+ /// the pipeline context (`__cache_mode`, `__cache_dir`, `__cache_ttl_days`).
+ async fn cache_from_context(context: &Context) -> attractor_cache::Cache {
+     let mode = context
+         .get("__cache_mode")
+         .await

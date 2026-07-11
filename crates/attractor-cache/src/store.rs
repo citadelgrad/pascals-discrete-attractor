@@ -220,6 +220,26 @@ mod tests {
     }
 
     #[test]
+    fn mode_returns_configured_mode() {
+        let dir = TempDir::new().unwrap();
+        for m in [CacheMode::Off, CacheMode::ReadWrite, CacheMode::Refresh] {
+            assert_eq!(cache_at(&dir, m, None).mode(), m);
+        }
+    }
+
+    #[test]
+    fn entry_path_shards_by_key_prefix() {
+        let dir = TempDir::new().unwrap();
+        let cache = cache_at(&dir, CacheMode::ReadWrite, None);
+        let path = cache.entry_path("ab12ef");
+        assert!(
+            path.ends_with("v1/ab/ab12ef.json"),
+            "expected prefix shard, got {}",
+            path.display()
+        );
+    }
+
+    #[test]
     fn put_then_get_round_trips() {
         let dir = TempDir::new().unwrap();
         let cache = cache_at(&dir, CacheMode::ReadWrite, None);

@@ -1,0 +1,58 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace assemble_prompt -> String with "xyzzy".into()
+@@ -348,54 +348,17 @@
+ /// Prior-context keys are sorted so the assembled bytes are deterministic for a
+ /// given input state — this is what makes the response cache safe to key on, and
+ /// it also stabilises the CLI's own prompt cache.
+ fn assemble_prompt(
+     node: &PipelineNode,
+     graph: &PipelineGraph,
+     snapshot: &HashMap<String, serde_json::Value>,
+ ) -> String {
+-    let prompt = node.prompt.as_deref().unwrap_or("No prompt specified");
+-    let mut full_prompt = String::new();
+-
+-    if !graph.goal.is_empty() {
+-        full_prompt.push_str(&format!("Pipeline goal: {}\n\n", graph.goal));
+-    }
+-
+-    let mut context_keys: Vec<_> = snapshot
+-        .iter()
+-        .filter(|(k, _)| k.ends_with(".result") || k.ends_with(".output"))
+-        .collect();
+-    context_keys.sort_by(|a, b| a.0.cmp(b.0));
+-    if !context_keys.is_empty() {
+-        full_prompt.push_str("Context from prior pipeline steps:\n");
+-        for (k, v) in &context_keys {
+-            if let serde_json::Value::String(s) = v {
+-                full_prompt.push_str(&format!("- {}: {}\n", k, s));
+-            } else {
+-                full_prompt.push_str(&format!("- {}: {}\n", k, v));
+-            }
+-        }
+-        full_prompt.push('\n');
+-    }
+-
+-    full_prompt.push_str(&format!("Task ({}): {}", node.label, prompt));
+-
+-    if node.shape == "diamond" || node.node_type.as_deref() == Some("conditional") {
+-        let edges = graph.outgoing_edges(&node.id);
+-        let labels: Vec<_> = edges.iter().filter_map(|e| e.label.as_deref()).collect();
+-        if !labels.is_empty() {
+-            full_prompt.push_str(&format!(
+-                "\n\nYou MUST end your response with exactly one of these labels on its own line: {}",
+-                labels.join(", ")
+-            ));
+-        }
+-    }
+-
+-    full_prompt
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Whether a node's codergen result may be cached.
+ ///
+ /// Opt-out via `cache="off"`; explicit opt-in via `cache="ro"` (the author
+ /// asserts the node's output is a deterministic function of its prompt with no
+ /// un-replayed filesystem side effects — honoured even inside a loop).
+ ///

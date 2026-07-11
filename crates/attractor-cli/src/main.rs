@@ -530,3 +530,48 @@ pub(crate) fn load_pipeline(
     let graph = attractor_pipeline::PipelineGraph::from_dot(dot)?;
     Ok(graph)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_cache_mode;
+    use attractor_cache::CacheMode;
+    use std::sync::Mutex;
+
+    // resolve_cache_mode reads PAS_CACHE; serialize env access across tests.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // Args are (cache, no_cache, refresh_cache).
+
+    #[test]
+    fn no_cache_overrides_everything() {
+        let _g = ENV_LOCK.lock().unwrap();
+        assert_eq!(resolve_cache_mode(true, true, true), CacheMode::Off);
+        assert_eq!(resolve_cache_mode(false, true, false), CacheMode::Off);
+    }
+
+    #[test]
+    fn refresh_beats_cache() {
+        let _g = ENV_LOCK.lock().unwrap();
+        assert_eq!(resolve_cache_mode(false, false, true), CacheMode::Refresh);
+        assert_eq!(resolve_cache_mode(true, false, true), CacheMode::Refresh);
+    }
+
+    #[test]
+    fn cache_flag_enables_readwrite() {
+        let _g = ENV_LOCK.lock().unwrap();
+        assert_eq!(resolve_cache_mode(true, false, false), CacheMode::ReadWrite);
+    }
+
+    #[test]
+    fn default_is_off_and_env_enables() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("PAS_CACHE");
+        assert_eq!(resolve_cache_mode(false, false, false), CacheMode::Off);
+        std::env::set_var("PAS_CACHE", "1");
+        assert_eq!(
+            resolve_cache_mode(false, false, false),
+            CacheMode::ReadWrite
+        );
+        std::env::remove_var("PAS_CACHE");
+    }
+}

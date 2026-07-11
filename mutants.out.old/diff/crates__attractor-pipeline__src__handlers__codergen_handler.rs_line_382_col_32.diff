@@ -1,0 +1,21 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace || with && in assemble_prompt
+@@ -374,17 +374,17 @@
+                 full_prompt.push_str(&format!("- {}: {}\n", k, v));
+             }
+         }
+         full_prompt.push('\n');
+     }
+ 
+     full_prompt.push_str(&format!("Task ({}): {}", node.label, prompt));
+ 
+-    if node.shape == "diamond" || node.node_type.as_deref() == Some("conditional") {
++    if node.shape == "diamond" && /* ~ changed by cargo-mutants ~ */ node.node_type.as_deref() == Some("conditional") {
+         let edges = graph.outgoing_edges(&node.id);
+         let labels: Vec<_> = edges.iter().filter_map(|e| e.label.as_deref()).collect();
+         if !labels.is_empty() {
+             full_prompt.push_str(&format!(
+                 "\n\nYou MUST end your response with exactly one of these labels on its own line: {}",
+                 labels.join(", ")
+             ));
+         }

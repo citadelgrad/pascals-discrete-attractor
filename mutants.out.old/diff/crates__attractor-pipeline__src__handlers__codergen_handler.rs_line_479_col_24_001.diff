@@ -1,0 +1,21 @@
+--- crates/attractor-pipeline/src/handlers/codergen_handler.rs
++++ replace > with < in ttl_from_days
+@@ -471,17 +471,17 @@
+         .and_then(|v| v.as_str().map(std::path::PathBuf::from));
+     let ttl = ttl_from_days(context.get("__cache_ttl_days").await.and_then(|v| v.as_u64()));
+     attractor_cache::Cache::new(attractor_cache::CacheConfig::new(mode, root, ttl))
+ }
+ 
+ /// Convert a `--cache-ttl-days` value into a cache TTL. `None` and `Some(0)` both
+ /// mean "no expiry"; large values saturate rather than overflowing.
+ fn ttl_from_days(days: Option<u64>) -> Option<std::time::Duration> {
+-    days.filter(|&d| d > 0)
++    days.filter(|&d| d < /* ~ changed by cargo-mutants ~ */ 0)
+         .map(|d| std::time::Duration::from_secs(d.saturating_mul(86_400)))
+ }
+ 
+ /// Synthesize the same `Outcome` a live call would produce, from a cache hit.
+ /// Cost is reported as 0 (the saved amount is surfaced under `.cache_saved_usd`).
+ fn cached_outcome(
+     node: &PipelineNode,
+     provider: LlmCliProvider,

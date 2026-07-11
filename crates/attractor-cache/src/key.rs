@@ -8,9 +8,11 @@
 use blake3::Hasher;
 
 /// Version of the key recipe. Bump this whenever the set of inputs folded into a
-/// key changes so that all previously-written entries become unreachable (and
-/// are eventually pruned by TTL / `pas cache clear`) instead of returning stale
-/// hits under a new recipe.
+/// key changes so that all previously-written entries become unreachable
+/// (returning misses under the new recipe rather than stale hits). Orphaned
+/// files are not deleted automatically — they are reclaimed by `pas cache clear`.
+/// (Any configured TTL only hides expired entries on read; it does not delete
+/// them from disk.)
 pub const CACHE_SCHEMA_VERSION: u32 = 1;
 
 /// Builder that accumulates ordered, length-prefixed fields into a blake3 digest.

@@ -303,32 +303,66 @@ fn extract_label_returns_none_when_no_match() {
 
 use attractor_dot::AttributeValue;
 
+fn parse_graph(dot: &str) -> crate::graph::PipelineGraph {
+    crate::graph::PipelineGraph::from_dot(attractor_dot::parse(dot).unwrap()).unwrap()
+}
+
 #[test]
 fn is_cacheable_conditional_by_default() {
+    let graph = make_minimal_graph(); // "route" is not in this graph → acyclic
     let mut node = make_node("route", "diamond", Some("decide"), HashMap::new());
-    assert!(is_cacheable_node(&node));
+    assert!(is_cacheable_node(&node, &graph));
     node.shape = "box".into();
     node.node_type = Some("conditional".into());
-    assert!(is_cacheable_node(&node));
+    assert!(is_cacheable_node(&node, &graph));
 }
 
 #[test]
 fn is_cacheable_box_node_default_off() {
+    let graph = make_minimal_graph();
     let node = make_node("work", "box", Some("do it"), HashMap::new());
-    assert!(!is_cacheable_node(&node));
+    assert!(!is_cacheable_node(&node, &graph));
 }
 
 #[test]
 fn is_cacheable_respects_ro_and_off_attrs() {
+    let graph = make_minimal_graph();
+
     let mut ro = HashMap::new();
     ro.insert("cache".to_string(), AttributeValue::String("ro".into()));
     let node = make_node("analyze", "box", Some("read"), ro);
-    assert!(is_cacheable_node(&node));
+    assert!(is_cacheable_node(&node, &graph));
 
     let mut off = HashMap::new();
     off.insert("cache".to_string(), AttributeValue::String("off".into()));
     let node = make_node("route", "diamond", Some("decide"), off);
-    assert!(!is_cacheable_node(&node)); // explicit off overrides the diamond default
+    assert!(!is_cacheable_node(&node, &graph)); // explicit off overrides the diamond default
+}
+
+#[test]
+fn is_cacheable_excludes_conditional_in_a_loop() {
+    // A routing node inside a fix loop must NOT be cached by default — a cached
+    // label would pin the loop until max_steps. `cache="ro"` overrides.
+    let graph = parse_graph(
+        r#"digraph L {
+            check [shape="diamond"]
+            fix   [shape="box"]
+            done  [shape="Msquare"]
+            check -> fix  [label="FIXME"]
+            fix   -> check
+            check -> done [label="DONE"]
+        }"#,
+    );
+    assert!(graph.node_in_cycle("check"));
+
+    let node = make_node("check", "diamond", Some("evaluate"), HashMap::new());
+    assert!(!is_cacheable_node(&node, &graph));
+
+    // Explicit ro opt-in is honoured even inside the loop.
+    let mut ro = HashMap::new();
+    ro.insert("cache".to_string(), AttributeValue::String("ro".into()));
+    let ro_node = make_node("check", "diamond", Some("evaluate"), ro);
+    assert!(is_cacheable_node(&ro_node, &graph));
 }
 
 #[test]

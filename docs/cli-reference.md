@@ -86,7 +86,9 @@ deliberate reuse, never a silent default. Only cacheable nodes participate:
 
 - **Conditional / routing nodes** (`shape=diamond` or `type=conditional`) are
   cacheable by default — their output is a single routing label with nothing to
-  replay.
+  replay. **Exception:** a routing node that sits in a loop (a directed cycle) is
+  *not* cached, because a cached label would pin the loop and force a `max-steps`
+  abort; such nodes always re-evaluate live (unless you override with `cache="ro"`).
 - Any node the author marks **`cache="ro"`** — an assertion that the node's output
   is a deterministic function of its prompt with no un-replayed filesystem side
   effects.

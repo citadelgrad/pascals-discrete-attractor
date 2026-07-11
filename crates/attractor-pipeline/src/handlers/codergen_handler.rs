@@ -11,7 +11,7 @@ use crate::handler::NodeHandler;
 mod provider;
 use provider::{build_cli_command, parse_cli_output, CliRunConfig, LlmCliProvider};
 #[cfg(test)]
-use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, NormalizedCliResult};
+use provider::{parse_claude_output, parse_codex_output, parse_gemini_output};
 
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)
@@ -123,7 +123,7 @@ impl NodeHandler for CodergenHandler {
         // nodes, or nodes the author marked `cache="ro"`) participate, and only
         // when the run enabled caching. On a hit we skip the CLI entirely.
         let cache = cache_from_context(context).await;
-        let cache_key = if cache.mode().is_enabled() && is_cacheable_node(node) {
+        let cache_key = if cache.mode().is_enabled() && is_cacheable_node(node, graph) {
             Some(build_cache_key(
                 provider,
                 model,
@@ -397,17 +397,24 @@ fn assemble_prompt(
 ///
 /// Opt-out via `cache="off"`; explicit opt-in via `cache="ro"` (the author
 /// asserts the node's output is a deterministic function of its prompt with no
-/// un-replayed filesystem side effects). Conditional/routing nodes are cacheable
-/// by default because their output is a single label consumed by edge selection,
-/// with nothing to replay.
-fn is_cacheable_node(node: &PipelineNode) -> bool {
+/// un-replayed filesystem side effects — honoured even inside a loop).
+///
+/// Conditional/routing nodes are cacheable by default because their output is a
+/// single label consumed by edge selection, with nothing to replay — **except**
+/// when the node sits in a directed cycle. A cached routing label would pin a
+/// retry/fix loop forever (a live, non-deterministic run eventually routes out;
+/// a cached one cannot), forcing a `max_steps` abort. Loop-resident routing must
+/// re-evaluate live, so those nodes are not cached unless explicitly `cache="ro"`.
+fn is_cacheable_node(node: &PipelineNode, graph: &PipelineGraph) -> bool {
     match node.raw_attrs.get("cache") {
         Some(AttributeValue::String(s)) if s.eq_ignore_ascii_case("off") => return false,
         Some(AttributeValue::String(s)) if s.eq_ignore_ascii_case("ro") => return true,
         Some(AttributeValue::Boolean(false)) => return false,
         _ => {}
     }
-    node.shape == "diamond" || node.node_type.as_deref() == Some("conditional")
+    let is_conditional =
+        node.shape == "diamond" || node.node_type.as_deref() == Some("conditional");
+    is_conditional && !graph.node_in_cycle(&node.id)
 }
 
 fn string_attr<'a>(node: &'a PipelineNode, key: &str) -> Option<&'a str> {
@@ -466,7 +473,10 @@ async fn cache_from_context(context: &Context) -> attractor_cache::Cache {
         .get("__cache_ttl_days")
         .await
         .and_then(|v| v.as_u64())
-        .map(|d| std::time::Duration::from_secs(d * 86_400));
+        // 0 days means "no expiry" (matches the unset default); saturate to avoid
+        // an overflow panic on absurd values.
+        .filter(|&d| d > 0)
+        .map(|d| std::time::Duration::from_secs(d.saturating_mul(86_400)));
     attractor_cache::Cache::new(attractor_cache::CacheConfig::new(mode, root, ttl))
 }
 

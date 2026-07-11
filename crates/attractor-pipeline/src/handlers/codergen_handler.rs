@@ -128,7 +128,7 @@ impl NodeHandler for CodergenHandler {
                 provider,
                 model,
                 node,
-                workdir.as_deref(),
+                &effective_workdir(workdir.as_deref()),
                 &full_prompt,
             ))
         } else {
@@ -418,11 +418,15 @@ fn string_attr<'a>(node: &'a PipelineNode, key: &str) -> Option<&'a str> {
 }
 
 /// Derive the cache key from every deterministic input that feeds the CLI call.
+///
+/// `workdir` must be the *effective* execution directory — the resolved current
+/// directory when the node has no explicit workdir — so results from different
+/// project trees can never collide (the CLI reads/writes files relative to it).
 fn build_cache_key(
     provider: LlmCliProvider,
     model: Option<&str>,
     node: &PipelineNode,
-    workdir: Option<&str>,
+    workdir: &str,
     full_prompt: &str,
 ) -> String {
     attractor_cache::CacheKey::new()
@@ -430,9 +434,19 @@ fn build_cache_key(
         .field_opt("model", model)
         .field_opt("allowed_tools", string_attr(node, "allowed_tools"))
         .field_opt("max_budget_usd", string_attr(node, "max_budget_usd"))
-        .field_opt("workdir", workdir)
+        .field("workdir", workdir)
         .field("prompt", full_prompt)
         .finish()
+}
+
+/// The directory the CLI will actually run in: the node's explicit workdir, or
+/// the process current directory when unset (which the spawned CLI inherits).
+fn effective_workdir(workdir: Option<&str>) -> String {
+    workdir.map(str::to_string).unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    })
 }
 
 /// Build a [`Cache`](attractor_cache::Cache) from run-level settings carried in

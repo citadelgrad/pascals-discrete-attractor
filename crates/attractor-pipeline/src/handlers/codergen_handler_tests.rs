@@ -353,14 +353,14 @@ fn build_cache_key_is_stable_and_input_sensitive() {
         LlmCliProvider::Claude,
         Some("opus"),
         &node,
-        None,
+        "/w",
         "prompt A",
     );
     let k2 = build_cache_key(
         LlmCliProvider::Claude,
         Some("opus"),
         &node,
-        None,
+        "/w",
         "prompt A",
     );
     assert_eq!(k1, k2);
@@ -369,7 +369,7 @@ fn build_cache_key_is_stable_and_input_sensitive() {
         LlmCliProvider::Claude,
         Some("opus"),
         &node,
-        None,
+        "/w",
         "prompt B",
     );
     assert_ne!(k1, k_diff_prompt);
@@ -378,10 +378,20 @@ fn build_cache_key_is_stable_and_input_sensitive() {
         LlmCliProvider::Claude,
         Some("sonnet"),
         &node,
-        None,
+        "/w",
         "prompt A",
     );
     assert_ne!(k1, k_diff_model);
+
+    // Different working directories must not collide, even with identical prompts.
+    let k_diff_workdir = build_cache_key(
+        LlmCliProvider::Claude,
+        Some("opus"),
+        &node,
+        "/other",
+        "prompt A",
+    );
+    assert_ne!(k1, k_diff_workdir);
 }
 
 #[tokio::test]
@@ -406,11 +416,16 @@ async fn codergen_cache_hit_skips_cli() {
         serde_json::Value::String(tmp.path().to_string_lossy().into_owned()),
     )
     .await;
+    // Set an explicit workdir so the effective-workdir key input is deterministic
+    // (otherwise it would resolve to the test process's current directory).
+    let workdir = tmp.path().to_string_lossy().into_owned();
+    ctx.set("workdir", serde_json::Value::String(workdir.clone()))
+        .await;
 
     // Compute the key exactly as execute() will, and seed a result at it.
     let snapshot = ctx.snapshot().await;
     let full_prompt = assemble_prompt(&node, &graph, &snapshot);
-    let key = build_cache_key(LlmCliProvider::Claude, None, &node, None, &full_prompt);
+    let key = build_cache_key(LlmCliProvider::Claude, None, &node, &workdir, &full_prompt);
 
     let cache = attractor_cache::Cache::new(attractor_cache::CacheConfig::new(
         attractor_cache::CacheMode::ReadWrite,

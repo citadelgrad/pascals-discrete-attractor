@@ -17,6 +17,7 @@ attractor-tools = { path = "../attractor-tools" }
 attractor-agent = { path = "../attractor-agent" }
 attractor-pipeline = { path = "../attractor-pipeline" }
 attractor-quality = { path = "../attractor-quality" }
+attractor-cache = { path = "../attractor-cache" }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

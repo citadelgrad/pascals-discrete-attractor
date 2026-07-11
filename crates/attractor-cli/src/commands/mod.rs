@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod decompose;
 pub mod generate;
 pub mod info;
@@ -8,6 +9,7 @@ pub mod run;
 pub mod scaffold;
 pub mod validate;
 
+pub use cache::{cmd_cache, CacheAction};
 pub use decompose::{cmd_decompose, validate_decomposition};
 pub use generate::{cmd_generate, cmd_generate_dir};
 pub use info::cmd_info;

@@ -40,6 +40,10 @@ pas run <PIPELINE> [OPTIONS]
 | `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes. Pipeline aborts with an error if exceeded. **Strongly recommended for pipelines with loops.** |
 | `--max-steps <COUNT>` | — | 200 | Maximum number of node executions before aborting. Prevents runaway loops. A 6-node pipeline that loops 3 times = 18 steps. |
 | `--fresh` | — | false | Discard any saved checkpoint and start from the beginning. By default, re-running the same command resumes from the last completed node. |
+| `--cache` | — | false | Enable the cross-run response cache (opt-in). Also togglable via `PAS_CACHE=1`. See [Response cache](#response-cache). |
+| `--no-cache` | — | false | Disable the response cache even if `PAS_CACHE=1` is set (overrides `--cache`). |
+| `--refresh-cache` | — | false | Ignore existing cache entries but repopulate them — forces fresh LLM calls while updating the cache. |
+| `--cache-ttl-days <DAYS>` | — | no expiry | Treat cache entries older than this as misses. |
 
 #### Directory mode
 
@@ -67,6 +71,33 @@ Prints:
 If a pipeline contains a `quality` node but no `pas.toml` is found in the working directory tree, `pas run` emits a `[WARN]` preflight diagnostic and continues. Stages will use the node's `quality_checks` attribute as a fallback; the manifest-driven stage list (`[quality.stages]`) is unavailable.
 
 To suppress the warning, run `pas init` in your project root to generate a `pas.toml`.
+
+#### Response cache
+
+`pas` can memoize whole LLM/codergen invocations across runs, so re-running a
+pipeline you've run before can skip `$`-costing `claude -p` calls entirely. This
+is a **response cache** — distinct from the per-run `checkpoint` (which is intra-run
+resume, deleted on success) and from Anthropic's own token-level prompt caching
+(which the `claude` CLI handles internally).
+
+It is **opt-in** (`--cache` or `PAS_CACHE=1`) and only ever stores *successful*
+results, because an LLM answer is non-deterministic — a cached answer is a
+deliberate reuse, never a silent default. Only cacheable nodes participate:
+
+- **Conditional / routing nodes** (`shape=diamond` or `type=conditional`) are
+  cacheable by default — their output is a single routing label with nothing to
+  replay. **Exception:** a routing node that sits in a loop (a directed cycle) is
+  *not* cached, because a cached label would pin the loop and force a `max-steps`
+  abort; such nodes always re-evaluate live (unless you override with `cache="ro"`).
+- Any node the author marks **`cache="ro"`** — an assertion that the node's output
+  is a deterministic function of its prompt with no un-replayed filesystem side
+  effects.
+- **`cache="off"`** opts a node out entirely.
+
+On a hit, the node reports `$0.00` and the run summary prints a
+`Cache: N hit(s), est. saved $X` line. The cache lives under
+`$XDG_CACHE_HOME/pas` (override with `PAS_CACHE_DIR`); manage it with
+[`pas cache`](#cache--inspect-and-manage-the-response-cache).
 
 ---
 
@@ -505,6 +536,39 @@ pas trust list
 
 # Remove a manifest
 pas trust remove /path/to/project/pas.toml <blake3-hash>
+```
+
+---
+
+### `cache` — Inspect and manage the response cache
+
+Manages the cross-run response cache described under
+[`run` → Response cache](#response-cache). The cache lives under
+`$XDG_CACHE_HOME/pas` (default `~/.cache/pas`), overridable with `PAS_CACHE_DIR`.
+
+```
+pas cache <ACTION>
+```
+
+#### Subcommands
+
+| Action | Description |
+|--------|-------------|
+| `stats` | Print the cache directory, entry count, and total size |
+| `path` | Print the resolved cache directory |
+| `clear` | Delete every cached entry |
+
+#### Examples
+
+```bash
+# See how much is cached
+pas cache stats
+
+# Print the cache directory (e.g. for scripting)
+pas cache path
+
+# Wipe the cache
+pas cache clear
 ```
 
 ---

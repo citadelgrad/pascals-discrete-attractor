@@ -11,8 +11,6 @@ pub async fn cmd_launch(
     max_steps: u64,
     fresh: bool,
     verbose: bool,
-    cache_mode: attractor_cache::CacheMode,
-    cache_ttl_days: Option<u64>,
 ) -> anyhow::Result<()> {
     let pipelines_dir = output_dir
         .map(|p| p.to_path_buf())
@@ -81,8 +79,6 @@ pub async fn cmd_launch(
         max_budget_usd,
         max_steps,
         fresh,
-        cache_mode,
-        cache_ttl_days,
     )
     .await?;
 

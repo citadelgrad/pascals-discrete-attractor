@@ -30,7 +30,6 @@ fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!(".pas/logs/{}-{:08x}", stem, hash))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn cmd_run(
     path: &std::path::Path,
     workdir: Option<&std::path::Path>,
@@ -39,8 +38,6 @@ pub async fn cmd_run(
     max_budget_usd: Option<f64>,
     max_steps: u64,
     fresh: bool,
-    cache_mode: attractor_cache::CacheMode,
-    cache_ttl_days: Option<u64>,
 ) -> anyhow::Result<()> {
     let graph = crate::load_pipeline(path)?;
 
@@ -86,27 +83,6 @@ pub async fn cmd_run(
         context.set("dry_run", serde_json::Value::Bool(true)).await;
     }
 
-    // Response cache settings (consumed by the codergen handler). The handler
-    // resolves the cache directory itself (honouring PAS_CACHE_DIR).
-    if cache_mode.is_enabled() {
-        context
-            .set(
-                "__cache_mode",
-                serde_json::Value::String(cache_mode.as_str().into()),
-            )
-            .await;
-        if let Some(days) = cache_ttl_days {
-            context
-                .set("__cache_ttl_days", serde_json::json!(days))
-                .await;
-        }
-        println!(
-            "Cache: {} ({})",
-            cache_mode.as_str(),
-            attractor_cache::default_cache_root().display()
-        );
-    }
-
     // Safety limits
     if let Some(budget) = max_budget_usd {
         context
@@ -138,31 +114,11 @@ pub async fn cmd_run(
         println!("Total cost: ${:.4}", total_cost);
     }
 
-    // Cache hit summary — surface hits so a stale answer is never invisible.
-    let cache_hits = result
-        .final_context
-        .iter()
-        .filter(|(k, v)| k.ends_with(".cache_hit") && v.as_bool() == Some(true))
-        .count();
-    if cache_hits > 0 {
-        let cache_saved: f64 = result
-            .final_context
-            .iter()
-            .filter(|(k, _)| k.ends_with(".cache_saved_usd"))
-            .filter_map(|(_, v)| v.as_f64())
-            .sum();
-        println!(
-            "Cache: {} hit(s), est. saved ${:.4}",
-            cache_hits, cache_saved
-        );
-    }
-
     Ok(())
 }
 
 /// Run a directory of .dot files sequentially with a cross-file manifest.
 /// Files are sorted lexically — use zero-padded names (phase-01, phase-02).
-#[allow(clippy::too_many_arguments)]
 pub async fn cmd_run_dir(
     dir: &std::path::Path,
     workdir: Option<&std::path::Path>,
@@ -170,8 +126,6 @@ pub async fn cmd_run_dir(
     max_budget_usd: Option<f64>,
     max_steps: u64,
     fresh: bool,
-    cache_mode: attractor_cache::CacheMode,
-    cache_ttl_days: Option<u64>,
 ) -> anyhow::Result<()> {
     // Collect and sort .dot files
     let mut dot_files: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -246,8 +200,6 @@ pub async fn cmd_run_dir(
             max_budget_usd,
             max_steps,
             fresh, // propagate --fresh to clear per-pipeline checkpoints
-            cache_mode,
-            cache_ttl_days,
         )
         .await?;
 

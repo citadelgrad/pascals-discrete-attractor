@@ -63,22 +63,6 @@ enum Commands {
         /// Ignore checkpoint and start fresh
         #[arg(long)]
         fresh: bool,
-
-        /// Enable the cross-run response cache (opt-in). Also togglable via PAS_CACHE=1.
-        #[arg(long)]
-        cache: bool,
-
-        /// Disable the response cache even if PAS_CACHE=1 (overrides --cache).
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Ignore existing cache entries but repopulate them (force fresh LLM calls).
-        #[arg(long)]
-        refresh_cache: bool,
-
-        /// Cache entry time-to-live in days (default: no expiry).
-        #[arg(long)]
-        cache_ttl_days: Option<u64>,
     },
 
     /// Validate a pipeline .dot file
@@ -243,58 +227,7 @@ enum Commands {
         /// Ignore checkpoints and start fresh
         #[arg(long)]
         fresh: bool,
-
-        /// Enable the cross-run response cache (opt-in). Also togglable via PAS_CACHE=1.
-        #[arg(long)]
-        cache: bool,
-
-        /// Disable the response cache even if PAS_CACHE=1 (overrides --cache).
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Ignore existing cache entries but repopulate them (force fresh LLM calls).
-        #[arg(long)]
-        refresh_cache: bool,
-
-        /// Cache entry time-to-live in days (default: no expiry).
-        #[arg(long)]
-        cache_ttl_days: Option<u64>,
     },
-
-    /// Inspect and manage the cross-run response cache.
-    Cache {
-        #[command(subcommand)]
-        action: CacheActionArg,
-    },
-}
-
-#[derive(Subcommand)]
-enum CacheActionArg {
-    /// Delete all cached entries
-    Clear,
-    /// Show cache entry count and total size
-    Stats,
-    /// Print the resolved cache directory
-    Path,
-}
-
-/// Resolve the cache mode from the CLI flags and the `PAS_CACHE` env var.
-/// Precedence: --no-cache > --refresh-cache > (--cache | PAS_CACHE=1) > off.
-fn resolve_cache_mode(
-    cache: bool,
-    no_cache: bool,
-    refresh_cache: bool,
-) -> attractor_cache::CacheMode {
-    use attractor_cache::CacheMode;
-    if no_cache {
-        CacheMode::Off
-    } else if refresh_cache {
-        CacheMode::Refresh
-    } else if cache || std::env::var("PAS_CACHE").as_deref() == Ok("1") {
-        CacheMode::ReadWrite
-    } else {
-        CacheMode::Off
-    }
 }
 
 #[derive(Subcommand)]
@@ -334,12 +267,7 @@ async fn main() -> anyhow::Result<()> {
             max_budget_usd,
             max_steps,
             fresh,
-            cache,
-            no_cache,
-            refresh_cache,
-            cache_ttl_days,
         } => {
-            let cache_mode = resolve_cache_mode(cache, no_cache, refresh_cache);
             if pipeline.is_dir() {
                 cmd_run_dir(
                     &pipeline,
@@ -348,8 +276,6 @@ async fn main() -> anyhow::Result<()> {
                     max_budget_usd,
                     max_steps,
                     fresh,
-                    cache_mode,
-                    cache_ttl_days,
                 )
                 .await?;
             } else {
@@ -361,19 +287,9 @@ async fn main() -> anyhow::Result<()> {
                     max_budget_usd,
                     max_steps,
                     fresh,
-                    cache_mode,
-                    cache_ttl_days,
                 )
                 .await?;
             }
-        }
-        Commands::Cache { action } => {
-            let action = match action {
-                CacheActionArg::Clear => commands::CacheAction::Clear,
-                CacheActionArg::Stats => commands::CacheAction::Stats,
-                CacheActionArg::Path => commands::CacheAction::Path,
-            };
-            commands::cmd_cache(action)?;
         }
         Commands::Init {
             workdir,
@@ -471,12 +387,7 @@ async fn main() -> anyhow::Result<()> {
             max_budget_usd,
             max_steps,
             fresh,
-            cache,
-            no_cache,
-            refresh_cache,
-            cache_ttl_days,
         } => {
-            let cache_mode = resolve_cache_mode(cache, no_cache, refresh_cache);
             cmd_launch(
                 &docs_dir,
                 output.as_deref(),
@@ -486,8 +397,6 @@ async fn main() -> anyhow::Result<()> {
                 max_steps,
                 fresh,
                 cli.verbose,
-                cache_mode,
-                cache_ttl_days,
             )
             .await?;
         }
@@ -529,49 +438,4 @@ pub(crate) fn load_pipeline(
     let dot = attractor_dot::parse(&source)?;
     let graph = attractor_pipeline::PipelineGraph::from_dot(dot)?;
     Ok(graph)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_cache_mode;
-    use attractor_cache::CacheMode;
-    use std::sync::Mutex;
-
-    // resolve_cache_mode reads PAS_CACHE; serialize env access across tests.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    // Args are (cache, no_cache, refresh_cache).
-
-    #[test]
-    fn no_cache_overrides_everything() {
-        let _g = ENV_LOCK.lock().unwrap();
-        assert_eq!(resolve_cache_mode(true, true, true), CacheMode::Off);
-        assert_eq!(resolve_cache_mode(false, true, false), CacheMode::Off);
-    }
-
-    #[test]
-    fn refresh_beats_cache() {
-        let _g = ENV_LOCK.lock().unwrap();
-        assert_eq!(resolve_cache_mode(false, false, true), CacheMode::Refresh);
-        assert_eq!(resolve_cache_mode(true, false, true), CacheMode::Refresh);
-    }
-
-    #[test]
-    fn cache_flag_enables_readwrite() {
-        let _g = ENV_LOCK.lock().unwrap();
-        assert_eq!(resolve_cache_mode(true, false, false), CacheMode::ReadWrite);
-    }
-
-    #[test]
-    fn default_is_off_and_env_enables() {
-        let _g = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("PAS_CACHE");
-        assert_eq!(resolve_cache_mode(false, false, false), CacheMode::Off);
-        std::env::set_var("PAS_CACHE", "1");
-        assert_eq!(
-            resolve_cache_mode(false, false, false),
-            CacheMode::ReadWrite
-        );
-        std::env::remove_var("PAS_CACHE");
-    }
 }

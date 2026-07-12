@@ -252,26 +252,6 @@ impl PipelineGraph {
         }
     }
 
-    /// Whether `start` participates in a directed cycle — i.e. some path of
-    /// outgoing edges leads back to `start`. Used to keep loop-resident routing
-    /// nodes from being response-cached (a cached label would pin the loop).
-    pub fn node_in_cycle(&self, start: &str) -> bool {
-        use std::collections::HashSet;
-        let mut stack: Vec<&str> = vec![start];
-        let mut visited: HashSet<&str> = HashSet::new();
-        while let Some(id) = stack.pop() {
-            for edge in self.outgoing_edges(id) {
-                if edge.to == start {
-                    return true;
-                }
-                if visited.insert(&edge.to) {
-                    stack.push(&edge.to);
-                }
-            }
-        }
-        false
-    }
-
     pub fn all_nodes(&self) -> impl Iterator<Item = &PipelineNode> {
         self.nodes.values()
     }
@@ -446,23 +426,6 @@ mod tests {
         assert_eq!(edges[0].weight, 5);
         assert_eq!(edges[0].condition.as_deref(), Some("status == success"));
         assert!(edges[0].loop_restart);
-    }
-
-    #[test]
-    fn node_in_cycle_detects_loops() {
-        let pg = parse_and_build(
-            r#"digraph G {
-            a -> b
-            b -> c
-            c -> b
-            d -> d
-        }"#,
-        );
-        assert!(!pg.node_in_cycle("a")); // linear entry into the cycle, not on it
-        assert!(pg.node_in_cycle("b")); // b -> c -> b
-        assert!(pg.node_in_cycle("c"));
-        assert!(pg.node_in_cycle("d")); // self-loop
-        assert!(!pg.node_in_cycle("missing"));
     }
 
     #[test]

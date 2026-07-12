@@ -12,6 +12,3 @@
 .dolt/
 *.db
 .beads-credential-key
-
-# cargo-mutants working output
-mutants.out*/

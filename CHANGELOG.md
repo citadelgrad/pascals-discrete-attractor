@@ -2,6 +2,19 @@
 
 All notable changes to PAS are documented here.
 
+## [0.9.0] — 2026-07-18
+
+### Added
+
+- Added subscription-friendly Claude Code isolation for `codergen`, with manifest and CLI controls for PAS-owned settings, agents, tools, and plugin directories.
+- Added optional strict `claude --bare` mode for API-key-only isolation.
+- Added preflight warnings for `codergen` nodes without a resolved timeout.
+
+### Changed
+
+- Documented the new Claude isolation controls in the CLI reference and guide.
+- Removed the experimental cross-run `codergen` response cache before release.
+
 ## [0.8.0] — 2026-06-27
 
 ### Tests

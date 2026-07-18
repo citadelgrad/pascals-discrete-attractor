@@ -1,4 +1,5 @@
 use attractor_dot::AttributeValue;
+use attractor_quality::ClaudeSettingsMode;
 use attractor_types::{AttractorError, Result};
 use serde::Deserialize;
 
@@ -168,12 +169,53 @@ pub(super) struct CliRunConfig<'a> {
     pub(super) node: &'a PipelineNode,
     #[allow(dead_code)]
     pub(super) graph: &'a PipelineGraph,
+    pub(super) claude: ClaudeCliConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClaudeCliConfig {
+    pub(super) settings_mode: ClaudeSettingsMode,
+    pub(super) setting_sources: Vec<String>,
+    pub(super) settings: Option<String>,
+    pub(super) tools: Option<String>,
+    pub(super) agents: Option<String>,
+    pub(super) plugin_dirs: Vec<String>,
+    pub(super) mcp_config: Option<String>,
+}
+
+impl Default for ClaudeCliConfig {
+    fn default() -> Self {
+        Self {
+            settings_mode: ClaudeSettingsMode::SubscriptionBare,
+            setting_sources: vec![],
+            settings: None,
+            tools: None,
+            agents: None,
+            plugin_dirs: vec![],
+            mcp_config: None,
+        }
+    }
 }
 
 pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Command {
     let mut cmd = match cfg.provider {
         LlmCliProvider::Claude => {
             let mut cmd = tokio::process::Command::new("claude");
+            match cfg.claude.settings_mode {
+                ClaudeSettingsMode::SubscriptionBare => {
+                    cmd.arg("--safe-mode");
+                }
+                ClaudeSettingsMode::StrictBare => {
+                    cmd.arg("--bare");
+                }
+                ClaudeSettingsMode::Inherit => {
+                    if !cfg.claude.setting_sources.is_empty() {
+                        cmd.arg("--setting-sources")
+                            .arg(cfg.claude.setting_sources.join(","));
+                    }
+                }
+            }
+
             cmd.arg("-p")
                 .arg(cfg.prompt)
                 .arg("--output-format")
@@ -182,6 +224,21 @@ pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Comma
                 .arg("--dangerously-skip-permissions")
                 .arg("--strict-mcp-config")
                 .arg("--disable-slash-commands");
+            if let Some(mcp_config) = &cfg.claude.mcp_config {
+                cmd.arg("--mcp-config").arg(mcp_config);
+            }
+            if let Some(settings) = &cfg.claude.settings {
+                cmd.arg("--settings").arg(settings);
+            }
+            if let Some(tools) = &cfg.claude.tools {
+                cmd.arg("--tools").arg(tools);
+            }
+            if let Some(agents) = &cfg.claude.agents {
+                cmd.arg("--agents").arg(agents);
+            }
+            for plugin_dir in &cfg.claude.plugin_dirs {
+                cmd.arg("--plugin-dir").arg(plugin_dir);
+            }
             if let Some(model) = cfg.model {
                 cmd.arg("--model").arg(model);
             }

@@ -8,7 +8,10 @@ pub mod trust;
 // is incomplete and will be wired up in a future task.
 pub(crate) mod enrich;
 
-pub use manifest::{HookConfig, Manifest, QualitySection, ResolvedManifest};
+pub use manifest::{
+    ClaudeCodergenConfig, ClaudeSettingSource, ClaudeSettingsMode, CodergenSection, HookConfig,
+    Manifest, QualitySection, ResolvedManifest,
+};
 pub use resolution::{resolve, ResolutionError};
 pub use trust::{
     add_trust, is_trusted, list_trusted, prompt_and_add, remove_trust, TrustEntry, TrustError,

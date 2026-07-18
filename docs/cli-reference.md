@@ -40,6 +40,13 @@ pas run <PIPELINE> [OPTIONS]
 | `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes. Pipeline aborts with an error if exceeded. **Strongly recommended for pipelines with loops.** |
 | `--max-steps <COUNT>` | — | 200 | Maximum number of node executions before aborting. Prevents runaway loops. A 6-node pipeline that loops 3 times = 18 steps. |
 | `--fresh` | — | false | Discard any saved checkpoint and start from the beginning. By default, re-running the same command resumes from the last completed node. |
+| `--codergen-claude-settings-mode <MODE>` | — | `subscription-bare` | Claude settings mode for `codergen` nodes: `subscription-bare`, `strict-bare`, or `inherit`. |
+| `--codergen-claude-setting-sources <LIST>` | — | — | Comma-separated Claude setting sources for `inherit` mode (`user,project,local`). Required when inheriting. |
+| `--codergen-claude-settings <JSON_OR_FILE>` | — | — | PAS-owned Claude settings JSON or file path for `codergen` nodes. Does not imply user settings inheritance. |
+| `--codergen-claude-tools <TOOLS>` | — | Claude default | Explicit Claude built-in tool surface for `codergen` nodes, e.g. `Read,Edit` or `""` to disable built-ins. |
+| `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for `codergen` nodes. |
+| `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for `codergen` nodes. Repeatable. |
+| `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for `codergen` nodes. `--strict-mcp-config` remains enabled. |
 
 #### Directory mode
 
@@ -67,6 +74,33 @@ Prints:
 If a pipeline contains a `quality` node but no `pas.toml` is found in the working directory tree, `pas run` emits a `[WARN]` preflight diagnostic and continues. Stages will use the node's `quality_checks` attribute as a fallback; the manifest-driven stage list (`[quality.stages]`) is unavailable.
 
 To suppress the warning, run `pas init` in your project root to generate a `pas.toml`.
+
+#### Claude settings isolation for `codergen`
+
+Claude-backed `codergen` nodes run in PAS-controlled isolation by default. PAS passes Claude Code `--safe-mode`, `--strict-mcp-config`, and `--disable-slash-commands` so subscription auth still works while personal hooks, skills, plugins, MCP servers, and other ambient Claude Code customizations are suppressed as much as Claude allows without literal bare mode.
+
+Modes:
+
+| Mode | Claude behavior | Auth impact |
+|------|-----------------|-------------|
+| `subscription-bare` | Default. Uses `--safe-mode` plus PAS-owned explicit settings/tools/agents/plugins/MCP when configured. | Works with normal Claude subscription auth. |
+| `strict-bare` | Uses Claude's literal `--bare`. Strongest isolation. | Requires API-key/auth-helper-compatible Claude auth; normal subscription OAuth/keychain auth is not read. |
+| `inherit` | Does not pass `--safe-mode` or `--bare`; loads explicit `--setting-sources`. | Personal hooks/settings may run. Opt in loudly. |
+
+Equivalent `pas.toml` config:
+
+```toml
+[codergen.claude]
+settings_mode = "subscription_bare" # subscription_bare | strict_bare | inherit
+setting_sources = ["user"]           # only for inherit
+settings_json = "{\"enabledPlugins\":{}}"
+tools = "Read,Edit"
+agents_json = "{}"
+plugin_dirs = [".pas/claude-plugin"]
+mcp_config_json = "{}"
+```
+
+CLI flags override `pas.toml` for the current run.
 
 ---
 
@@ -350,6 +384,13 @@ pas launch <DOCS_DIR> [OPTIONS]
 | `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes in all pipelines. |
 | `--max-steps <COUNT>` | — | 200 | Maximum node executions per pipeline. |
 | `--fresh` | — | false | Ignore checkpoints and start each pipeline from scratch. |
+| `--codergen-claude-settings-mode <MODE>` | — | `subscription-bare` | Claude settings mode for generated pipelines' `codergen` nodes. Same semantics as `pas run`. |
+| `--codergen-claude-setting-sources <LIST>` | — | — | Comma-separated setting sources for `inherit` mode. |
+| `--codergen-claude-settings <JSON_OR_FILE>` | — | — | PAS-owned Claude settings JSON or file path for run-phase `codergen` nodes. |
+| `--codergen-claude-tools <TOOLS>` | — | Claude default | Explicit Claude built-in tool surface for run-phase `codergen` nodes. |
+| `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for run-phase `codergen` nodes. |
+| `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for run-phase `codergen` nodes. Repeatable. |
+| `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for run-phase `codergen` nodes. |
 
 #### How it works
 

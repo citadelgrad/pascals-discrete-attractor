@@ -126,61 +126,9 @@ fn graph_has_quality_node(graph: &PipelineGraph) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::fs;
 
-    use attractor_dot::AttributeValue;
     use tempfile::TempDir;
-
-    // ---- graph construction helpers ----
-
-    fn make_node_with_type(id: &str, node_type: &str) -> crate::graph::PipelineNode {
-        crate::graph::PipelineNode {
-            id: id.to_string(),
-            label: id.to_string(),
-            shape: "box".to_string(),
-            node_type: Some(node_type.to_string()),
-            prompt: None,
-            max_retries: 0,
-            goal_gate: false,
-            retry_target: None,
-            fallback_retry_target: None,
-            fidelity: None,
-            thread_id: None,
-            classes: Vec::new(),
-            timeout: None,
-            llm_model: None,
-            llm_provider: None,
-            reasoning_effort: None,
-            auto_status: true,
-            allow_partial: false,
-            raw_attrs: HashMap::new(),
-        }
-    }
-
-    fn make_plain_node(id: &str) -> crate::graph::PipelineNode {
-        crate::graph::PipelineNode {
-            id: id.to_string(),
-            label: id.to_string(),
-            shape: "box".to_string(),
-            node_type: None,
-            prompt: None,
-            max_retries: 0,
-            goal_gate: false,
-            retry_target: None,
-            fallback_retry_target: None,
-            fidelity: None,
-            thread_id: None,
-            classes: Vec::new(),
-            timeout: None,
-            llm_model: None,
-            llm_provider: None,
-            reasoning_effort: None,
-            auto_status: true,
-            allow_partial: false,
-            raw_attrs: HashMap::new(),
-        }
-    }
 
     /// Build a graph with a single quality node (via DOT `type="quality"`).
     fn make_graph_with_quality_node() -> PipelineGraph {

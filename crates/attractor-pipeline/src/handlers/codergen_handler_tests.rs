@@ -186,6 +186,7 @@ fn build_cli_command_claude_has_json_output() {
         workdir: None,
         node: &node,
         graph: &graph,
+        claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
     let args: Vec<_> = cmd
@@ -195,9 +196,183 @@ fn build_cli_command_claude_has_json_output() {
         .collect();
     assert!(args.contains(&"--output-format"));
     assert!(args.contains(&"json"));
+    assert!(args.contains(&"--safe-mode"));
+    assert!(!args.contains(&"--bare"));
+    assert!(args.contains(&"--strict-mcp-config"));
+    assert!(args.contains(&"--disable-slash-commands"));
+    assert!(!args.contains(&"--setting-sources"));
     assert!(args.contains(&"--model"));
     assert!(args.contains(&"sonnet"));
     assert!(args.contains(&"-p"));
+}
+
+#[test]
+fn build_cli_command_claude_strict_bare_is_opt_in() {
+    let node = make_node("n", "box", Some("do work"), HashMap::new());
+    let graph = make_minimal_graph();
+    let cfg = CliRunConfig {
+        provider: LlmCliProvider::Claude,
+        prompt: "test prompt",
+        model: None,
+        workdir: None,
+        node: &node,
+        graph: &graph,
+        claude: ClaudeCliConfig {
+            settings_mode: ClaudeSettingsMode::StrictBare,
+            ..ClaudeCliConfig::default()
+        },
+    };
+
+    let cmd = build_cli_command(&cfg);
+    let args: Vec<_> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_str().unwrap())
+        .collect();
+
+    assert!(args.contains(&"--bare"));
+    assert!(!args.contains(&"--safe-mode"));
+    assert!(!args.contains(&"--setting-sources"));
+}
+
+#[test]
+fn build_cli_command_claude_inherit_uses_setting_sources() {
+    let node = make_node("n", "box", Some("do work"), HashMap::new());
+    let graph = make_minimal_graph();
+    let cfg = CliRunConfig {
+        provider: LlmCliProvider::Claude,
+        prompt: "test prompt",
+        model: None,
+        workdir: None,
+        node: &node,
+        graph: &graph,
+        claude: ClaudeCliConfig {
+            settings_mode: ClaudeSettingsMode::Inherit,
+            setting_sources: vec!["user".into(), "project".into()],
+            ..ClaudeCliConfig::default()
+        },
+    };
+
+    let cmd = build_cli_command(&cfg);
+    let args: Vec<_> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_str().unwrap())
+        .collect();
+
+    assert!(!args.contains(&"--bare"));
+    assert!(!args.contains(&"--safe-mode"));
+    assert!(args.contains(&"--setting-sources"));
+    assert!(args.contains(&"user,project"));
+}
+
+#[test]
+fn build_cli_command_claude_emits_explicit_pas_owned_config() {
+    let node = make_node("n", "box", Some("do work"), HashMap::new());
+    let graph = make_minimal_graph();
+    let cfg = CliRunConfig {
+        provider: LlmCliProvider::Claude,
+        prompt: "test prompt",
+        model: None,
+        workdir: None,
+        node: &node,
+        graph: &graph,
+        claude: ClaudeCliConfig {
+            settings: Some(r#"{"enabledPlugins":{}}"#.into()),
+            tools: Some("Read,Edit".into()),
+            agents: Some(r#"{"reviewer":{"prompt":"review"}}"#.into()),
+            plugin_dirs: vec!["/tmp/pas-plugin".into()],
+            mcp_config: Some("{}".into()),
+            ..ClaudeCliConfig::default()
+        },
+    };
+
+    let cmd = build_cli_command(&cfg);
+    let args: Vec<_> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_str().unwrap())
+        .collect();
+
+    assert!(args.contains(&"--settings"));
+    assert!(args.contains(&r#"{"enabledPlugins":{}}"#));
+    assert!(args.contains(&"--tools"));
+    assert!(args.contains(&"Read,Edit"));
+    assert!(args.contains(&"--agents"));
+    assert!(args.contains(&r#"{"reviewer":{"prompt":"review"}}"#));
+    assert!(args.contains(&"--plugin-dir"));
+    assert!(args.contains(&"/tmp/pas-plugin"));
+    assert!(args.contains(&"--mcp-config"));
+    assert!(args.contains(&"{}"));
+}
+
+#[test]
+fn resolve_claude_cli_config_reads_pas_toml_and_resolves_plugin_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pas.toml"),
+        r#"
+[project]
+name = "test"
+
+[codergen.claude]
+settings_mode = "inherit"
+setting_sources = ["user"]
+settings_json = "{}"
+tools = "Read,Edit"
+plugin_dirs = [".pas/plugin"]
+"#,
+    )
+    .unwrap();
+    let snapshot = HashMap::new();
+
+    let cfg = resolve_claude_cli_config(&snapshot, dir.path().to_str(), "code").unwrap();
+
+    assert_eq!(cfg.settings_mode, ClaudeSettingsMode::Inherit);
+    assert_eq!(cfg.setting_sources, vec!["user"]);
+    assert_eq!(cfg.settings.as_deref(), Some("{}"));
+    assert_eq!(cfg.tools.as_deref(), Some("Read,Edit"));
+    assert_eq!(cfg.plugin_dirs, vec![dir.path().join(".pas/plugin")]);
+}
+
+#[test]
+fn resolve_claude_cli_config_cli_overrides_pas_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pas.toml"),
+        r#"
+[project]
+name = "test"
+
+[codergen.claude]
+settings_mode = "strict_bare"
+"#,
+    )
+    .unwrap();
+    let mut snapshot = HashMap::new();
+    snapshot.insert(
+        "codergen.claude.settings_mode".into(),
+        serde_json::json!("subscription-bare"),
+    );
+
+    let cfg = resolve_claude_cli_config(&snapshot, dir.path().to_str(), "code").unwrap();
+
+    assert_eq!(cfg.settings_mode, ClaudeSettingsMode::SubscriptionBare);
+}
+
+#[test]
+fn resolve_claude_cli_config_requires_sources_for_inherit() {
+    let mut snapshot = HashMap::new();
+    snapshot.insert(
+        "codergen.claude.settings_mode".into(),
+        serde_json::json!("inherit"),
+    );
+
+    let err = resolve_claude_cli_config(&snapshot, None, "code").unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("requires explicit setting_sources"));
 }
 
 #[test]
@@ -211,6 +386,7 @@ fn build_cli_command_codex_prompt_is_positional() {
         workdir: Some("/tmp"),
         node: &node,
         graph: &graph,
+        claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
     let args: Vec<_> = cmd
@@ -237,6 +413,7 @@ fn build_cli_command_gemini_uses_approval_mode() {
         workdir: None,
         node: &node,
         graph: &graph,
+        claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
     let args: Vec<_> = cmd

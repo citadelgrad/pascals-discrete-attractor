@@ -1,0 +1,27 @@
+docs/plans/2026-07-17-feat-claude-cli-settings-hardening-plan.md
+  s_bc04cc3aeacdbc::t_39ebd6026f6202 1-350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "56059865c2a2b9449c8d778a924ef1bd038f209e",
+  "prompts": {},
+  "sessions": {
+    "s_58fca84d9cc63a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2435cd5-e909-4a48-aa22-7060607fafab",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    },
+    "s_bc04cc3aeacdbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c9e108-7a47-4996-8378-d4dbf178fa78",
+        "model": "unknown"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

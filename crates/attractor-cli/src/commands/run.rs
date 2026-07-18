@@ -2,6 +2,92 @@ use std::path::PathBuf;
 
 use anyhow;
 
+#[derive(Debug, Clone, Default)]
+pub struct CodergenClaudeCliOpts {
+    pub settings_mode: Option<String>,
+    pub setting_sources: Option<String>,
+    pub settings: Option<String>,
+    pub tools: Option<String>,
+    pub agents: Option<String>,
+    pub plugin_dirs: Vec<PathBuf>,
+    pub mcp_config: Option<String>,
+}
+
+impl CodergenClaudeCliOpts {
+    fn has_inherit_mode(&self) -> bool {
+        self.settings_mode
+            .as_deref()
+            .map(|mode| mode.eq_ignore_ascii_case("inherit"))
+            .unwrap_or(false)
+    }
+
+    async fn apply_to_context(&self, context: &attractor_types::Context) {
+        if let Some(value) = &self.settings_mode {
+            context
+                .set(
+                    "codergen.claude.settings_mode",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+        if let Some(value) = &self.setting_sources {
+            context
+                .set(
+                    "codergen.claude.setting_sources",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+        if let Some(value) = &self.settings {
+            context
+                .set(
+                    "codergen.claude.settings",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+        if let Some(value) = &self.tools {
+            context
+                .set(
+                    "codergen.claude.tools",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+        if let Some(value) = &self.agents {
+            context
+                .set(
+                    "codergen.claude.agents",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+        if !self.plugin_dirs.is_empty() {
+            context
+                .set(
+                    "codergen.claude.plugin_dirs",
+                    serde_json::Value::Array(
+                        self.plugin_dirs
+                            .iter()
+                            .map(|path| {
+                                serde_json::Value::String(path.to_string_lossy().into_owned())
+                            })
+                            .collect(),
+                    ),
+                )
+                .await;
+        }
+        if let Some(value) = &self.mcp_config {
+            context
+                .set(
+                    "codergen.claude.mcp_config",
+                    serde_json::Value::String(value.clone()),
+                )
+                .await;
+        }
+    }
+}
+
 /// Generate a deterministic logs directory name from the pipeline file path.
 /// Format: `.pas/logs/<stem>-<8hex>` e.g. `.pas/logs/phase-01-spec-a3f1b2c9`
 ///
@@ -30,6 +116,7 @@ fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!(".pas/logs/{}-{:08x}", stem, hash))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_run(
     path: &std::path::Path,
     workdir: Option<&std::path::Path>,
@@ -38,6 +125,7 @@ pub async fn cmd_run(
     max_budget_usd: Option<f64>,
     max_steps: u64,
     fresh: bool,
+    codergen_claude: &CodergenClaudeCliOpts,
 ) -> anyhow::Result<()> {
     let graph = crate::load_pipeline(path)?;
 
@@ -66,6 +154,11 @@ pub async fn cmd_run(
     if dry_run {
         println!("(dry run mode -- no LLM calls)");
     }
+    if codergen_claude.has_inherit_mode() {
+        println!(
+            "WARNING: codergen Claude settings inheritance enabled; personal Claude Code hooks/settings may run."
+        );
+    }
 
     // Set up the pipeline context with workdir
     let context = attractor_types::Context::new();
@@ -82,6 +175,7 @@ pub async fn cmd_run(
     if dry_run {
         context.set("dry_run", serde_json::Value::Bool(true)).await;
     }
+    codergen_claude.apply_to_context(&context).await;
 
     // Safety limits
     if let Some(budget) = max_budget_usd {
@@ -126,6 +220,7 @@ pub async fn cmd_run_dir(
     max_budget_usd: Option<f64>,
     max_steps: u64,
     fresh: bool,
+    codergen_claude: &CodergenClaudeCliOpts,
 ) -> anyhow::Result<()> {
     // Collect and sort .dot files
     let mut dot_files: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -200,6 +295,7 @@ pub async fn cmd_run_dir(
             max_budget_usd,
             max_steps,
             fresh, // propagate --fresh to clear per-pipeline checkpoints
+            codergen_claude,
         )
         .await?;
 

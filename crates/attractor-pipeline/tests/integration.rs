@@ -3,8 +3,6 @@
 //! Each test exercises the full pipeline: parse DOT -> build graph -> validate -> execute -> verify.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 

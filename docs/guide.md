@@ -154,6 +154,36 @@ digraph PipelineName {
 | `auto_status` | boolean | true | Automatically set status from outcome |
 | `allow_partial` | boolean | false | Allow partial success |
 
+### Claude settings isolation for codergen
+
+Claude-backed `codergen` nodes use a PAS-owned isolation mode by default. PAS invokes Claude Code with `--safe-mode`, `--strict-mcp-config`, and `--disable-slash-commands` so normal Claude subscription auth still works while personal hooks, skills, plugins, MCP servers, and ambient Claude Code settings are suppressed as much as Claude allows without literal bare mode.
+
+The default mode is `subscription_bare`. Two opt-ins exist:
+
+- `strict_bare` uses Claude's literal `--bare` for maximum reproducibility, but requires API-key/auth-helper auth rather than normal subscription OAuth/keychain auth.
+- `inherit` loads explicit Claude `setting_sources` and may run personal hooks/settings. Use it only when you want that leakage.
+
+Configure the default for a repo in `pas.toml`:
+
+```toml
+[codergen.claude]
+settings_mode = "subscription_bare" # subscription_bare | strict_bare | inherit
+setting_sources = ["user"]           # only for inherit
+settings_json = "{\"enabledPlugins\":{}}"
+tools = "Read,Edit"
+agents_json = "{}"
+plugin_dirs = [".pas/claude-plugin"]
+mcp_config_json = "{}"
+```
+
+Or override per run:
+
+```bash
+pas run pipeline.dot -w . --codergen-claude-settings-mode inherit --codergen-claude-setting-sources user
+```
+
+CLI flags override `pas.toml`. `--settings`-style PAS-owned config does not imply inheritance; user-scope Claude Code config is only loaded in `inherit` mode.
+
 ### Tool nodes (parallelogram)
 
 Tool nodes run a shell command instead of Claude Code:

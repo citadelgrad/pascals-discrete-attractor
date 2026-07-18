@@ -555,7 +555,9 @@ async fn budget_limit_exact_equality_does_not_abort() {
     registry.register(ExactCostHandler);
 
     let context = Context::new();
-    context.set("max_budget_usd", serde_json::json!(2.0f64)).await;
+    context
+        .set("max_budget_usd", serde_json::json!(2.0f64))
+        .await;
 
     let result = PipelineExecutor::new(registry)
         .run_with_context(&graph, context)
@@ -628,7 +630,10 @@ async fn quality_loop_fires_at_iteration_beyond_max_fix_iterations() {
         .run_with_context(&graph, context)
         .await;
 
-    assert!(result.is_err(), "should abort after exceeding max_fix_iterations");
+    assert!(
+        result.is_err(),
+        "should abort after exceeding max_fix_iterations"
+    );
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         1,

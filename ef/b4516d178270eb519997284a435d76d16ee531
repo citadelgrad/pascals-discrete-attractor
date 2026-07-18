@@ -1,0 +1,24 @@
+crates/attractor-pipeline/src/preflight.rs
+  s_58fca84d9cc63a::t_04c3fb515b8ca8 349-350,354
+  s_58fca84d9cc63a::t_4f252a4e9d91c6 304-348,351-353,355-465
+  s_58fca84d9cc63a::t_6ef49841147d6b 183-185,189
+  s_58fca84d9cc63a::t_391b47a88688aa 51-67
+  s_58fca84d9cc63a::t_b3f0ce5ad11694 15
+  s_58fca84d9cc63a::t_daa4941c40cb13 116-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "efb4516d178270eb519997284a435d76d16ee531",
+  "prompts": {},
+  "sessions": {
+    "s_58fca84d9cc63a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2435cd5-e909-4a48-aa22-7060607fafab",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

@@ -324,7 +324,11 @@ mod tests {
         let graph = PipelineGraph::from_dot(parsed).unwrap();
 
         let findings = run_no_manifest(&graph);
-        assert_eq!(findings.len(), 1, "expected exactly 1 finding: {findings:?}");
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
         assert_eq!(findings[0].code, "CODERGEN_NO_TIMEOUT");
         assert_eq!(findings[0].severity, Severity::Warn);
         assert!(findings[0].message.contains("work"));
@@ -379,7 +383,11 @@ mod tests {
         let graph = PipelineGraph::from_dot(parsed).unwrap();
 
         let findings = run_no_manifest(&graph);
-        assert_eq!(findings.len(), 1, "expected exactly 1 finding: {findings:?}");
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
         assert_eq!(findings[0].code, "CODERGEN_NO_TIMEOUT");
         assert!(findings[0].message.contains("check"));
     }
@@ -432,7 +440,11 @@ mod tests {
         let graph = PipelineGraph::from_dot(parsed).unwrap();
 
         let findings = run_no_manifest(&graph);
-        assert_eq!(findings.len(), 2, "expected 2 distinct findings: {findings:?}");
+        assert_eq!(
+            findings.len(),
+            2,
+            "expected 2 distinct findings: {findings:?}"
+        );
         assert!(findings.iter().all(|f| f.code == "CODERGEN_NO_TIMEOUT"));
         let mentioned: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
         assert!(mentioned.iter().any(|m| m.contains("first")));

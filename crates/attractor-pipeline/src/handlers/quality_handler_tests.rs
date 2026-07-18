@@ -275,7 +275,10 @@ mod tests {
 
         // Exactly head+tail lines: total <= head+tail → return unchanged.
         // Mutation (< instead of <=): 10 < 10 = false → produces "(0 lines omitted)" marker.
-        let text: String = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text: String = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = truncate_head_tail(&text, 5, 5);
         assert!(
             !result.contains("omitted"),

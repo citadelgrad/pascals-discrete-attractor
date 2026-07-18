@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use commands::{
     cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
-    cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, validate_decomposition, InitOpts,
+    cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, validate_decomposition,
+    CodergenClaudeCliOpts, InitOpts,
 };
 
 #[derive(Parser)]
@@ -63,6 +64,34 @@ enum Commands {
         /// Ignore checkpoint and start fresh
         #[arg(long)]
         fresh: bool,
+
+        /// Claude settings mode for codergen nodes: subscription-bare, strict-bare, or inherit
+        #[arg(long)]
+        codergen_claude_settings_mode: Option<String>,
+
+        /// Claude setting sources for inherit mode (comma-separated: user,project,local)
+        #[arg(long)]
+        codergen_claude_setting_sources: Option<String>,
+
+        /// PAS-owned Claude settings JSON or file path for codergen nodes
+        #[arg(long)]
+        codergen_claude_settings: Option<String>,
+
+        /// Claude built-in tools surface for codergen nodes (e.g. "Read,Edit" or "")
+        #[arg(long)]
+        codergen_claude_tools: Option<String>,
+
+        /// Claude agents JSON for codergen nodes
+        #[arg(long)]
+        codergen_claude_agents: Option<String>,
+
+        /// Claude plugin directory for codergen nodes (repeatable)
+        #[arg(long)]
+        codergen_claude_plugin_dir: Vec<PathBuf>,
+
+        /// Claude MCP config JSON or file path for codergen nodes
+        #[arg(long)]
+        codergen_claude_mcp_config: Option<String>,
     },
 
     /// Validate a pipeline .dot file
@@ -227,6 +256,34 @@ enum Commands {
         /// Ignore checkpoints and start fresh
         #[arg(long)]
         fresh: bool,
+
+        /// Claude settings mode for codergen nodes: subscription-bare, strict-bare, or inherit
+        #[arg(long)]
+        codergen_claude_settings_mode: Option<String>,
+
+        /// Claude setting sources for inherit mode (comma-separated: user,project,local)
+        #[arg(long)]
+        codergen_claude_setting_sources: Option<String>,
+
+        /// PAS-owned Claude settings JSON or file path for codergen nodes
+        #[arg(long)]
+        codergen_claude_settings: Option<String>,
+
+        /// Claude built-in tools surface for codergen nodes (e.g. "Read,Edit" or "")
+        #[arg(long)]
+        codergen_claude_tools: Option<String>,
+
+        /// Claude agents JSON for codergen nodes
+        #[arg(long)]
+        codergen_claude_agents: Option<String>,
+
+        /// Claude plugin directory for codergen nodes (repeatable)
+        #[arg(long)]
+        codergen_claude_plugin_dir: Vec<PathBuf>,
+
+        /// Claude MCP config JSON or file path for codergen nodes
+        #[arg(long)]
+        codergen_claude_mcp_config: Option<String>,
     },
 }
 
@@ -267,7 +324,23 @@ async fn main() -> anyhow::Result<()> {
             max_budget_usd,
             max_steps,
             fresh,
+            codergen_claude_settings_mode,
+            codergen_claude_setting_sources,
+            codergen_claude_settings,
+            codergen_claude_tools,
+            codergen_claude_agents,
+            codergen_claude_plugin_dir,
+            codergen_claude_mcp_config,
         } => {
+            let codergen_claude = CodergenClaudeCliOpts {
+                settings_mode: codergen_claude_settings_mode,
+                setting_sources: codergen_claude_setting_sources,
+                settings: codergen_claude_settings,
+                tools: codergen_claude_tools,
+                agents: codergen_claude_agents,
+                plugin_dirs: codergen_claude_plugin_dir,
+                mcp_config: codergen_claude_mcp_config,
+            };
             if pipeline.is_dir() {
                 cmd_run_dir(
                     &pipeline,
@@ -276,6 +349,7 @@ async fn main() -> anyhow::Result<()> {
                     max_budget_usd,
                     max_steps,
                     fresh,
+                    &codergen_claude,
                 )
                 .await?;
             } else {
@@ -287,6 +361,7 @@ async fn main() -> anyhow::Result<()> {
                     max_budget_usd,
                     max_steps,
                     fresh,
+                    &codergen_claude,
                 )
                 .await?;
             }
@@ -387,7 +462,23 @@ async fn main() -> anyhow::Result<()> {
             max_budget_usd,
             max_steps,
             fresh,
+            codergen_claude_settings_mode,
+            codergen_claude_setting_sources,
+            codergen_claude_settings,
+            codergen_claude_tools,
+            codergen_claude_agents,
+            codergen_claude_plugin_dir,
+            codergen_claude_mcp_config,
         } => {
+            let codergen_claude = CodergenClaudeCliOpts {
+                settings_mode: codergen_claude_settings_mode,
+                setting_sources: codergen_claude_setting_sources,
+                settings: codergen_claude_settings,
+                tools: codergen_claude_tools,
+                agents: codergen_claude_agents,
+                plugin_dirs: codergen_claude_plugin_dir,
+                mcp_config: codergen_claude_mcp_config,
+            };
             cmd_launch(
                 &docs_dir,
                 output.as_deref(),
@@ -397,6 +488,7 @@ async fn main() -> anyhow::Result<()> {
                 max_steps,
                 fresh,
                 cli.verbose,
+                &codergen_claude,
             )
             .await?;
         }

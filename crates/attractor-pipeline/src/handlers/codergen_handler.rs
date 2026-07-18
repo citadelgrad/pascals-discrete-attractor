@@ -1,7 +1,12 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use attractor_dot::AttributeValue;
+use attractor_quality::{
+    ClaudeCodergenConfig, ClaudeSettingSource, ClaudeSettingsMode, ResolutionError,
+};
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
 use crate::graph::{PipelineGraph, PipelineNode};
@@ -9,9 +14,11 @@ use crate::handler::NodeHandler;
 
 #[path = "codergen_provider.rs"]
 mod provider;
-use provider::{build_cli_command, parse_cli_output, CliRunConfig, LlmCliProvider};
+use provider::{
+    build_cli_command, parse_cli_output, ClaudeCliConfig, CliRunConfig, LlmCliProvider,
+};
 #[cfg(test)]
-use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, NormalizedCliResult};
+use provider::{parse_claude_output, parse_codex_output, parse_gemini_output};
 
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)
@@ -152,6 +159,7 @@ impl NodeHandler for CodergenHandler {
             .get("workdir")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let claude_config = resolve_claude_cli_config(&snapshot, workdir.as_deref(), &node.id)?;
 
         // Build the CLI command via the provider-specific builder
         let mut cmd = build_cli_command(&CliRunConfig {
@@ -161,6 +169,7 @@ impl NodeHandler for CodergenHandler {
             workdir: workdir.as_deref(),
             node,
             graph,
+            claude: claude_config,
         });
 
         // Spawn the CLI process — detect missing binary
@@ -297,6 +306,168 @@ impl NodeHandler for CodergenHandler {
                 None
             },
         })
+    }
+}
+
+const CLAUDE_MODE_KEY: &str = "codergen.claude.settings_mode";
+const CLAUDE_SOURCES_KEY: &str = "codergen.claude.setting_sources";
+const CLAUDE_SETTINGS_KEY: &str = "codergen.claude.settings";
+const CLAUDE_TOOLS_KEY: &str = "codergen.claude.tools";
+const CLAUDE_AGENTS_KEY: &str = "codergen.claude.agents";
+const CLAUDE_PLUGIN_DIRS_KEY: &str = "codergen.claude.plugin_dirs";
+const CLAUDE_MCP_CONFIG_KEY: &str = "codergen.claude.mcp_config";
+
+fn resolve_claude_cli_config(
+    snapshot: &HashMap<String, serde_json::Value>,
+    workdir: Option<&str>,
+    node_id: &str,
+) -> Result<ClaudeCliConfig> {
+    let mut cfg = ClaudeCliConfig::default();
+
+    if let Some(dir) = workdir {
+        match attractor_quality::resolve(Path::new(dir)) {
+            Ok(resolved) => {
+                if let Some(claude) = resolved.manifest.codergen.and_then(|c| c.claude) {
+                    apply_manifest_claude_config(&mut cfg, claude, resolved.path.parent());
+                }
+            }
+            Err(ResolutionError::NotFound) => {}
+            Err(err) => {
+                return Err(AttractorError::HandlerError {
+                    handler: "codergen".into(),
+                    node: node_id.into(),
+                    message: format!(
+                        "Failed to resolve pas.toml for Claude codergen config: {err}"
+                    ),
+                });
+            }
+        }
+    }
+
+    apply_context_claude_overrides(&mut cfg, snapshot, node_id)?;
+
+    if cfg.settings_mode == ClaudeSettingsMode::Inherit && cfg.setting_sources.is_empty() {
+        return Err(AttractorError::HandlerError {
+            handler: "codergen".into(),
+            node: node_id.into(),
+            message: "Claude settings_mode=inherit requires explicit setting_sources".into(),
+        });
+    }
+    if cfg.settings_mode == ClaudeSettingsMode::Inherit {
+        tracing::warn!(
+            node = %node_id,
+            setting_sources = %cfg.setting_sources.join(","),
+            "Claude codergen inherit mode may load personal hooks/settings"
+        );
+    }
+
+    Ok(cfg)
+}
+
+fn apply_manifest_claude_config(
+    cfg: &mut ClaudeCliConfig,
+    claude: ClaudeCodergenConfig,
+    manifest_dir: Option<&Path>,
+) {
+    if let Some(mode) = claude.settings_mode {
+        cfg.settings_mode = mode;
+    }
+    if let Some(sources) = claude.setting_sources {
+        cfg.setting_sources = sources
+            .into_iter()
+            .map(|source| source.as_str().to_string())
+            .collect();
+    }
+    cfg.settings = claude.settings_json.or(cfg.settings.take());
+    cfg.tools = claude.tools.or(cfg.tools.take());
+    cfg.agents = claude.agents_json.or(cfg.agents.take());
+    cfg.mcp_config = claude.mcp_config_json.or(cfg.mcp_config.take());
+    if !claude.plugin_dirs.is_empty() {
+        cfg.plugin_dirs = claude
+            .plugin_dirs
+            .into_iter()
+            .map(|path| resolve_manifest_relative_path(path, manifest_dir))
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+    }
+}
+
+fn resolve_manifest_relative_path(path: PathBuf, manifest_dir: Option<&Path>) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else if let Some(dir) = manifest_dir {
+        dir.join(path)
+    } else {
+        path
+    }
+}
+
+fn apply_context_claude_overrides(
+    cfg: &mut ClaudeCliConfig,
+    snapshot: &HashMap<String, serde_json::Value>,
+    node_id: &str,
+) -> Result<()> {
+    if let Some(mode) = snapshot.get(CLAUDE_MODE_KEY).and_then(|v| v.as_str()) {
+        cfg.settings_mode =
+            ClaudeSettingsMode::from_str(mode).map_err(|err| AttractorError::HandlerError {
+                handler: "codergen".into(),
+                node: node_id.into(),
+                message: err,
+            })?;
+    }
+    if let Some(sources) = string_list_from_value(snapshot.get(CLAUDE_SOURCES_KEY)) {
+        cfg.setting_sources = parse_setting_sources(sources, node_id)?;
+    }
+    if let Some(value) = snapshot.get(CLAUDE_SETTINGS_KEY).and_then(|v| v.as_str()) {
+        cfg.settings = Some(value.to_string());
+    }
+    if let Some(value) = snapshot.get(CLAUDE_TOOLS_KEY).and_then(|v| v.as_str()) {
+        cfg.tools = Some(value.to_string());
+    }
+    if let Some(value) = snapshot.get(CLAUDE_AGENTS_KEY).and_then(|v| v.as_str()) {
+        cfg.agents = Some(value.to_string());
+    }
+    if let Some(plugin_dirs) = string_list_from_value(snapshot.get(CLAUDE_PLUGIN_DIRS_KEY)) {
+        cfg.plugin_dirs = plugin_dirs;
+    }
+    if let Some(value) = snapshot.get(CLAUDE_MCP_CONFIG_KEY).and_then(|v| v.as_str()) {
+        cfg.mcp_config = Some(value.to_string());
+    }
+
+    Ok(())
+}
+
+fn parse_setting_sources(sources: Vec<String>, node_id: &str) -> Result<Vec<String>> {
+    sources
+        .into_iter()
+        .map(|source| {
+            ClaudeSettingSource::from_str(&source)
+                .map(|parsed| parsed.as_str().to_string())
+                .map_err(|err| AttractorError::HandlerError {
+                    handler: "codergen".into(),
+                    node: node_id.into(),
+                    message: err,
+                })
+        })
+        .collect()
+}
+
+fn string_list_from_value(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    match value {
+        Some(serde_json::Value::String(s)) => Some(
+            s.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        ),
+        Some(serde_json::Value::Array(values)) => Some(
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect(),
+        ),
+        _ => None,
     }
 }
 

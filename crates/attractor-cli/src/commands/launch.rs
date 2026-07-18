@@ -11,6 +11,7 @@ pub async fn cmd_launch(
     max_steps: u64,
     fresh: bool,
     verbose: bool,
+    codergen_claude: &super::CodergenClaudeCliOpts,
 ) -> anyhow::Result<()> {
     let pipelines_dir = output_dir
         .map(|p| p.to_path_buf())
@@ -79,6 +80,7 @@ pub async fn cmd_launch(
         max_budget_usd,
         max_steps,
         fresh,
+        codergen_claude,
     )
     .await?;
 

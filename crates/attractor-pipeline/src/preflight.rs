@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use attractor_quality::resolution::{resolve, ResolutionError};
 
 use crate::graph::PipelineGraph;
+use crate::handler::HandlerRegistry;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -47,7 +48,23 @@ pub struct PreflightFinding {
 pub fn run(graph: &PipelineGraph, workdir: &Path) -> Vec<PreflightFinding> {
     let mut findings = Vec::new();
 
-    // Only proceed if the graph has at least one quality node.
+    // Codergen nodes with no resolved timeout silently fall back to the
+    // hardcoded 600s kill timeout in codergen_handler.rs. Warn per node.
+    for node_id in nodes_missing_timeout(graph) {
+        findings.push(PreflightFinding {
+            severity: Severity::Warn,
+            code: "CODERGEN_NO_TIMEOUT".into(),
+            message: format!(
+                "Node '{node_id}' has no timeout attribute and will fall back to the hardcoded 600s (10m) kill timeout"
+            ),
+            suggestion: Some(
+                "Set an explicit timeout=\"<duration>\" on the node (or a graph/subgraph-level default) sized to its expected workload — e.g. 120s for routing/conditional nodes, 300s for medium tasks, 900s for heavy implementation/test nodes".into(),
+            ),
+            workdir: None,
+        });
+    }
+
+    // Only proceed with quality-manifest checks if the graph has a quality node.
     if !graph_has_quality_node(graph) {
         return findings;
     }
@@ -96,6 +113,24 @@ pub fn run(graph: &PipelineGraph, workdir: &Path) -> Vec<PreflightFinding> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Returns the ids of all nodes in `graph` that resolve to the `codergen`
+/// handler type (via the same resolution `HandlerRegistry::resolve_type` uses:
+/// explicit `type=` attribute, else shape-based mapping, else default
+/// `"codergen"`) but have no resolved `timeout` — i.e. they would silently
+/// fall back to the hardcoded 600s kill timeout in `codergen_handler.rs`.
+///
+/// `node.timeout` already reflects graph-/subgraph-level default cascading
+/// (see `graph::node_def_to_pipeline_node`), so a `None` here means there is
+/// truly no timeout override at any level.
+fn nodes_missing_timeout(graph: &PipelineGraph) -> Vec<String> {
+    let registry = HandlerRegistry::new();
+    graph
+        .all_nodes()
+        .filter(|node| registry.resolve_type(node) == "codergen" && node.timeout.is_none())
+        .map(|node| node.id.clone())
+        .collect()
+}
+
 /// Returns `true` if any node in `graph` is dispatched to the `quality` handler.
 ///
 /// A node is a quality node when:
@@ -130,6 +165,8 @@ mod tests {
 
     use tempfile::TempDir;
 
+    // ---- graph construction helpers ----
+
     /// Build a graph with a single quality node (via DOT `type="quality"`).
     fn make_graph_with_quality_node() -> PipelineGraph {
         let dot = r#"digraph G {
@@ -143,10 +180,13 @@ mod tests {
     }
 
     /// Build a graph with NO quality node.
+    ///
+    /// `work` carries an explicit timeout so this fixture stays scoped to
+    /// quality-manifest checks and isn't also flagged by CODERGEN_NO_TIMEOUT.
     fn make_graph_without_quality_node() -> PipelineGraph {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work"]
+            work [label="Do work", timeout="60s"]
             done [shape="Msquare"]
             start -> work -> done
         }"#;
@@ -260,5 +300,179 @@ mod tests {
     fn no_quality_node_detection() {
         let graph = make_graph_without_quality_node();
         assert!(!graph_has_quality_node(&graph));
+    }
+
+    // ---- CODERGEN_NO_TIMEOUT tests ----
+
+    fn run_no_manifest(graph: &PipelineGraph) -> Vec<PreflightFinding> {
+        let tmp = TempDir::new().unwrap();
+        workdir_with_git_no_manifest(&tmp);
+        run(graph, tmp.path())
+    }
+
+    /// A box-shaped (codergen) node with no timeout and no graph-level default
+    /// produces exactly one CODERGEN_NO_TIMEOUT warning naming that node.
+    #[test]
+    fn codergen_node_without_timeout_produces_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
+        assert_eq!(findings[0].code, "CODERGEN_NO_TIMEOUT");
+        assert_eq!(findings[0].severity, Severity::Warn);
+        assert!(findings[0].message.contains("work"));
+    }
+
+    /// A box-shaped node with an explicit timeout produces no finding.
+    #[test]
+    fn codergen_node_with_explicit_timeout_produces_no_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work", timeout="60s"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
+    }
+
+    /// A node with no node-level timeout but covered by a `node [timeout=...]`
+    /// graph-level default produces no finding — cascaded defaults count as set.
+    #[test]
+    fn codergen_node_with_graph_level_default_timeout_produces_no_warning() {
+        let dot = r#"digraph G {
+            node [timeout="300s"]
+            start [shape="Mdiamond"]
+            work [label="Do work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
+    }
+
+    /// A diamond-shaped node with a prompt resolves to "codergen" per
+    /// HandlerRegistry::resolve_type's special case, so a missing timeout is
+    /// still flagged.
+    #[test]
+    fn conditional_node_with_prompt_without_timeout_produces_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            check [shape="diamond", type="conditional", prompt="Decide something"]
+            done [shape="Msquare"]
+            start -> check -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
+        assert_eq!(findings[0].code, "CODERGEN_NO_TIMEOUT");
+        assert!(findings[0].message.contains("check"));
+    }
+
+    /// A pure diamond-shaped routing node (no prompt) resolves to
+    /// "conditional", not "codergen", so a missing timeout is not flagged.
+    #[test]
+    fn conditional_node_without_prompt_without_timeout_produces_no_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            check [shape="diamond", type="conditional"]
+            done [shape="Msquare"]
+            start -> check -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
+    }
+
+    /// Non-codergen nodes (start/exit) with no timeout are never flagged —
+    /// they aren't subject to the hardcoded 600s codergen fallback.
+    #[test]
+    fn non_codergen_nodes_without_timeout_produce_no_warnings() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            done [shape="Msquare"]
+            start -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
+    }
+
+    /// Multiple codergen nodes missing timeouts each produce their own
+    /// distinct finding rather than being merged into one.
+    #[test]
+    fn multiple_codergen_nodes_missing_timeout_produce_distinct_findings() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            first [label="First"]
+            second [label="Second"]
+            done [shape="Msquare"]
+            start -> first -> second -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert_eq!(
+            findings.len(),
+            2,
+            "expected 2 distinct findings: {findings:?}"
+        );
+        assert!(findings.iter().all(|f| f.code == "CODERGEN_NO_TIMEOUT"));
+        let mentioned: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
+        assert!(mentioned.iter().any(|m| m.contains("first")));
+        assert!(mentioned.iter().any(|m| m.contains("second")));
+    }
+
+    /// The CODERGEN_NO_TIMEOUT check and the quality-manifest check compose:
+    /// a graph with both a timeout-less codergen node and a quality node
+    /// missing its manifest produces both findings.
+    #[test]
+    fn codergen_and_quality_findings_compose() {
+        let tmp = TempDir::new().unwrap();
+        workdir_with_git_no_manifest(&tmp);
+
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work"]
+            quality_check [type="quality"]
+            done [shape="Msquare"]
+            start -> work -> quality_check -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run(&graph, tmp.path());
+        assert_eq!(findings.len(), 2, "expected 2 findings: {findings:?}");
+        let codes: Vec<&str> = findings.iter().map(|f| f.code.as_str()).collect();
+        assert!(codes.contains(&"CODERGEN_NO_TIMEOUT"));
+        assert!(codes.contains(&"QUALITY_NO_MANIFEST"));
     }
 }

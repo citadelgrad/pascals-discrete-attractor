@@ -12,6 +12,7 @@ digraph EpicRunner {
         label="Pick Next Task"
         node_type="conditional"
         llm_model="haiku"
+        timeout="120s"
         allowed_tools="Bash(bd:*)"
         prompt="Run: bd show EPIC_ID
 Look at the BLOCKS section to see child tasks.
@@ -32,6 +33,7 @@ If all child tasks are closed (no more ready tasks for this epic):
     investigate [
         shape="box"
         label="Investigate"
+        timeout="900s"
         allowed_tools="Read,Grep,Glob,Bash(bd:*)"
         prompt="Read .pas/current_task.md to get the current task ID and description.
 Run bd show <task-id> to get full details.
@@ -52,6 +54,7 @@ Write your findings to .pas/investigation.md including:
     implement [
         shape="box"
         label="Implement"
+        timeout="900s"
         prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
 Implement the changes described. Follow existing code patterns and conventions.
 Keep changes minimal and focused on the task requirements."
@@ -61,6 +64,7 @@ Keep changes minimal and focused on the task requirements."
     run_tests [
         shape="box"
         label="Run Tests"
+        timeout="900s"
         prompt="Read .pas/current_task.md to understand what was changed.
 Run the relevant test suite for the modified code.
 If tests fail, fix the issues and re-run until green.
@@ -72,6 +76,7 @@ Write the test results to .pas/test-results.md"
         shape="diamond"
         label="Verify"
         node_type="conditional"
+        timeout="300s"
         prompt="Read .pas/current_task.md for the task requirements.
 Check the changes:
 1. Review the git diff
@@ -86,6 +91,7 @@ If there are problems, respond with FAIL on the last line."
     fixup [
         shape="box"
         label="Fix Issues"
+        timeout="900s"
         prompt="Read .pas/current_task.md and .pas/investigation.md for context.
 The verification step found problems. Fix any failing tests, lint errors, or unmet acceptance criteria.
 Re-run tests after fixing."
@@ -95,6 +101,7 @@ Re-run tests after fixing."
     close_task [
         shape="box"
         label="Close Task"
+        timeout="300s"
         allowed_tools="Bash(bd:*),Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
 1. Stage changes: git add -A
@@ -109,6 +116,7 @@ Re-run tests after fixing."
         label="More Tasks?"
         node_type="conditional"
         llm_model="haiku"
+        timeout="120s"
         allowed_tools="Bash(bd:*)"
         prompt="Run: bd show EPIC_ID
 Look at the BLOCKS section. Count how many child tasks are still open.

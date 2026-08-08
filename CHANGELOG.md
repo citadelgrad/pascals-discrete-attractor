@@ -2,6 +2,16 @@
 
 All notable changes to PAS are documented here.
 
+## [0.9.2] — 2026-08-08
+
+### Fixed
+
+- `pas scaffold`'s `epic-runner.dot` template now sets an explicit `timeout` on every node (120s for routing/conditional nodes, 300s for medium tasks, 900s for heavy implementation/test nodes). Newly scaffolded epic-runner pipelines no longer silently fall back to the hardcoded 600s kill timeout on long-running `codergen` steps.
+
+### Changed
+
+- `pas run`'s checkpoint-resume message is now a highlighted banner. It shows the node being resumed into, steps run so far, cost spent so far, and how long ago the checkpoint was saved — colored when the terminal supports it, plain text otherwise. It deliberately omits a "completed N of M" count: looping pipelines (e.g. the epic-runner template) clear their completed-node history on every loop restart, so that count would be misleading.
+
 ## [0.9.1] — 2026-08-08
 
 ### Fixed

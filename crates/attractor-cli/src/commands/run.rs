@@ -116,6 +116,77 @@ fn stable_logs_dir(pipeline_path: &std::path::Path) -> PathBuf {
     PathBuf::from(format!(".pas/logs/{}-{:08x}", stem, hash))
 }
 
+/// Print a highlighted resume banner built from real checkpoint data.
+///
+/// Deliberately omits a "completed N of M" figure: `completed_nodes` is
+/// cleared on every `loop_restart` edge (see `checkpoint.rs`), so looping
+/// pipelines -- e.g. the beads epic-runner template, which restarts its
+/// task-picking loop after each closed task -- have no stable total to
+/// report against. `step_count` and `total_cost` survive loop restarts, so
+/// those are used instead as honest progress signals.
+fn print_resume_banner(cp: &attractor_pipeline::PipelineCheckpoint) {
+    let age = chrono::DateTime::parse_from_rfc3339(&cp.timestamp)
+        .ok()
+        .map(|saved| {
+            let secs = (chrono::Utc::now() - saved.with_timezone(&chrono::Utc))
+                .num_seconds()
+                .max(0);
+            format_elapsed(secs)
+        });
+
+    let mut detail = format!("{} step(s) run so far", cp.step_count);
+    if cp.total_cost > 0.0 {
+        detail.push_str(&format!(", ${:.4} spent so far", cp.total_cost));
+    }
+    if let Some(age) = age {
+        detail.push_str(&format!(", saved {age} ago"));
+    }
+
+    print_highlighted(&[
+        format!("Resuming from checkpoint -- next node: {}", cp.current_node_id),
+        detail,
+    ]);
+}
+
+fn format_elapsed(secs: i64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// Print lines inside a border, bolded and colored when stdout is a
+/// terminal. Falls back to a plain ASCII box (no ANSI codes) when output is
+/// redirected, so logs and CI output stay clean.
+fn print_highlighted(lines: &[String]) {
+    use std::io::IsTerminal;
+
+    let color = std::io::stdout().is_terminal();
+    let (bold, cyan, reset) = if color {
+        ("\x1b[1m", "\x1b[36m", "\x1b[0m")
+    } else {
+        ("", "", "")
+    };
+
+    let width = lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(20);
+    let border = "-".repeat(width + 4);
+
+    println!("{cyan}+{border}+{reset}");
+    for line in lines {
+        let pad = " ".repeat(width - line.chars().count());
+        println!("{cyan}|{reset}  {bold}{line}{pad}{reset}  {cyan}|{reset}");
+    }
+    println!("{cyan}+{border}+{reset}");
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_run(
     path: &std::path::Path,
@@ -157,16 +228,17 @@ pub async fn cmd_run(
         attractor_pipeline::clear_checkpoint(&logs_dir).await?;
     }
 
-    // Check for existing checkpoint
-    let has_checkpoint = logs_dir.join("checkpoint.json").exists();
+    // Check for existing checkpoint. Loaded (not just existence-checked) so
+    // the resume banner can show real progress instead of a bare notice.
+    let checkpoint = attractor_pipeline::load_checkpoint(&logs_dir).await?;
 
     println!("Running pipeline: {}", graph.name);
     if !graph.goal.is_empty() {
         println!("Goal: {}", graph.goal);
     }
     println!("Logs: {}", logs_dir.display());
-    if has_checkpoint {
-        println!("Resuming from checkpoint");
+    if let Some(cp) = &checkpoint {
+        print_resume_banner(cp);
     }
     if dry_run {
         println!("(dry run mode -- no LLM calls)");

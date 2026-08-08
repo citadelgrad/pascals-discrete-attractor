@@ -2,6 +2,12 @@
 
 All notable changes to PAS are documented here.
 
+## [0.9.1] — 2026-08-08
+
+### Fixed
+
+- `pas run` now actually invokes preflight checks. The `CODERGEN_NO_TIMEOUT` warning (added in 0.9.0) was built and tested but never called from any CLI command, so it never fired. It now runs at the start of every `pas run`, before the pipeline starts.
+
 ## [0.9.0] — 2026-07-18
 
 ### Added

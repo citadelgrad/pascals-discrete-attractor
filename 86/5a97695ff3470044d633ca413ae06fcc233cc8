@@ -1,0 +1,35 @@
+CHANGELOG.md
+  s_eb4ff7de3b155f::t_70c735dea11722 5-14
+crates/attractor-cli/src/commands/run.rs
+  s_eb4ff7de3b155f::t_d1c284a49b00ca 119-189
+  s_eb4ff7de3b155f::t_3dd0807c922f75 231-233,240-241
+Cargo.toml
+  s_eb4ff7de3b155f::t_aa74a71d566a8e 17
+templates/epic-runner.dot
+  s_eb4ff7de3b155f::t_809d78807a1edb 57
+  s_eb4ff7de3b155f::t_0341ea5ab76629 119
+  s_eb4ff7de3b155f::t_67a3b291ceb391 67
+  s_eb4ff7de3b155f::t_f48abb2ce75c53 15
+  s_eb4ff7de3b155f::t_fe181b89e967bc 94
+  s_eb4ff7de3b155f::t_400d29c3c15c9c 79
+  s_eb4ff7de3b155f::t_0884c62e117782 36
+  s_eb4ff7de3b155f::t_c162d8a51b63f1 104
+Cargo.lock
+  s_eb4ff7de3b155f::t_a56a7e1d0c5a49 148,167,192,203,220,245,260,277,291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "865a97695ff3470044d633ca413ae06fcc233cc8",
+  "prompts": {},
+  "sessions": {
+    "s_eb4ff7de3b155f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "179eacf3-8ae2-451e-b0b9-3f8aba5eab52",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

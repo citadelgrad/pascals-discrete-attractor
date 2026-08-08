@@ -129,6 +129,23 @@ pub async fn cmd_run(
 ) -> anyhow::Result<()> {
     let graph = crate::load_pipeline(path)?;
 
+    // Preflight checks: environment-level warnings that don't fail validation
+    // but can cause silent problems at runtime (e.g. a codergen node with no
+    // timeout falling back to the hardcoded 600s kill).
+    let preflight_workdir = workdir
+        .map(|d| d.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    for finding in attractor_pipeline::preflight_run(&graph, &preflight_workdir) {
+        let severity = match finding.severity {
+            attractor_pipeline::PreflightSeverity::Warn => "WARN",
+            attractor_pipeline::PreflightSeverity::Error => "ERROR",
+        };
+        println!("[{}] {}: {}", severity, finding.code, finding.message);
+        if let Some(suggestion) = &finding.suggestion {
+            println!("  suggestion: {}", suggestion);
+        }
+    }
+
     // Resolve logs directory: explicit flag or deterministic from path
     let logs_dir = match logs {
         Some(l) => l.to_path_buf(),

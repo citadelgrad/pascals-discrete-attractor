@@ -1,0 +1,19 @@
+crates/attractor-cli/src/commands/run.rs
+  s_136e08d294d2cb::t_74eeec0e21addc 132-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "155feed6547fc3fe22fb482f3b8183f401e82047",
+  "prompts": {},
+  "sessions": {
+    "s_136e08d294d2cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "edaf3337-7e0c-4e9f-8b23-f5351d36309f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

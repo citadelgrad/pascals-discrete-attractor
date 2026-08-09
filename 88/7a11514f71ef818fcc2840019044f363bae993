@@ -1,0 +1,30 @@
+crates/attractor-pipeline/src/engine.rs
+  s_dcdee10f895946::t_2c2b8550bd4ef8 436
+  s_dcdee10f895946::t_2d1084d96a369d 32
+crates/attractor-pipeline/src/engine_tests.rs
+  s_dcdee10f895946::t_4910d50689b61b 721-840
+crates/attractor-cli/src/commands/run.rs
+  s_dcdee10f895946::t_f9a142ae0015e3 290-291
+crates/attractor-pipeline/src/preflight.rs
+  s_dcdee10f895946::t_029a51860e6d0f 489-553
+  s_dcdee10f895946::t_e0a3d680b486fd 67-83
+  s_dcdee10f895946::t_1dea545d096bc4 151-168
+crates/attractor-web/src/server/execute.rs
+  s_dcdee10f895946::t_46eaf58e9d52b3 310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "887a11514f71ef818fcc2840019044f363bae993",
+  "prompts": {},
+  "sessions": {
+    "s_dcdee10f895946": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "268405a3-3d98-4de1-a88a-1193e8d854a7",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

@@ -2,6 +2,13 @@
 
 All notable changes to PAS are documented here.
 
+## [0.9.3] — 2026-08-09
+
+### Fixed
+
+- `pas run` now prints the true total cost across looping pipelines. Previously the final "Total cost" line was computed by re-summing `<node>.cost_usd` keys out of the pipeline's final context, a map that only keeps the last write per key — so a node re-run via a `loop_restart` edge (e.g. a quality fix/verify retry loop) silently dropped every earlier iteration's cost from the total. `PipelineResult` now carries a `total_cost` field populated from the engine's per-execution accumulator, which is unaffected by `loop_restart`, and both the CLI and the web streaming runner report from it.
+- Added a preflight warning (`PROVIDER_COST_UNTRACKED`) for nodes using the `codex` or `gemini` CLI providers: neither reports a per-call dollar cost, so such nodes always count as $0 toward `Total cost` and `--max-budget-usd` even though real spend occurred.
+
 ## [0.9.2] — 2026-08-08
 
 ### Fixed

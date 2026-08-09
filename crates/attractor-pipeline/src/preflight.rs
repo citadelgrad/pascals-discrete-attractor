@@ -64,6 +64,23 @@ pub fn run(graph: &PipelineGraph, workdir: &Path) -> Vec<PreflightFinding> {
         });
     }
 
+    // Codex CLI and Gemini CLI JSON output does not report a dollar cost, so
+    // these nodes always contribute $0 to the pipeline's cost total and
+    // budget check, even though real spend occurred. Warn once per node.
+    for (node_id, provider_name) in nodes_with_uncosted_provider(graph) {
+        findings.push(PreflightFinding {
+            severity: Severity::Warn,
+            code: "PROVIDER_COST_UNTRACKED".into(),
+            message: format!(
+                "Node '{node_id}' uses llm_provider=\"{provider_name}\", which reports no per-call cost — this node will count as $0 toward Total cost and --max-budget-usd"
+            ),
+            suggestion: Some(
+                "Track spend for this provider separately (e.g. via its own billing dashboard) — pas cannot include it in its running total".into(),
+            ),
+            workdir: None,
+        });
+    }
+
     // Only proceed with quality-manifest checks if the graph has a quality node.
     if !graph_has_quality_node(graph) {
         return findings;
@@ -128,6 +145,24 @@ fn nodes_missing_timeout(graph: &PipelineGraph) -> Vec<String> {
         .all_nodes()
         .filter(|node| registry.resolve_type(node) == "codergen" && node.timeout.is_none())
         .map(|node| node.id.clone())
+        .collect()
+}
+
+/// Returns `(node_id, provider_name)` for every node whose `llm_provider`
+/// attribute selects a CLI that never reports a per-call dollar cost
+/// (Codex CLI, Gemini CLI) — see `codergen_provider::parse_codex_output`
+/// and `parse_gemini_output`, which always set `cost_usd: None`.
+fn nodes_with_uncosted_provider(graph: &PipelineGraph) -> Vec<(String, String)> {
+    graph
+        .all_nodes()
+        .filter_map(|node| {
+            let provider = node.llm_provider.as_deref()?.to_ascii_lowercase();
+            match provider.as_str() {
+                "codex" | "openai" => Some((node.id.clone(), "codex".to_string())),
+                "gemini" | "google" => Some((node.id.clone(), "gemini".to_string())),
+                _ => None,
+            }
+        })
         .collect()
 }
 
@@ -449,6 +484,71 @@ mod tests {
         let mentioned: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
         assert!(mentioned.iter().any(|m| m.contains("first")));
         assert!(mentioned.iter().any(|m| m.contains("second")));
+    }
+
+    // ---- PROVIDER_COST_UNTRACKED tests ----
+
+    /// A node with llm_provider="codex" produces exactly one
+    /// PROVIDER_COST_UNTRACKED warning naming that node.
+    #[test]
+    fn codex_provider_node_produces_cost_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work", timeout="60s", llm_provider="codex"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
+        assert_eq!(findings[0].code, "PROVIDER_COST_UNTRACKED");
+        assert_eq!(findings[0].severity, Severity::Warn);
+        assert!(findings[0].message.contains("work"));
+    }
+
+    /// A node with llm_provider="gemini" produces exactly one
+    /// PROVIDER_COST_UNTRACKED warning naming that node.
+    #[test]
+    fn gemini_provider_node_produces_cost_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work", timeout="60s", llm_provider="gemini"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly 1 finding: {findings:?}"
+        );
+        assert_eq!(findings[0].code, "PROVIDER_COST_UNTRACKED");
+    }
+
+    /// A node with no llm_provider attribute (defaults to Claude, which does
+    /// report cost) produces no PROVIDER_COST_UNTRACKED warning.
+    #[test]
+    fn default_claude_provider_produces_no_cost_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work", timeout="60s"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
     }
 
     /// The CODERGEN_NO_TIMEOUT check and the quality-manifest check compose:

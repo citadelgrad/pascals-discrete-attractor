@@ -29,6 +29,7 @@ pub struct PipelineResult {
     pub completed_nodes: Vec<String>,
     pub node_outcomes: HashMap<String, Outcome>,
     pub final_context: HashMap<String, serde_json::Value>,
+    pub total_cost: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +433,7 @@ impl PipelineExecutor {
             completed_nodes,
             node_outcomes,
             final_context,
+            total_cost,
         })
     }
 }

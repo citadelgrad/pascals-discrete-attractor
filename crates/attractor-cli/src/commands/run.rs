@@ -287,14 +287,8 @@ pub async fn cmd_run(
     println!("Completed nodes: {:?}", result.completed_nodes);
 
     // Print cost summary
-    let total_cost: f64 = result
-        .final_context
-        .iter()
-        .filter(|(k, _)| k.ends_with(".cost_usd"))
-        .filter_map(|(_, v)| v.as_f64())
-        .sum();
-    if total_cost > 0.0 {
-        println!("Total cost: ${:.4}", total_cost);
+    if result.total_cost > 0.0 {
+        println!("Total cost: ${:.4}", result.total_cost);
     }
 
     Ok(())

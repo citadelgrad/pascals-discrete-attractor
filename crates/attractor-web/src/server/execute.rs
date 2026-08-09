@@ -307,6 +307,7 @@ async fn run_pipeline_with_streaming(
         completed_nodes,
         node_outcomes,
         final_context: context.snapshot().await,
+        total_cost,
     })
 }
 

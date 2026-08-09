@@ -718,6 +718,126 @@ async fn quality_retry_warning_injected_on_second_iteration() {
     );
 }
 
+// Test 15: PipelineResult.total_cost sums every node execution, including
+// ones re-run after a loop_restart clears completed_nodes/node_outcomes.
+// Regression for the CLI's old approach of re-summing `<node>.cost_usd`
+// keys out of final_context, which is last-write-wins per node id and so
+// only ever counted the final loop iteration's cost.
+#[tokio::test]
+async fn total_cost_accumulates_across_loop_restart_iterations() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct CostingFixHandler {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for CostingFixHandler {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+        async fn execute(
+            &self,
+            node: &crate::graph::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            let mut updates = HashMap::new();
+            updates.insert(format!("{}.cost_usd", node.id), serde_json::json!(1.0));
+            Ok(Outcome {
+                context_updates: updates,
+                ..Outcome::success("fixed")
+            })
+        }
+    }
+
+    struct FailTwiceThenSucceedQualityHandler {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for FailTwiceThenSucceedQualityHandler {
+        fn handler_type(&self) -> &str {
+            "quality"
+        }
+        async fn execute(
+            &self,
+            _node: &crate::graph::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            let prev = self.call_count.fetch_add(1, Ordering::SeqCst);
+            if prev < 2 {
+                Ok(Outcome::fail("not fixed yet"))
+            } else {
+                Ok(Outcome::success("fixed on third attempt"))
+            }
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            start  [shape="Mdiamond"]
+            fix    [shape="box", label="Fix", prompt="fix"]
+            verify [shape="box", type="quality", label="Verify", prompt="verify"]
+            done   [shape="Msquare"]
+            start -> fix -> verify
+            verify -> done [condition="outcome=success"]
+            verify -> fix  [condition="outcome=fail", loop_restart=true]
+        }"#,
+    );
+
+    let fix_calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(ConditionalHandler);
+    registry.register(CostingFixHandler {
+        call_count: fix_calls.clone(),
+    });
+    registry.register(FailTwiceThenSucceedQualityHandler {
+        call_count: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let context = Context::new();
+    // Allow 3 iterations so the fix->verify loop runs three times before succeeding.
+    context
+        .set("quality_max_fix_iterations", serde_json::json!(3u64))
+        .await;
+
+    let result = PipelineExecutor::new(registry)
+        .run_with_context(&graph, context)
+        .await
+        .expect("pipeline should succeed on third quality attempt");
+
+    assert_eq!(
+        fix_calls.load(Ordering::SeqCst),
+        3,
+        "fix handler should run once per loop iteration"
+    );
+    assert_eq!(
+        result.total_cost, 3.0,
+        "total_cost must sum every loop iteration's cost, not just the last"
+    );
+
+    // The bug this guards against: summing `.cost_usd` keys out of
+    // final_context (last-write-wins per node id) only ever sees the last
+    // iteration's cost for the "fix" node.
+    let final_context_sum: f64 = result
+        .final_context
+        .iter()
+        .filter(|(k, _)| k.ends_with(".cost_usd"))
+        .filter_map(|(_, v)| v.as_f64())
+        .sum();
+    assert_eq!(
+        final_context_sum, 1.0,
+        "final_context re-summing undercounts to a single iteration's cost — \
+         confirms total_cost is the field that must be used, not final_context"
+    );
+}
+
 // Test 15: Handler returning Fail with no outgoing edge returns HandlerError
 #[tokio::test]
 async fn fail_handler_with_no_outgoing_edge_returns_handler_error() {

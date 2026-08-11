@@ -884,7 +884,7 @@ digraph Pipeline {
 Each provider has different CLI flags and output formats. PAS handles this automatically:
 
 - **Claude**: Uses `--output-format json` and `-p` for the prompt. Returns structured JSON.
-- **Codex**: Uses `--output-format jsonl` with the prompt as a positional argument. Returns streaming JSONL events; PAS extracts the last `message` event.
+- **Codex**: Uses `codex exec --json --yolo` with the prompt as a positional argument. Returns streaming JSONL events; PAS extracts the last completed agent-message item.
 - **Gemini**: Uses `--output-format json` and `-p` for the prompt, plus `--sandbox none` for full access. Returns structured JSON.
 
 ### CLI not found

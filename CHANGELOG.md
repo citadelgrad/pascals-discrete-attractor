@@ -2,6 +2,12 @@
 
 All notable changes to PAS are documented here.
 
+## [0.9.4] — 2026-08-10
+
+### Fixed
+
+- Codex CLI-backed `codergen` nodes now invoke the required non-interactive `codex exec` subcommand, restoring ChatGPT/Codex subscription execution with current Codex CLI releases.
+
 ## [0.9.3] — 2026-08-09
 
 ### Fixed

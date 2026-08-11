@@ -143,7 +143,10 @@ fn print_resume_banner(cp: &attractor_pipeline::PipelineCheckpoint) {
     }
 
     print_highlighted(&[
-        format!("Resuming from checkpoint -- next node: {}", cp.current_node_id),
+        format!(
+            "Resuming from checkpoint -- next node: {}",
+            cp.current_node_id
+        ),
         detail,
     ]);
 }

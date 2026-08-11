@@ -376,7 +376,7 @@ fn resolve_claude_cli_config_requires_sources_for_inherit() {
 }
 
 #[test]
-fn build_cli_command_codex_prompt_is_positional() {
+fn build_cli_command_codex_uses_exec_with_positional_prompt() {
     let node = make_node("n", "box", Some("do work"), HashMap::new());
     let graph = make_minimal_graph();
     let cfg = CliRunConfig {
@@ -394,6 +394,7 @@ fn build_cli_command_codex_prompt_is_positional() {
         .get_args()
         .map(|a| a.to_str().unwrap())
         .collect();
+    assert_eq!(args.first(), Some(&"exec"));
     assert!(args.contains(&"--json"));
     assert!(args.contains(&"--yolo"));
     // Prompt should be last (positional)

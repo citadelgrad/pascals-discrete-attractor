@@ -252,7 +252,8 @@ pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Comma
         }
         LlmCliProvider::Codex => {
             let mut cmd = tokio::process::Command::new("codex");
-            cmd.arg("--json")
+            cmd.arg("exec")
+                .arg("--json")
                 .arg("--yolo")
                 .arg("--skip-git-repo-check")
                 .arg("--ephemeral");

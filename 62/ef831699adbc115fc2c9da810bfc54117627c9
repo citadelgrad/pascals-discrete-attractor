@@ -1,0 +1,26 @@
+CHANGELOG.md
+  h_12ee2b2686c122 5-10
+Cargo.lock
+  h_12ee2b2686c122 148,167,192,203,220,245,260,277,291
+Cargo.toml
+  h_12ee2b2686c122 17
+crates/attractor-cli/src/commands/run.rs
+  h_12ee2b2686c122 146-149
+crates/attractor-pipeline/src/handlers/codergen_handler_tests.rs
+  h_12ee2b2686c122 379,397
+crates/attractor-pipeline/src/handlers/codergen_provider.rs
+  h_12ee2b2686c122 255-256
+docs/guide.md
+  h_12ee2b2686c122 887
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "62ef831699adbc115fc2c9da810bfc54117627c9",
+  "prompts": {},
+  "humans": {
+    "h_12ee2b2686c122": {
+      "author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

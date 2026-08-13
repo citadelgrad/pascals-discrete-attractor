@@ -209,7 +209,9 @@ pub async fn cmd_run(
     let preflight_workdir = workdir
         .map(|d| d.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    for finding in attractor_pipeline::preflight_run(&graph, &preflight_workdir) {
+    for finding in
+        attractor_pipeline::preflight_run_with_budget(&graph, &preflight_workdir, max_budget_usd)
+    {
         let severity = match finding.severity {
             attractor_pipeline::PreflightSeverity::Warn => "WARN",
             attractor_pipeline::PreflightSeverity::Error => "ERROR",

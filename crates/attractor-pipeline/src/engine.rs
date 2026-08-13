@@ -14,6 +14,8 @@ use crate::graph::PipelineGraph;
 use crate::handler::{default_registry, HandlerRegistry};
 use crate::validation::validate_or_raise;
 
+pub const DEFAULT_MAX_BUDGET_USD: f64 = 200.0;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -151,7 +153,7 @@ impl PipelineExecutor {
             .get("max_budget_usd")
             .await
             .and_then(|v| v.as_f64())
-            .unwrap_or(200.0);
+            .unwrap_or(DEFAULT_MAX_BUDGET_USD);
         let max_steps: u64 = context
             .get("max_steps")
             .await

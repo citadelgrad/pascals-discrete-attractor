@@ -53,7 +53,7 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
 
-        /// Maximum total spend across all nodes (USD). Pipeline aborts if exceeded.
+        /// Maximum tracked spend across all nodes (USD). Defaults to $200; Codex/Gemini costs are untracked.
         #[arg(long)]
         max_budget_usd: Option<f64>,
 
@@ -245,7 +245,7 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
 
-        /// Maximum total spend across all nodes (USD)
+        /// Maximum tracked spend per pipeline (USD). Defaults to $200; Codex/Gemini costs are untracked.
         #[arg(long)]
         max_budget_usd: Option<f64>,
 

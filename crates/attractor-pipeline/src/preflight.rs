@@ -7,12 +7,14 @@
 //! Entry point: [`run`] — called once per `pas run` before execution starts.
 //! Can also be invoked from `pas validate --preflight`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use attractor_quality::resolution::{resolve, ResolutionError};
 
 use crate::graph::PipelineGraph;
 use crate::handler::HandlerRegistry;
+use crate::DEFAULT_MAX_BUDGET_USD;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -46,6 +48,15 @@ pub struct PreflightFinding {
 /// manifest is performed at most once regardless of how many quality nodes the
 /// graph contains.
 pub fn run(graph: &PipelineGraph, workdir: &Path) -> Vec<PreflightFinding> {
+    run_with_budget(graph, workdir, None)
+}
+
+/// Run preflight checks with the optional budget supplied by the caller.
+pub fn run_with_budget(
+    graph: &PipelineGraph,
+    workdir: &Path,
+    max_budget_usd: Option<f64>,
+) -> Vec<PreflightFinding> {
     let mut findings = Vec::new();
 
     // Codergen nodes with no resolved timeout silently fall back to the
@@ -66,13 +77,19 @@ pub fn run(graph: &PipelineGraph, workdir: &Path) -> Vec<PreflightFinding> {
 
     // Codex CLI and Gemini CLI JSON output does not report a dollar cost, so
     // these nodes always contribute $0 to the pipeline's cost total and
-    // budget check, even though real spend occurred. Warn once per node.
-    for (node_id, provider_name) in nodes_with_uncosted_provider(graph) {
+    // budget check, even though real spend occurred. Warn once per provider.
+    for (provider_name, node_count) in uncosted_provider_counts(graph) {
+        let display_name = provider_display_name(&provider_name);
+        let node_label = if node_count == 1 { "node" } else { "nodes" };
+        let budget_description = match max_budget_usd {
+            Some(budget) => format!("the explicit ${budget:.2} budget from --max-budget-usd"),
+            None => format!("the implicit ${DEFAULT_MAX_BUDGET_USD:.0} safety budget"),
+        };
         findings.push(PreflightFinding {
             severity: Severity::Warn,
             code: "PROVIDER_COST_UNTRACKED".into(),
             message: format!(
-                "Node '{node_id}' uses llm_provider=\"{provider_name}\", which reports no per-call cost — this node will count as $0 toward Total cost and --max-budget-usd"
+                "{display_name} does not report per-call cost; Total cost and {budget_description} cannot track {node_count} {display_name} {node_label}. Step limits still apply."
             ),
             suggestion: Some(
                 "Track spend for this provider separately (e.g. via its own billing dashboard) — pas cannot include it in its running total".into(),
@@ -148,22 +165,29 @@ fn nodes_missing_timeout(graph: &PipelineGraph) -> Vec<String> {
         .collect()
 }
 
-/// Returns `(node_id, provider_name)` for every node whose `llm_provider`
-/// attribute selects a CLI that never reports a per-call dollar cost
-/// (Codex CLI, Gemini CLI) — see `codergen_provider::parse_codex_output`
-/// and `parse_gemini_output`, which always set `cost_usd: None`.
-fn nodes_with_uncosted_provider(graph: &PipelineGraph) -> Vec<(String, String)> {
-    graph
-        .all_nodes()
-        .filter_map(|node| {
-            let provider = node.llm_provider.as_deref()?.to_ascii_lowercase();
-            match provider.as_str() {
-                "codex" | "openai" => Some((node.id.clone(), "codex".to_string())),
-                "gemini" | "google" => Some((node.id.clone(), "gemini".to_string())),
-                _ => None,
-            }
-        })
-        .collect()
+/// Counts nodes by normalized CLI provider when that provider never reports a
+/// per-call dollar cost.
+fn uncosted_provider_counts(graph: &PipelineGraph) -> BTreeMap<String, usize> {
+    graph.all_nodes().fold(BTreeMap::new(), |mut counts, node| {
+        let Some(provider) = node.llm_provider.as_deref() else {
+            return counts;
+        };
+        let normalized = match provider.to_ascii_lowercase().as_str() {
+            "codex" | "openai" => "codex",
+            "gemini" | "google" => "gemini",
+            _ => return counts,
+        };
+        *counts.entry(normalized.to_string()).or_default() += 1;
+        counts
+    })
+}
+
+fn provider_display_name(provider: &str) -> &str {
+    match provider {
+        "codex" => "Codex",
+        "gemini" => "Gemini",
+        _ => provider,
+    }
 }
 
 /// Returns `true` if any node in `graph` is dispatched to the `quality` handler.
@@ -488,15 +512,16 @@ mod tests {
 
     // ---- PROVIDER_COST_UNTRACKED tests ----
 
-    /// A node with llm_provider="codex" produces exactly one
-    /// PROVIDER_COST_UNTRACKED warning naming that node.
+    /// Multiple Codex nodes produce one aggregated warning that explains the
+    /// implicit budget and reports the affected node count.
     #[test]
-    fn codex_provider_node_produces_cost_warning() {
+    fn codex_provider_nodes_produce_aggregated_implicit_budget_warning() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work", timeout="60s", llm_provider="codex"]
+            first [label="First", timeout="60s", llm_provider="codex"]
+            second [label="Second", timeout="60s", llm_provider="openai"]
             done [shape="Msquare"]
-            start -> work -> done
+            start -> first -> second -> done
         }"#;
         let parsed = attractor_dot::parse(dot).unwrap();
         let graph = PipelineGraph::from_dot(parsed).unwrap();
@@ -509,7 +534,55 @@ mod tests {
         );
         assert_eq!(findings[0].code, "PROVIDER_COST_UNTRACKED");
         assert_eq!(findings[0].severity, Severity::Warn);
-        assert!(findings[0].message.contains("work"));
+        assert!(findings[0].message.contains("2 Codex nodes"));
+        assert!(findings[0].message.contains("implicit $200"));
+        assert!(!findings[0].message.contains("--max-budget-usd"));
+    }
+
+    #[test]
+    fn codex_provider_warning_identifies_explicit_budget() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [label="Do work", timeout="60s", llm_provider="codex"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+        let tmp = TempDir::new().unwrap();
+
+        let findings = run_with_budget(&graph, tmp.path(), Some(42.5));
+
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("explicit $42.50 budget"));
+        assert!(findings[0].message.contains("--max-budget-usd"));
+    }
+
+    #[test]
+    fn mixed_providers_are_aggregated_separately() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            codex [label="Codex", timeout="60s", llm_provider="codex"]
+            gemini [label="Gemini", timeout="60s", llm_provider="gemini"]
+            claude [label="Claude", timeout="60s", llm_provider="claude"]
+            done [shape="Msquare"]
+            start -> codex -> gemini -> claude -> done
+        }"#;
+        let parsed = attractor_dot::parse(dot).unwrap();
+        let graph = PipelineGraph::from_dot(parsed).unwrap();
+
+        let findings = run_no_manifest(&graph);
+
+        assert_eq!(findings.len(), 2);
+        assert!(findings
+            .iter()
+            .any(|finding| finding.message.contains("1 Codex node")));
+        assert!(findings
+            .iter()
+            .any(|finding| finding.message.contains("1 Gemini node")));
+        assert!(findings
+            .iter()
+            .all(|finding| !finding.message.contains("Claude")));
     }
 
     /// A node with llm_provider="gemini" produces exactly one

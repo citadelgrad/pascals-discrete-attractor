@@ -37,7 +37,7 @@ pas run <PIPELINE> [OPTIONS]
 | `--workdir <DIR>` | `-w` | current directory | Working directory for Claude Code sessions. Each node's `claude -p` runs in this directory, so file paths in prompts are relative to it. |
 | `--logs <DIR>` | `-l` | `.pas/logs` | Directory for log output. |
 | `--dry-run` | — | false | Parse and validate the pipeline without executing any nodes. No Claude Code sessions are spawned, no cost incurred. |
-| `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes. Pipeline aborts with an error if exceeded. **Strongly recommended for pipelines with loops.** |
+| `--max-budget-usd <AMOUNT>` | — | $200 | Maximum tracked spend across all nodes. Pipeline aborts with an error if exceeded. Codex and Gemini CLI calls report no dollar cost and therefore do not count toward this limit; use `--max-steps` to bound them. |
 | `--max-steps <COUNT>` | — | 200 | Maximum number of node executions before aborting. Prevents runaway loops. A 6-node pipeline that loops 3 times = 18 steps. |
 | `--fresh` | — | false | Discard any saved checkpoint and start from the beginning. By default, re-running the same command resumes from the last completed node. |
 | `--codergen-claude-settings-mode <MODE>` | — | `subscription-bare` | Claude settings mode for `codergen` nodes: `subscription-bare`, `strict-bare`, or `inherit`. |
@@ -381,7 +381,7 @@ pas launch <DOCS_DIR> [OPTIONS]
 | `--workdir <DIR>` | `-w` | current directory | Working directory for Claude Code sessions during the run phase. |
 | `--output <DIR>` | `-o` | `pipelines/` | Directory where generated `.dot` files are written. |
 | `--dry-run` | — | false | Generate and validate pipelines but don't execute them. |
-| `--max-budget-usd <AMOUNT>` | — | unlimited | Maximum total spend across all nodes in all pipelines. |
+| `--max-budget-usd <AMOUNT>` | — | $200 | Maximum tracked spend across all nodes in each pipeline. Codex and Gemini CLI calls do not report dollar cost and therefore do not count toward this limit. |
 | `--max-steps <COUNT>` | — | 200 | Maximum node executions per pipeline. |
 | `--fresh` | — | false | Ignore checkpoints and start each pipeline from scratch. |
 | `--codergen-claude-settings-mode <MODE>` | — | `subscription-bare` | Claude settings mode for generated pipelines' `codergen` nodes. Same semantics as `pas run`. |

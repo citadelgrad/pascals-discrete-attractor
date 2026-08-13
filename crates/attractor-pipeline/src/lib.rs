@@ -23,7 +23,7 @@ pub mod validation;
 pub use checkpoint::{clear_checkpoint, load_checkpoint, save_checkpoint, PipelineCheckpoint};
 pub use condition::{evaluate_condition, parse_condition, Clause, ConditionExpr, Operator};
 pub use edge_selection::select_edge;
-pub use engine::{PipelineExecutor, PipelineResult};
+pub use engine::{PipelineExecutor, PipelineResult, DEFAULT_MAX_BUDGET_USD};
 pub use events::{EventEmitter, PipelineEvent};
 pub use goal_gate::{check_goal_gates, enforce_goal_gates, GoalGateResult};
 pub use graph::{PipelineEdge, PipelineGraph, PipelineNode};
@@ -38,7 +38,10 @@ pub use handlers::{
 pub use interviewer::{
     Answer, AutoApproveInterviewer, ConsoleInterviewer, Interviewer, Question, RecordingInterviewer,
 };
-pub use preflight::{run as preflight_run, PreflightFinding, Severity as PreflightSeverity};
+pub use preflight::{
+    run as preflight_run, run_with_budget as preflight_run_with_budget, PreflightFinding,
+    Severity as PreflightSeverity,
+};
 pub use retry::{execute_with_retry, BackoffPolicy};
 pub use stylesheet::{apply_stylesheet, parse_stylesheet, Declaration, Rule, Selector, Stylesheet};
 pub use transforms::{apply_transforms, expand_variables};

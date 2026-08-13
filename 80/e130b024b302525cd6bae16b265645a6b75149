@@ -1,0 +1,19 @@
+crates/attractor-pipeline/src/lib.rs
+  s_66af613860d3fd::t_9fddef62936ae7 26,41-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "80e130b024b302525cd6bae16b265645a6b75149",
+  "prompts": {},
+  "sessions": {
+    "s_66af613860d3fd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff871-e7e6-7d72-a886-b282323bfb24",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

@@ -1,3 +1,5 @@
+
+
 # PAS — Pascal's Discrete Attractor
 
 A DOT-based pipeline runner for AI workflows. Define multi-step agent pipelines as Graphviz digraphs, then run them with built-in tool use, multi-provider LLM support, and checkpoint/resume.
@@ -212,6 +214,7 @@ export GEMINI_API_KEY=...
 | `attractor-tools` | Tool trait, registry, built-in tools, execution environment |
 | `attractor-agent` | Agent session loop with steering and loop detection |
 | `attractor-pipeline` | Pipeline graph, engine, handlers, validation, stylesheets |
+| `attractor-quality` | Manifest schema, walk-up resolution, and quality tooling for pas |
 | `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`, `launch`) |
 | `attractor-web` | Web interface (Leptos) |
 

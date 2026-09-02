@@ -1,0 +1,35 @@
+docs/examples/epic-runner.dot
+  s_1fd1ffd91519c4::t_3f01d51a898f58 14,16,37-38,59-60,70-71,83-84,99-100,110-111,125,127
+pipelines/attractor-5b8.dot
+  s_1fd1ffd91519c4::t_34a9d78506ae96 12,35,64,78,94,111,122,135
+pipelines/attractor-e0n.dot
+  s_1fd1ffd91519c4::t_bae1fdb6db7a45 97,120,141,151,162,178,188,201
+pipelines/attractor-kbu.dot
+  s_1fd1ffd91519c4::t_59d518b3935ac7 12,35,56,66,77,93,103,116
+pipelines/attractor-qsb.dot
+  s_1fd1ffd91519c4::t_dc47411aad0a9a 12,35,56,66,77,93,103,116
+pipelines/attractor-s6a.dot
+  s_1fd1ffd91519c4::t_97e5f329bee2af 12,35,56,66,77,93,103,116
+pipelines/build-beads-integration.dot
+  s_1fd1ffd91519c4::t_b1387f1e684b8d 14,39,77,102,123,143,160,180
+pipelines/phase-1-spec.dot
+  s_1fd1ffd91519c4::t_c07e8296e3f0b2 16,25,36,45,54,65,74,83,94,103,114,123
+templates/plan-to-execute.dot
+  s_1fd1ffd91519c4::t_bcc229e5037fdc 12,52,90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "1e5407f8279b67d26f8bb3e22a7429bbfff1623a",
+  "prompts": {},
+  "sessions": {
+    "s_1fd1ffd91519c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01951f80-74c5-4357-bfba-45c6565407aa",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

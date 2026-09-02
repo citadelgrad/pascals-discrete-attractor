@@ -89,6 +89,7 @@ async fn edge_selection_respects_condition_over_weight() {
     // Condition match should win.
     let graph = build_graph(
         r#"digraph EdgePriority {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             check [shape="diamond"]
             low_weight [shape="box", prompt="Low weight path"]
@@ -146,7 +147,7 @@ async fn goal_gate_unsatisfied_without_retry_returns_error() {
     let graph = build_graph(
         r#"digraph GoalGateFail {
             start [shape="Mdiamond"]
-            review [shape="box", goal_gate=true, prompt="Review code"]
+            review [shape="box", goal_gate=true, prompt="Review code", llm_provider="claude"]
             done [shape="Msquare"]
             start -> review -> done
         }"#,
@@ -216,7 +217,7 @@ async fn goal_gate_with_retry_target_retries_then_succeeds() {
     let graph = build_graph(
         r#"digraph GoalGateRetry {
             start [shape="Mdiamond"]
-            review [shape="box", goal_gate=true, retry_target="start", prompt="Review"]
+            review [shape="box", goal_gate=true, retry_target="start", prompt="Review", llm_provider="claude"]
             done [shape="Msquare"]
             start -> review -> done
         }"#,
@@ -324,6 +325,7 @@ async fn edge_weight_tiebreaker_selects_highest_weight() {
     // The higher-weight edge should win.
     let graph = build_graph(
         r#"digraph WeightTest {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             check [shape="box", prompt="Check"]
             low [shape="box", prompt="Low weight"]
@@ -363,7 +365,7 @@ async fn graph_goal_attribute_propagates_to_context() {
         r#"digraph GoalTest {
             goal = "Build a working pipeline"
             start [shape="Mdiamond"]
-            work [shape="box", prompt="Do the work"]
+            work [shape="box", prompt="Do the work", llm_provider="claude"]
             done [shape="Msquare"]
             start -> work -> done
         }"#,
@@ -405,6 +407,7 @@ async fn condition_routes_to_fallback_on_no_match() {
     // the unconditional fallback edge should be taken.
     let graph = build_graph(
         r#"digraph CondFallback {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             check [shape="diamond"]
             fail_path [shape="box", prompt="Fail path"]
@@ -496,7 +499,7 @@ async fn quality_loop_aborts_at_max_fix_iterations() {
         r#"digraph QualityLoopAbort {
             start [shape="Mdiamond"]
             verify [shape="box", type="quality", quality_checks="false"]
-            fix [shape="box"]
+            fix [shape="box", llm_provider="claude"]
             done [shape="Msquare"]
             start -> verify
             verify -> fix [condition="outcome=fail"]
@@ -540,7 +543,7 @@ async fn quality_loop_long() {
         r#"digraph QualityLoopLong {
             start [shape="Mdiamond"]
             verify [shape="box", type="quality", quality_checks="false"]
-            fix [shape="box"]
+            fix [shape="box", llm_provider="claude"]
             done [shape="Msquare"]
             start -> verify
             verify -> fix [condition="outcome=fail"]

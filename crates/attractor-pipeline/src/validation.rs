@@ -1,6 +1,6 @@
 //! Pipeline validation: lint rules and diagnostics.
 //!
-//! Provides 12 built-in rules that check structural and semantic correctness of
+//! Provides 13 built-in rules that check structural and semantic correctness of
 //! a [`PipelineGraph`].  Call [`validate`] for advisory diagnostics or
 //! [`validate_or_raise`] to fail on the first `Error`-severity issue.
 
@@ -43,11 +43,11 @@ pub trait LintRule: Send + Sync {
 // Helper predicates
 // ---------------------------------------------------------------------------
 
-fn is_start_node(id: &str, shape: &str) -> bool {
+pub(crate) fn is_start_node(id: &str, shape: &str) -> bool {
     shape == "Mdiamond" || id == "start" || id == "Start"
 }
 
-fn is_terminal_node(id: &str, shape: &str) -> bool {
+pub(crate) fn is_terminal_node(id: &str, shape: &str) -> bool {
     shape == "Msquare" || id == "exit" || id == "end" || id == "done"
 }
 
@@ -71,6 +71,20 @@ fn is_valid_fidelity(val: &str) -> bool {
 
 fn is_llm_node(shape: &str) -> bool {
     matches!(shape, "box" | "cds" | "component" | "note")
+}
+
+/// A "runtime node requiring an explicit LLM provider": a task (`box`) or
+/// conditional (`diamond`) node that is not the start node, not a terminal
+/// node, and not a `type="quality"` node (quality nodes run a fixed stage
+/// pipeline rather than calling an LLM provider directly).
+///
+/// Shared by [`ProviderRequiredRule`] and
+/// [`crate::provider_defaults::fill_missing_llm_providers`] so both stay in sync.
+pub(crate) fn is_provider_required_node(id: &str, shape: &str, node_type: Option<&str>) -> bool {
+    (shape == "box" || shape == "diamond")
+        && !is_start_node(id, shape)
+        && !is_terminal_node(id, shape)
+        && node_type != Some("quality")
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +444,37 @@ impl LintRule for ProviderValidRule {
     }
 }
 
+/// Blocks execution of any runtime `box`/`diamond` node that has no explicit
+/// `llm_provider`, so such nodes can never silently default to Claude and
+/// spawn a real provider CLI without the pipeline author's knowledge.
+struct ProviderRequiredRule;
+impl LintRule for ProviderRequiredRule {
+    fn name(&self) -> &str {
+        "provider_required"
+    }
+    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
+        graph
+            .all_nodes()
+            .filter(|n| is_provider_required_node(&n.id, &n.shape, n.node_type.as_deref()))
+            .filter(|n| n.llm_provider.is_none())
+            .map(|n| Diagnostic {
+                rule: self.name().into(),
+                severity: Severity::Error,
+                message: format!(
+                    "Node '{}' (shape={}) has no llm_provider and would silently default to claude",
+                    n.id, n.shape
+                ),
+                node_id: Some(n.id.clone()),
+                edge: None,
+                fix: Some(format!(
+                    "Add llm_provider=\"claude\" (or \"codex\"/\"gemini\") to node '{}'",
+                    n.id
+                )),
+            })
+            .collect()
+    }
+}
+
 struct PromptOnLlmNodesRule;
 impl LintRule for PromptOnLlmNodesRule {
     fn name(&self) -> &str {
@@ -478,6 +523,7 @@ pub fn validate(graph: &PipelineGraph) -> Vec<Diagnostic> {
         Box::new(GoalGateHasRetryRule),
         Box::new(ProviderValidRule),
         Box::new(PromptOnLlmNodesRule),
+        Box::new(ProviderRequiredRule),
     ];
 
     let mut diagnostics = Vec::new();

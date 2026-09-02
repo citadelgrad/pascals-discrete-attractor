@@ -109,6 +109,20 @@ fn build_prompt_prd_before_spec() {
     );
 }
 
+#[test]
+fn build_prompt_requires_llm_provider() {
+    // A generated pipeline's runtime nodes must never silently default to
+    // Claude -- the prompt must tell the model to name llm_provider
+    // explicitly, and the example node format must demonstrate it.
+    let result = build_prompt("spec", None);
+    assert!(result.contains("llm_provider"));
+    assert!(result.contains("REQUIRED on every work/decision node"));
+    assert!(result.contains("llm_provider=\"claude\""));
+    // The example node format block should itself set llm_provider.
+    let example_start = result.find("Example node format:").unwrap();
+    assert!(result[example_start..].contains("llm_provider=\"claude\""));
+}
+
 // ── extract_digraph ────────────────────────────────────────────
 
 #[test]
@@ -167,4 +181,67 @@ fn extract_with_braces_in_prompts() {
 }"#;
     let result = extract_digraph(input).unwrap();
     assert!(result.contains("node1 -> done"));
+}
+
+// ── provider normalization (post-extraction, pre-write) ─────────
+//
+// cmd_generate runs extract_digraph's output through
+// normalize_provider_defaults before writing the pipeline to disk. These
+// tests exercise that exact pipeline (extract -> normalize) against
+// Claude-response-shaped input, so a generated pipeline is proven to have
+// explicit llm_provider on every runtime node even when the model itself
+// forgot to set one.
+
+#[test]
+fn generated_output_gets_missing_provider_filled_in() {
+    let claude_response = r#"Here's the pipeline:
+
+```dot
+digraph Generated {
+    start [shape="Mdiamond"]
+    implement [shape="box", timeout="900s", prompt="Implement the feature"]
+    done [shape="Msquare"]
+    start -> implement -> done
+}
+```"#;
+
+    let extracted = extract_digraph(claude_response).unwrap();
+    let (normalized, defaulted) = normalize_provider_defaults(&extracted, "claude").unwrap();
+
+    assert_eq!(defaulted, vec!["implement".to_string()]);
+    let parsed = attractor_dot::parse(&normalized).unwrap();
+    assert_eq!(
+        parsed
+            .nodes
+            .get("implement")
+            .unwrap()
+            .attrs
+            .get("llm_provider"),
+        Some(&attractor_dot::AttributeValue::String("claude".to_string()))
+    );
+}
+
+#[test]
+fn generated_output_with_explicit_provider_is_left_untouched() {
+    let claude_response = r#"digraph Generated {
+    start [shape="Mdiamond"]
+    implement [shape="box", timeout="900s", llm_provider="codex", prompt="Implement the feature"]
+    done [shape="Msquare"]
+    start -> implement -> done
+}"#;
+
+    let extracted = extract_digraph(claude_response).unwrap();
+    let (normalized, defaulted) = normalize_provider_defaults(&extracted, "claude").unwrap();
+
+    assert!(defaulted.is_empty());
+    let parsed = attractor_dot::parse(&normalized).unwrap();
+    assert_eq!(
+        parsed
+            .nodes
+            .get("implement")
+            .unwrap()
+            .attrs
+            .get("llm_provider"),
+        Some(&attractor_dot::AttributeValue::String("codex".to_string()))
+    );
 }

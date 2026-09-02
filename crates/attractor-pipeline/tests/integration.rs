@@ -84,7 +84,7 @@ async fn simple_linear_pipeline_completes_in_order() {
     let graph = build_graph(
         r#"digraph Simple {
             start [shape="Mdiamond"]
-            process [shape="box", prompt="Process data"]
+            process [shape="box", prompt="Process data", llm_provider="claude"]
             done [shape="Msquare"]
             start -> process -> done
         }"#,
@@ -136,6 +136,7 @@ async fn simple_linear_pipeline_completes_in_order() {
 async fn branching_pipeline_routes_via_condition() {
     let graph = build_graph(
         r#"digraph Branch {
+            node [llm_provider="codex"]
             start [shape="Mdiamond"]
             check [shape="diamond"]
             path_a [shape="box", prompt="Path A"]
@@ -181,7 +182,7 @@ async fn goal_gate_satisfied_pipeline_completes() {
     let graph = build_graph(
         r#"digraph GoalGate {
             start [shape="Mdiamond"]
-            review [shape="box", goal_gate=true, prompt="Review code"]
+            review [shape="box", goal_gate=true, prompt="Review code", llm_provider="claude"]
             done [shape="Msquare"]
             start -> review -> done
         }"#,
@@ -319,6 +320,7 @@ async fn stylesheet_applies_model_to_nodes() {
 async fn context_propagation_across_nodes() {
     let graph = build_graph(
         r#"digraph ContextTest {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             step_one [shape="box", prompt="First step"]
             step_two [shape="box", prompt="Second step"]
@@ -371,6 +373,7 @@ async fn context_propagation_across_nodes() {
 async fn ten_node_linear_pipeline_completes() {
     // Programmatically build a 10-node linear DOT graph
     let mut dot = String::from("digraph ManyNodes {\n");
+    dot.push_str("    node [llm_provider=\"claude\"]\n");
     dot.push_str("    start [shape=\"Mdiamond\"]\n");
     for i in 1..=8 {
         dot.push_str(&format!(

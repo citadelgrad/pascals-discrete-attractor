@@ -61,6 +61,7 @@ fn test_executor() -> PipelineExecutor {
 async fn linear_pipeline_completes() {
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             process [shape="box", label="Process", prompt="Do work"]
             done [shape="Msquare"]
@@ -86,6 +87,7 @@ async fn branching_pipeline_routes_on_condition() {
     // Edge to "yes_path" has condition="outcome=success", so it should be taken.
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             check [shape="box", label="Check", prompt="Check something"]
             yes_path [shape="box", label="Yes Path", prompt="Yes"]
@@ -138,6 +140,7 @@ async fn context_updates_propagate() {
     // "<node_id>.completed", "<node_id>.result", etc.
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             step [shape="box", label="Step", prompt="Generate code"]
             done [shape="Msquare"]
@@ -172,6 +175,7 @@ async fn goal_gate_failure_with_retry_loops_back() {
     // Here we verify the goal gate path doesn't error when gates are satisfied.
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             review [shape="box", goal_gate=true, retry_target="start", label="Review", prompt="Review code"]
             done [shape="Msquare"]
@@ -212,6 +216,7 @@ async fn goal_gate_failure_without_retry_returns_error() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             review [shape="box", goal_gate=true, label="Review", prompt="Review"]
             done [shape="Msquare"]
@@ -274,6 +279,7 @@ async fn goal_gate_failure_with_retry_target_retries() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             review [shape="box", goal_gate=true, retry_target="start", label="Review", prompt="Review"]
             done [shape="Msquare"]
@@ -339,6 +345,7 @@ async fn context_based_conditions_resolve_from_context() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             setup [shape="box", label="Setup", prompt="setup"]
             prod_path [shape="box", label="Prod", prompt="prod"]
@@ -391,6 +398,7 @@ async fn step_limit_aborts_pipeline() {
     // A pipeline with a loop that never exits will hit the step limit.
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             loop_node [shape="box", label="Loop", prompt="loop"]
             done [shape="Msquare"]
@@ -450,6 +458,7 @@ async fn budget_limit_aborts_pipeline() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             step1 [shape="box", label="Step1", prompt="work"]
             step2 [shape="box", label="Step2", prompt="work"]
@@ -541,6 +550,7 @@ async fn budget_limit_exact_equality_does_not_abort() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node [llm_provider="claude"]
             start [shape="Mdiamond"]
             step  [shape="box", label="Step", prompt="work"]
             done  [shape="Msquare"]
@@ -599,6 +609,7 @@ async fn quality_loop_fires_at_iteration_beyond_max_fix_iterations() {
     // increments the same loop key "verify::fix".
     let graph = parse_graph(
         r#"digraph G {
+            node   [llm_provider="claude"]
             start  [shape="Mdiamond"]
             fix    [shape="box", label="Fix", prompt="fix"]
             verify [shape="box", type="quality", label="Verify", prompt="verify"]
@@ -674,6 +685,7 @@ async fn quality_retry_warning_injected_on_second_iteration() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node   [llm_provider="claude"]
             start  [shape="Mdiamond"]
             fix    [shape="box", label="Fix", prompt="fix"]
             verify [shape="box", type="quality", label="Verify", prompt="verify"]
@@ -779,6 +791,7 @@ async fn total_cost_accumulates_across_loop_restart_iterations() {
 
     let graph = parse_graph(
         r#"digraph G {
+            node   [llm_provider="claude"]
             start  [shape="Mdiamond"]
             fix    [shape="box", label="Fix", prompt="fix"]
             verify [shape="box", type="quality", label="Verify", prompt="verify"]
@@ -864,6 +877,7 @@ async fn fail_handler_with_no_outgoing_edge_returns_handler_error() {
     // done is reachable via an impossible condition so validation passes.
     let graph = parse_graph(
         r#"digraph G {
+            node     [llm_provider="claude"]
             start    [shape="Mdiamond"]
             dead_end [shape="box", label="Dead End", prompt="will fail"]
             done     [shape="Msquare"]

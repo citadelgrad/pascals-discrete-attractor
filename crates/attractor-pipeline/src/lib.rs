@@ -2,7 +2,7 @@
 //!
 //! This crate implements the core Attractor pipeline runner: DOT graph traversal,
 //! handler dispatch, edge selection, goal gate enforcement, checkpoint/resume,
-//! and the 11 built-in lint rules.
+//! and the 13 built-in lint rules.
 
 pub mod checkpoint;
 pub mod condition;
@@ -15,6 +15,7 @@ pub mod handler;
 pub mod handlers;
 pub mod interviewer;
 pub mod preflight;
+pub mod provider_defaults;
 pub mod retry;
 pub mod stylesheet;
 pub mod transforms;
@@ -42,6 +43,7 @@ pub use preflight::{
     run as preflight_run, run_with_budget as preflight_run_with_budget, PreflightFinding,
     Severity as PreflightSeverity,
 };
+pub use provider_defaults::fill_missing_llm_providers;
 pub use retry::{execute_with_retry, BackoffPolicy};
 pub use stylesheet::{apply_stylesheet, parse_stylesheet, Declaration, Rule, Selector, Stylesheet};
 pub use transforms::{apply_transforms, expand_variables};

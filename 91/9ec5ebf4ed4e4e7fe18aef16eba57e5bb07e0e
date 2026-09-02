@@ -1,0 +1,107 @@
+crates/attractor-cli/src/commands/generate_tests.rs
+  s_1fd1ffd91519c4::t_099b6ad91c9a8f 185-237
+  s_1fd1ffd91519c4::t_b64de877cf4c39 112-125
+  s_1fd1ffd91519c4::t_a1cbfb3590881a 238-247
+crates/attractor-pipeline/src/engine_tests.rs
+  s_1fd1ffd91519c4::t_e458fae3f1a09a 880
+  s_1fd1ffd91519c4::t_5a73ab11720ca3 143
+  s_1fd1ffd91519c4::t_d2c014c9fac250 64
+  s_1fd1ffd91519c4::t_cf0cba886dd6a6 178
+  s_1fd1ffd91519c4::t_4ec002345b8cb2 282
+  s_1fd1ffd91519c4::t_45cdcaf63a3be9 553
+  s_1fd1ffd91519c4::t_dfdb4cdf516463 348
+  s_1fd1ffd91519c4::t_a483b7e188a217 90
+  s_1fd1ffd91519c4::t_ff299366ec0a21 461
+  s_1fd1ffd91519c4::t_583ef2bba83167 612,688,794
+  s_1fd1ffd91519c4::t_e499bf2f6675e1 401
+  s_1fd1ffd91519c4::t_59a06116914feb 219
+crates/attractor-cli/src/commands/generate.rs
+  s_1fd1ffd91519c4::t_856341228e1585 302-305,317
+  s_1fd1ffd91519c4::t_7a48581d837c3c 189-209
+  s_1fd1ffd91519c4::t_0a4b9237a9d5f5 335
+  s_1fd1ffd91519c4::t_f805814043edf3 6-7
+  s_5923463eb76ea9::t_75abe0d62fbd2e 210
+crates/attractor-pipeline/tests/integration_advanced.rs
+  s_1fd1ffd91519c4::t_477988872f9a00 328
+  s_1fd1ffd91519c4::t_9d66e57bc7c48a 410
+  s_1fd1ffd91519c4::t_f873e3b95d6dd4 92
+  s_1fd1ffd91519c4::t_35d77448f1e2f6 150
+  s_1fd1ffd91519c4::t_35d00bcb827930 502,546
+  s_1fd1ffd91519c4::t_35d644657e9ac1 220
+  s_1fd1ffd91519c4::t_dc7b860db52c6b 368
+crates/attractor-cli/src/commands/validate.rs
+  s_1fd1ffd91519c4::t_21a8c3536ce47a 30-92
+crates/attractor-cli/src/commands/scaffold.rs
+  s_1fd1ffd91519c4::t_d0c9c0e63c5bc2 4
+  s_1fd1ffd91519c4::t_686f9922c7be36 3
+  s_1fd1ffd91519c4::t_55c5a82d1caa81 67-68,76-81
+  s_1fd1ffd91519c4::t_5e0d4201f3844c 172-177,183-187
+  s_1fd1ffd91519c4::t_d00dcfa2e204d4 120-171,178-182,188-200
+  s_1fd1ffd91519c4::t_255072a9dc3df7 69-71
+  s_1fd1ffd91519c4::t_0e7255d4185c15 72,82,201-206
+crates/attractor-pipeline/src/validation.rs
+  s_1fd1ffd91519c4::t_b53ad01bd7f33d 46,50
+  s_1fd1ffd91519c4::t_0fadd59db6521d 76-89,476
+  s_1fd1ffd91519c4::t_d6e03861d4e509 526
+  s_1fd1ffd91519c4::t_3958697f2928bd 447-472,475
+  s_1fd1ffd91519c4::t_e1515d5367375b 3
+  s_1fd1ffd91519c4::t_69298d7916e5a1 473-474
+  s_1fd1ffd91519c4::t_649171e1dac040 477
+crates/attractor-pipeline/src/lib.rs
+  s_1fd1ffd91519c4::t_21432b2c136a08 5,18
+  s_1fd1ffd91519c4::t_e09df6b87cd39f 46
+crates/attractor-pipeline/src/validation_tests.rs
+  s_1fd1ffd91519c4::t_40332c745d8d76 157-158,162
+  s_1fd1ffd91519c4::t_baa47c6ef04bd0 13
+  s_1fd1ffd91519c4::t_7b67bfefd68d96 310-553
+crates/attractor-pipeline/src/provider_defaults.rs
+  s_1fd1ffd91519c4::t_5f7902511f9838 1-185,189-199,206-226
+  s_1fd1ffd91519c4::t_dbad30ff2d2182 186-188,200-205
+  s_1fd1ffd91519c4::t_982d2c55a8affa 227-228
+crates/attractor-pipeline/tests/integration.rs
+  s_1fd1ffd91519c4::t_0c912a93400abe 323
+  s_1fd1ffd91519c4::t_e0b1c388baeed3 87
+  s_1fd1ffd91519c4::t_b2aa373c796cc0 185
+  s_1fd1ffd91519c4::t_9b657eb7164b4f 139
+  s_1fd1ffd91519c4::t_227f276de54e8b 376
+templates/epic-runner.dot
+  s_1fd1ffd91519c4::t_ba1af4afda041e 83
+  s_1fd1ffd91519c4::t_5926ea14f0e3d6 125
+  s_1fd1ffd91519c4::t_6ee247f1f9ae4b 110
+  s_1fd1ffd91519c4::t_0d430f2ef5b6f1 70
+  s_1fd1ffd91519c4::t_ea415f795d7da7 59
+  s_1fd1ffd91519c4::t_0ca98d75b6fa06 14
+  s_1fd1ffd91519c4::t_adf5216486a312 37
+  s_1fd1ffd91519c4::t_9704f96d55464c 99
+crates/attractor-cli/src/commands/run.rs
+  s_1fd1ffd91519c4::t_2c0e39c33707e5 462-551
+  s_1fd1ffd91519c4::t_ebfecf517d43a9 206-227
+  s_1fd1ffd91519c4::t_419069d23eefa6 552
+crates/attractor-cli/src/commands/mod.rs
+  s_1fd1ffd91519c4::t_d6a7aff3487e26 20-36
+  s_1fd1ffd91519c4::t_87d3583200fff1 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "919ec5ebf4ed4e4e7fe18aef16eba57e5bb07e0e",
+  "prompts": {},
+  "sessions": {
+    "s_1fd1ffd91519c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01951f80-74c5-4357-bfba-45c6565407aa",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    },
+    "s_5923463eb76ea9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a06073-b173-7e53-b982-0b877273ec99",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

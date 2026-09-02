@@ -1,0 +1,25 @@
+crates/attractor-dot/src/lib.rs
+  s_1fd1ffd91519c4::t_a7be52a919b65e 17,21
+crates/attractor-dot/src/serializer.rs
+  s_1fd1ffd91519c4::t_3f150ed0275100 1-2,8-182,184-213,215-376
+  s_1fd1ffd91519c4::t_2632a24264881c 183
+  s_1fd1ffd91519c4::t_56adede82bf02f 214
+  s_1fd1ffd91519c4::t_03091810e05f66 3-7
+  s_1fd1ffd91519c4::t_840b46e8f2df3b 377-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "4431dd269d7c4f915a67019145a515b0b9d22a37",
+  "prompts": {},
+  "sessions": {
+    "s_1fd1ffd91519c4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01951f80-74c5-4357-bfba-45c6565407aa",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 All notable changes to PAS are documented here.
 
-## [Unreleased]
+## [0.10.0] — 2026-09-01
 
 ### Fixed
 

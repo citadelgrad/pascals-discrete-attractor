@@ -2,6 +2,14 @@
 
 All notable changes to PAS are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Runtime nodes (`shape="box"` or `shape="diamond"`, excluding the `Mdiamond` start node, the `Msquare` exit node, and `type="quality"` nodes) that omitted `llm_provider` used to silently default to Claude and spawn a real `claude` CLI process, with no warning. `pas scaffold` and `pas generate` now fill in any missing `llm_provider` before writing a pipeline file to disk (printing which node ids were defaulted), and a new blocking validation rule (`provider_required`) makes `pas validate` and `pas run` refuse any pipeline — hand-written or generated, new or pre-existing — that still has a runtime node with no explicit `llm_provider`. `pas run` now aborts before spawning any provider CLI process when validation fails.
+- Added `attractor_dot::to_dot_string`, a DOT serializer that round-trips a parsed `DotGraph` back to source text, used internally to normalize pipeline files after filling in defaults.
+- Hand-updated `templates/epic-runner.dot` (and its `docs/examples/epic-runner.dot` copy) and every checked-in `.dot` pipeline under `pipelines/` and `templates/` to name `llm_provider="claude"` explicitly on each runtime node, so they no longer depend on the removed implicit default.
+
 ## [0.9.4] — 2026-08-10
 
 ### Fixed

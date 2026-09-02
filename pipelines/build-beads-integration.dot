@@ -11,6 +11,7 @@ digraph BuildBeadsIntegration {
     // =========================================================================
     pick_task [
         shape="diamond"
+        llm_provider="claude"
         label="Pick Next Task"
         node_type="conditional"
         llm_model="haiku"
@@ -35,6 +36,7 @@ If all child tasks are closed (no more ready tasks for this epic):
     // =========================================================================
     investigate [
         shape="box"
+        llm_provider="claude"
         label="Investigate"
         allowed_tools="Read,Grep,Glob,Bash(bd:*),Bash(cargo:*),Bash(ls:*)"
         prompt="Read .pas/current_task.md to get the current task ID and description.
@@ -72,6 +74,7 @@ Write your findings to .pas/investigation.md including:
     // =========================================================================
     implement [
         shape="box"
+        llm_provider="claude"
         label="Implement"
         prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
 
@@ -96,6 +99,7 @@ Keep changes minimal and focused on the task requirements."
     // =========================================================================
     run_tests [
         shape="box"
+        llm_provider="claude"
         label="Build & Test"
         prompt="Read .pas/current_task.md to understand what was changed.
 
@@ -116,6 +120,7 @@ Write the results to .pas/test-results.md"
     // =========================================================================
     verify [
         shape="diamond"
+        llm_provider="claude"
         label="Verify"
         node_type="conditional"
         prompt="Read .pas/current_task.md for the task requirements.
@@ -135,6 +140,7 @@ If there are problems, respond with FAIL on the last line."
     // =========================================================================
     fixup [
         shape="box"
+        llm_provider="claude"
         label="Fix Issues"
         prompt="Read .pas/current_task.md and .pas/investigation.md for context.
 The verification step found problems. Fix any:
@@ -151,6 +157,7 @@ Re-run cargo build --workspace && cargo test --workspace after fixing."
     // =========================================================================
     close_task [
         shape="box"
+        llm_provider="claude"
         label="Close Task"
         allowed_tools="Bash(bd:*),Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
@@ -170,6 +177,7 @@ Re-run cargo build --workspace && cargo test --workspace after fixing."
     // =========================================================================
     check_remaining [
         shape="diamond"
+        llm_provider="claude"
         label="More Tasks?"
         node_type="conditional"
         llm_model="haiku"

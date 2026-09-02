@@ -9,6 +9,7 @@ digraph EpicRunner {
     // --- Pick the next task ---
     pick_task [
         shape="diamond"
+        llm_provider="claude"
         label="Pick Next Task"
         node_type="conditional"
         llm_model="haiku"
@@ -31,6 +32,7 @@ If all child tasks are closed (no more ready tasks for this epic):
     // --- Investigate ---
     investigate [
         shape="box"
+        llm_provider="claude"
         label="Investigate"
         allowed_tools="Read,Grep,Glob,Bash(bd:*)"
         prompt="Read .pas/current_task.md to get the current task ID and description.
@@ -51,6 +53,7 @@ Write your findings to .pas/investigation.md including:
     // --- Implement ---
     implement [
         shape="box"
+        llm_provider="claude"
         label="Implement"
         prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
 Implement the changes described. Follow existing code patterns and conventions.
@@ -60,6 +63,7 @@ Keep changes minimal and focused on the task requirements."
     // --- Test ---
     run_tests [
         shape="box"
+        llm_provider="claude"
         label="Run Tests"
         prompt="Read .pas/current_task.md to understand what was changed.
 Run the relevant test suite for the modified code.
@@ -70,6 +74,7 @@ Write the test results to .pas/test-results.md"
     // --- Verify ---
     verify [
         shape="diamond"
+        llm_provider="claude"
         label="Verify"
         node_type="conditional"
         prompt="Read .pas/current_task.md for the task requirements.
@@ -85,6 +90,7 @@ If there are problems, respond with FAIL on the last line."
 
     fixup [
         shape="box"
+        llm_provider="claude"
         label="Fix Issues"
         prompt="Read .pas/current_task.md and .pas/investigation.md for context.
 The verification step found problems. Fix any failing tests, lint errors, or unmet acceptance criteria.
@@ -94,6 +100,7 @@ Re-run tests after fixing."
     // --- Close this task ---
     close_task [
         shape="box"
+        llm_provider="claude"
         label="Close Task"
         allowed_tools="Bash(bd:*),Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
@@ -106,6 +113,7 @@ Re-run tests after fixing."
     // --- Check if more tasks remain ---
     check_remaining [
         shape="diamond"
+        llm_provider="claude"
         label="More Tasks?"
         node_type="conditional"
         llm_model="haiku"

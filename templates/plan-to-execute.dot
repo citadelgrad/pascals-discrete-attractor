@@ -9,6 +9,7 @@ digraph PlanToExecute {
     // --- Generate PRD ---
     generate_prd [
         shape="box"
+        llm_provider="claude"
         label="Generate PRD"
         allowed_tools="Write"
         prompt="Read the feature_description from context.
@@ -48,6 +49,7 @@ Respond with 'continue' to proceed to spec generation, or 'reject' to regenerate
     // --- Generate Spec ---
     generate_spec [
         shape="box"
+        llm_provider="claude"
         label="Generate Spec"
         allowed_tools="Read,Write"
         prompt="Read the PRD from .pas/prd.md
@@ -85,6 +87,7 @@ Respond with 'continue' to proceed to task decomposition, or 'reject' to regener
     // --- Decompose to Beads ---
     decompose [
         shape="box"
+        llm_provider="claude"
         label="Decompose to Beads"
         allowed_tools="Read,Write,Bash(bd:*)"
         prompt="Read the spec from .pas/spec.md

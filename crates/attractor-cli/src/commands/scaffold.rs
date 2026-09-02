@@ -1,5 +1,7 @@
 use anyhow;
 
+use super::normalize_provider_defaults;
+
 pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> anyhow::Result<()> {
     // Load epic-runner template
     let template = include_str!("../../../../templates/epic-runner.dot");
@@ -62,8 +64,21 @@ pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> an
         std::fs::create_dir_all(parent)?;
     }
 
+    // Fill in any missing llm_provider on runtime nodes before writing to disk,
+    // so a scaffolded pipeline never silently depends on an implicit default.
+    let (normalized_content, defaulted_providers) =
+        normalize_provider_defaults(&pipeline_content, "claude")?;
+    pipeline_content = normalized_content;
+
     // Write pipeline file
     std::fs::write(&output_path, &pipeline_content)?;
+
+    if !defaulted_providers.is_empty() {
+        println!(
+            "  Defaulted llm_provider=\"claude\" on: {}",
+            defaulted_providers.join(", ")
+        );
+    }
 
     // Validate the generated pipeline
     let graph = crate::load_pipeline(&output_path)?;
@@ -101,4 +116,91 @@ pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> an
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scaffolded pipeline's runtime nodes must never rely on the implicit
+    /// "silently defaults to Claude" behavior -- normalize_provider_defaults
+    /// must make the provider explicit in the DOT source itself.
+    #[test]
+    fn normalize_provider_defaults_fills_missing_runtime_provider() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="Do work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+
+        let (normalized, defaulted) = normalize_provider_defaults(dot, "claude").unwrap();
+
+        assert_eq!(defaulted, vec!["work".to_string()]);
+        let parsed = attractor_dot::parse(&normalized).unwrap();
+        let attrs = &parsed.nodes.get("work").unwrap().attrs;
+        assert_eq!(
+            attrs.get("llm_provider"),
+            Some(&attractor_dot::AttributeValue::String("claude".to_string()))
+        );
+    }
+
+    /// Nodes exempt from the requirement (start/exit/quality) must not be
+    /// touched, and nodes that already name a provider (even a non-default
+    /// one, like "codex") must be left exactly as authored.
+    #[test]
+    fn normalize_provider_defaults_leaves_exempt_and_explicit_nodes_alone() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            verify [shape="box", type="quality"]
+            other [shape="box", llm_provider="codex"]
+            done [shape="Msquare"]
+            start -> verify -> other -> done
+        }"#;
+
+        let (normalized, defaulted) = normalize_provider_defaults(dot, "claude").unwrap();
+
+        assert!(defaulted.is_empty());
+        let parsed = attractor_dot::parse(&normalized).unwrap();
+        assert!(!parsed
+            .nodes
+            .get("verify")
+            .unwrap()
+            .attrs
+            .contains_key("llm_provider"));
+        assert_eq!(
+            parsed.nodes.get("other").unwrap().attrs.get("llm_provider"),
+            Some(&attractor_dot::AttributeValue::String("codex".to_string()))
+        );
+    }
+
+    /// The real epic-runner.dot template already names an explicit
+    /// llm_provider on every runtime node (hand-authored, not relying on
+    /// normalization to fill it in) -- and, run through the same
+    /// normalization step cmd_scaffold uses, it must validate cleanly with
+    /// no provider_required errors. This proves a freshly scaffolded
+    /// pipeline has every runtime node's llm_provider set explicitly.
+    #[test]
+    fn scaffolded_epic_runner_template_has_no_missing_providers_after_normalization() {
+        let template = include_str!("../../../../templates/epic-runner.dot");
+        let filled = template.replace("EPIC_ID", "test-epic-123");
+
+        let (normalized, defaulted) = normalize_provider_defaults(&filled, "claude").unwrap();
+        assert!(
+            defaulted.is_empty(),
+            "template should already name llm_provider explicitly on every runtime node, but had to default: {defaulted:?}"
+        );
+
+        let dot_graph = attractor_dot::parse(&normalized).unwrap();
+        let pipeline_graph = attractor_pipeline::PipelineGraph::from_dot(dot_graph).unwrap();
+        let diagnostics = attractor_pipeline::validate(&pipeline_graph);
+        let provider_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.rule == "provider_required")
+            .collect();
+        assert!(
+            provider_errors.is_empty(),
+            "expected no provider_required diagnostics after normalization, got: {provider_errors:?}"
+        );
+    }
 }

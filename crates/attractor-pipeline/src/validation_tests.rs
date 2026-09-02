@@ -10,7 +10,7 @@ fn valid_pipeline_passes() {
     let pg = parse_and_build(
         r#"digraph G {
         start [shape="Mdiamond"]
-        process [label="Do work", prompt="Do the thing"]
+        process [label="Do work", prompt="Do the thing", llm_provider="claude"]
         done [shape="Msquare"]
         start -> process -> done
     }"#,
@@ -154,10 +154,12 @@ fn goal_gate_without_retry_target_warning() {
 
 #[test]
 fn validate_or_raise_ok_for_valid_graph() {
+    // Uses "codex" here (rather than "claude") to prove validate_or_raise
+    // doesn't care which known provider a node names, only that one is set.
     let pg = parse_and_build(
         r#"digraph G {
         start [shape="Mdiamond"]
-        process [label="Do work", prompt="Do it"]
+        process [label="Do work", prompt="Do it", llm_provider="codex"]
         done [shape="Msquare"]
         start -> process -> done
     }"#,
@@ -303,5 +305,249 @@ fn retry_target_nonexistent_warning() {
             .iter()
             .any(|d| d.rule == "retry_target_exists" && d.severity == Severity::Warning),
         "Expected retry_target_exists warning, got: {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// provider_required: a runtime box/diamond node with no llm_provider must
+// never silently default to Claude. These tests cover both node shapes that
+// require a provider, every exemption (start, exit, quality), that either
+// of the two supported providers ("claude" and "codex") satisfies the rule
+// equally, multi-node graphs, diagnostic shape, and that old pipelines are
+// not grandfathered in.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn provider_required_box_node_without_provider_is_error() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", prompt="Do work"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        diags.iter().any(|d| d.rule == "provider_required"
+            && d.severity == Severity::Error
+            && d.node_id.as_deref() == Some("work")),
+        "Expected provider_required error for 'work', got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_diamond_node_without_provider_is_error() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        pick [shape="diamond"]
+        a [shape="box", llm_provider="claude"]
+        b [shape="box", llm_provider="claude"]
+        done [shape="Msquare"]
+        start -> pick
+        pick -> a [condition="outcome=success"]
+        pick -> b
+        a -> done
+        b -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        diags.iter().any(|d| d.rule == "provider_required"
+            && d.severity == Severity::Error
+            && d.node_id.as_deref() == Some("pick")),
+        "Expected provider_required error for diamond node 'pick', got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_start_node_is_exempt_even_with_adversarial_shape_and_id() {
+    // A node with id "start" and shape="box" is still recognized as the
+    // start node by id, so it must never be required to carry a provider.
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="box"]
+        work [shape="box", llm_provider="claude"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.rule == "provider_required" && d.node_id.as_deref() == Some("start")),
+        "start node must be exempt from provider_required, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_exit_node_is_exempt_even_with_adversarial_shape_and_id() {
+    // A node with id "done" and shape="box" is still recognized as a
+    // terminal node by id, so it must never be required to carry a provider.
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", llm_provider="claude"]
+        done [shape="box"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.rule == "provider_required" && d.node_id.as_deref() == Some("done")),
+        "terminal node must be exempt from provider_required, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_quality_node_is_exempt() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        verify [shape="box", type="quality", quality_checks="true"]
+        done [shape="Msquare"]
+        start -> verify -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.rule == "provider_required" && d.node_id.as_deref() == Some("verify")),
+        "type=quality node must be exempt from provider_required, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_satisfied_by_explicit_claude_provider() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", llm_provider="claude"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        !diags.iter().any(|d| d.rule == "provider_required"),
+        "explicit llm_provider=\"claude\" should satisfy provider_required, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_satisfied_by_explicit_codex_provider() {
+    // The rule only requires *some* explicit provider — "claude" is merely
+    // the default used when filling one in, not the only accepted value.
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", llm_provider="codex"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    assert!(
+        !diags.iter().any(|d| d.rule == "provider_required"),
+        "explicit llm_provider=\"codex\" should satisfy provider_required, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_multiple_offending_nodes_each_get_own_diagnostic() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        a [shape="box", prompt="A"]
+        b [shape="diamond"]
+        c [shape="box", llm_provider="claude"]
+        done [shape="Msquare"]
+        start -> a -> b
+        b -> c [condition="outcome=success"]
+        b -> done
+        c -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    let offending: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.rule == "provider_required")
+        .filter_map(|d| d.node_id.as_deref())
+        .collect();
+    assert!(
+        offending.contains(&"a") && offending.contains(&"b"),
+        "Expected separate provider_required diagnostics for 'a' and 'b', got: {diags:?}"
+    );
+    assert!(
+        !offending.contains(&"c"),
+        "'c' has an explicit provider and must not be flagged, got: {diags:?}"
+    );
+    assert_eq!(
+        offending.len(),
+        2,
+        "Expected exactly one diagnostic per offending node, got: {diags:?}"
+    );
+}
+
+#[test]
+fn provider_required_diagnostic_carries_node_id_and_fix() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", prompt="Do work"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+    let diags = validate(&pg);
+    let diag = diags
+        .iter()
+        .find(|d| d.rule == "provider_required")
+        .expect("expected a provider_required diagnostic");
+    assert_eq!(diag.severity, Severity::Error);
+    assert_eq!(diag.node_id.as_deref(), Some("work"));
+    assert!(
+        diag.message.contains("work"),
+        "message should name the offending node, got: {}",
+        diag.message
+    );
+    assert!(
+        diag.fix.is_some(),
+        "provider_required diagnostic should suggest a fix"
+    );
+}
+
+#[test]
+fn provider_required_pre_fix_pipeline_is_not_grandfathered() {
+    // A pipeline written before this rule existed — with no llm_provider
+    // anywhere — must still fail validation. There is no exemption based
+    // on when or how a DOT file was authored.
+    let pg = parse_and_build(
+        r#"digraph LegacyPipeline {
+        start [shape="Mdiamond"]
+        analyze [shape="box", prompt="Analyze the input"]
+        decide [shape="diamond"]
+        act [shape="box", prompt="Act on the decision"]
+        done [shape="Msquare"]
+        start -> analyze -> decide
+        decide -> act [condition="outcome=success"]
+        decide -> done
+        act -> done
+    }"#,
+    );
+    let result = validate_or_raise(&pg);
+    assert!(
+        result.is_err(),
+        "legacy pipeline with no llm_provider must fail validation, not be grandfathered in"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("analyze") || err_msg.contains("decide") || err_msg.contains("act"),
+        "error should name at least one offending node; got: {err_msg}"
     );
 }

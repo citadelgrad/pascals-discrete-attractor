@@ -203,6 +203,28 @@ pub async fn cmd_run(
 ) -> anyhow::Result<()> {
     let graph = crate::load_pipeline(path)?;
 
+    // Validate before doing any other work: a runtime node with no explicit
+    // llm_provider must never silently default to Claude and spawn a real
+    // provider CLI process. (The engine also validates internally before
+    // executing any node, but checking here gives clear, per-node output
+    // before we even touch the filesystem for logs/checkpoints.)
+    let diagnostics = attractor_pipeline::validate(&graph);
+    let mut has_error = false;
+    for diag in &diagnostics {
+        let severity = match diag.severity {
+            attractor_pipeline::Severity::Error => {
+                has_error = true;
+                "ERROR"
+            }
+            attractor_pipeline::Severity::Warning => "WARN",
+            attractor_pipeline::Severity::Info => "INFO",
+        };
+        println!("[{}] {}: {}", severity, diag.rule, diag.message);
+    }
+    if has_error {
+        anyhow::bail!("Pipeline validation failed");
+    }
+
     // Preflight checks: environment-level warnings that don't fail validation
     // but can cause silent problems at runtime (e.g. a codergen node with no
     // timeout falling back to the hardcoded 600s kill).
@@ -436,4 +458,95 @@ fn save_manifest(manifest: &RunManifest, path: &std::path::Path) -> anyhow::Resu
     let json = serde_json::to_string_pretty(manifest)?;
     std::fs::write(path, json)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `pas run` must refuse to execute a pipeline that has a runtime
+    /// (box/diamond) node with no explicit `llm_provider`: it must return
+    /// an error, and it must not have started the engine at all -- no
+    /// checkpoint.json should ever be written for a run that never began.
+    #[tokio::test]
+    async fn cmd_run_fails_fast_on_missing_llm_provider_no_checkpoint_written() {
+        let pipeline_dir = tempfile::tempdir().unwrap();
+        let pipeline_path = pipeline_dir.path().join("missing_provider.dot");
+        std::fs::write(
+            &pipeline_path,
+            r#"digraph MissingProvider {
+                start [shape="Mdiamond"]
+                work [shape="box", prompt="Do work"]
+                done [shape="Msquare"]
+                start -> work -> done
+            }"#,
+        )
+        .unwrap();
+
+        let logs_dir = tempfile::tempdir().unwrap();
+
+        let result = cmd_run(
+            &pipeline_path,
+            None,
+            Some(logs_dir.path()),
+            false,
+            None,
+            100,
+            false,
+            &CodergenClaudeCliOpts::default(),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "cmd_run should fail fast on a node with no llm_provider"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("validation") || err_msg.to_lowercase().contains("validation"),
+            "error should indicate a validation failure; got: {err_msg}"
+        );
+
+        assert!(
+            !logs_dir.path().join("checkpoint.json").exists(),
+            "no checkpoint should be written when validation blocks the run before execution starts"
+        );
+    }
+
+    /// Sanity check that a pipeline with every runtime node carrying an
+    /// explicit llm_provider is NOT blocked by the same gate (dry_run mode,
+    /// so no real provider CLI is spawned even on success).
+    #[tokio::test]
+    async fn cmd_run_proceeds_when_llm_provider_is_explicit() {
+        let pipeline_dir = tempfile::tempdir().unwrap();
+        let pipeline_path = pipeline_dir.path().join("has_provider.dot");
+        std::fs::write(
+            &pipeline_path,
+            r#"digraph HasProvider {
+                start [shape="Mdiamond"]
+                done [shape="Msquare"]
+                start -> done
+            }"#,
+        )
+        .unwrap();
+
+        let logs_dir = tempfile::tempdir().unwrap();
+
+        let result = cmd_run(
+            &pipeline_path,
+            None,
+            Some(logs_dir.path()),
+            true,
+            None,
+            100,
+            false,
+            &CodergenClaudeCliOpts::default(),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "cmd_run should not be blocked by provider_required when there is nothing to flag: {result:?}"
+        );
+    }
 }

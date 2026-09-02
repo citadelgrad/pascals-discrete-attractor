@@ -3,6 +3,8 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use super::normalize_provider_defaults;
+
 /// Spawn a braille spinner on stderr. Returns a guard that stops it on drop.
 fn start_spinner(message: &str) -> SpinnerGuard {
     const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -184,6 +186,28 @@ pub async fn cmd_generate(
         );
     }
 
+    // Fill in any missing llm_provider on runtime nodes before writing to
+    // disk. build_prompt already asks Claude to set it explicitly, but this
+    // normalization step is the actual guarantee: a generated pipeline must
+    // never depend on an implicit provider default, no matter what the LLM
+    // produced.
+    let dot_content = match normalize_provider_defaults(&dot_content, "claude") {
+        Ok((normalized, defaulted)) => {
+            if !defaulted.is_empty() {
+                println!(
+                    "  Defaulted llm_provider=\"claude\" on: {}",
+                    defaulted.join(", ")
+                );
+            }
+            normalized
+        }
+        Err(e) => {
+            eprintln!("Generated DOT failed to parse for provider normalization:");
+            eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
+            anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
+        }
+    };
+
     // Determine output path
     let output_path = match output {
         Some(path) => path.to_path_buf(),
@@ -275,6 +299,10 @@ Node attrs: `label`, `shape`, `prompt` (self-contained instructions with ALL con
 Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`.
 Edge attrs: `label` (e.g. "PASS","FAIL"), `condition` (e.g. preferred_label=PASS), `loop_restart="true"` on back-edges.
 
+## Provider (REQUIRED on every work/decision node)
+
+Every `"box"` and `"diamond"` node — except the `"Mdiamond"` start node, the `"Msquare"` done node, and any node with `type="quality"` — MUST have an explicit `llm_provider` attribute (e.g. `llm_provider="claude"`). Do not omit it and do not rely on any implicit default: an implicit default is exactly what this pipeline format forbids, because a pipeline author must be able to read the DOT file and see which provider each node runs on. Use `llm_provider="claude"` unless the spec says otherwise.
+
 ## Timeouts
 
 Every node MUST have a `timeout` attribute. Set it based on complexity:
@@ -286,6 +314,7 @@ Example node format:
     my_node [
         label="Short Label"
         shape="box"
+        llm_provider="claude"
         timeout="300s"
         prompt="Detailed instructions here."
     ]
@@ -303,6 +332,7 @@ The LAST work node before `done` MUST be a commit node that stages and commits a
     commit_changes [
         label="Commit Changes"
         shape="box"
+        llm_provider="claude"
         timeout="120s"
         allowed_tools="Bash(git:*)"
         prompt="Stage and commit all changes made by this pipeline.

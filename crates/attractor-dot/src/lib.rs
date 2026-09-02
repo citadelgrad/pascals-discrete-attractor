@@ -14,9 +14,11 @@
 pub mod ast;
 pub mod duration_serde;
 mod parser;
+pub mod serializer;
 
 pub use ast::*;
 pub use parser::parse;
+pub use serializer::to_dot_string;
 
 #[cfg(test)]
 mod tests {

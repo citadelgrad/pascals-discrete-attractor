@@ -9,6 +9,7 @@ digraph EpicRunner {
     // --- Pick the next task ---
     pick_task [
         shape="diamond"
+        llm_provider="claude"
         label="Pick Next Task"
         node_type="conditional"
         llm_model="haiku"
@@ -31,6 +32,7 @@ If all child tasks are closed (no more ready tasks for this epic):
     // --- Investigate ---
     investigate [
         shape="box"
+        llm_provider="claude"
         label="Investigate"
         allowed_tools="Read,Grep,Glob,Bash(bd:*),Bash(cargo:*),Bash(ls:*),Bash(fd:*),Bash(rg:*)"
         prompt="Read .pas/current_task.md to get the current task ID and description.
@@ -59,6 +61,7 @@ Write your findings to .pas/investigation.md including:
     // --- Implement ---
     implement [
         shape="box"
+        llm_provider="claude"
         label="Implement"
         allowed_tools="Read,Write,Edit,Grep,Glob,Bash(cargo:*),Bash(git:*),Bash(bd:*),Bash(fd:*),Bash(rg:*)"
         prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
@@ -72,6 +75,7 @@ Use tokio::process::Command (not std::process::Command) for any process spawning
     // --- Test ---
     run_tests [
         shape="box"
+        llm_provider="claude"
         label="Run Tests"
         allowed_tools="Read,Bash(cargo:*),Bash(bd:*)"
         prompt="Read .pas/current_task.md to understand what was changed.
@@ -87,6 +91,7 @@ Write the test results to .pas/test-results.md"
     // --- Verify ---
     verify [
         shape="diamond"
+        llm_provider="claude"
         label="Verify"
         node_type="conditional"
         allowed_tools="Read,Bash(cargo:*),Bash(git:*)"
@@ -103,6 +108,7 @@ If there are problems, respond with FAIL on the last line."
 
     fixup [
         shape="box"
+        llm_provider="claude"
         label="Fix Issues"
         allowed_tools="Read,Write,Edit,Bash(cargo:*),Bash(bd:*)"
         prompt="Read .pas/current_task.md and .pas/investigation.md for context.
@@ -113,6 +119,7 @@ Re-run cargo test and cargo clippy after fixing."
     // --- Close this task ---
     close_task [
         shape="box"
+        llm_provider="claude"
         label="Close Task"
         allowed_tools="Bash(bd:*),Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
@@ -125,6 +132,7 @@ Re-run cargo test and cargo clippy after fixing."
     // --- Check if more tasks remain ---
     check_remaining [
         shape="diamond"
+        llm_provider="claude"
         label="More Tasks?"
         node_type="conditional"
         llm_model="haiku"

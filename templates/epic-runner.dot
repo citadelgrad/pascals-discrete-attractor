@@ -11,6 +11,7 @@ digraph EpicRunner {
         shape="diamond"
         label="Pick Next Task"
         node_type="conditional"
+        llm_provider="claude"
         llm_model="haiku"
         timeout="120s"
         allowed_tools="Bash(bd:*)"
@@ -33,6 +34,7 @@ If all child tasks are closed (no more ready tasks for this epic):
     investigate [
         shape="box"
         label="Investigate"
+        llm_provider="claude"
         timeout="900s"
         allowed_tools="Read,Grep,Glob,Bash(bd:*)"
         prompt="Read .pas/current_task.md to get the current task ID and description.
@@ -54,6 +56,7 @@ Write your findings to .pas/investigation.md including:
     implement [
         shape="box"
         label="Implement"
+        llm_provider="claude"
         timeout="900s"
         prompt="Read .pas/current_task.md for the task and .pas/investigation.md for the plan.
 Implement the changes described. Follow existing code patterns and conventions.
@@ -64,6 +67,7 @@ Keep changes minimal and focused on the task requirements."
     run_tests [
         shape="box"
         label="Run Tests"
+        llm_provider="claude"
         timeout="900s"
         prompt="Read .pas/current_task.md to understand what was changed.
 Run the relevant test suite for the modified code.
@@ -76,6 +80,7 @@ Write the test results to .pas/test-results.md"
         shape="diamond"
         label="Verify"
         node_type="conditional"
+        llm_provider="claude"
         timeout="300s"
         prompt="Read .pas/current_task.md for the task requirements.
 Check the changes:
@@ -91,6 +96,7 @@ If there are problems, respond with FAIL on the last line."
     fixup [
         shape="box"
         label="Fix Issues"
+        llm_provider="claude"
         timeout="900s"
         prompt="Read .pas/current_task.md and .pas/investigation.md for context.
 The verification step found problems. Fix any failing tests, lint errors, or unmet acceptance criteria.
@@ -101,6 +107,7 @@ Re-run tests after fixing."
     close_task [
         shape="box"
         label="Close Task"
+        llm_provider="claude"
         timeout="300s"
         allowed_tools="Bash(bd:*),Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
@@ -115,6 +122,7 @@ Re-run tests after fixing."
         shape="diamond"
         label="More Tasks?"
         node_type="conditional"
+        llm_provider="claude"
         llm_model="haiku"
         timeout="120s"
         allowed_tools="Bash(bd:*)"

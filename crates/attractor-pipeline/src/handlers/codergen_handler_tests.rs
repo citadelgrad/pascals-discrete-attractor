@@ -45,24 +45,8 @@ fn provider_from_str_gemini_variants() {
 }
 
 #[test]
-fn provider_from_str_unknown_defaults_to_claude() {
-    assert_eq!(
-        "llama".parse::<LlmCliProvider>(),
-        Ok(LlmCliProvider::Claude)
-    );
-}
-
-#[test]
-fn provider_from_node_defaults_to_claude() {
-    let node = make_node("n", "box", Some("test"), HashMap::new());
-    assert_eq!(LlmCliProvider::from_node(&node), LlmCliProvider::Claude);
-}
-
-#[test]
-fn provider_from_node_reads_llm_provider() {
-    let mut node = make_node("n", "box", Some("test"), HashMap::new());
-    node.llm_provider = Some("codex".into());
-    assert_eq!(LlmCliProvider::from_node(&node), LlmCliProvider::Codex);
+fn provider_parse_unknown_is_rejected() {
+    assert!("llama".parse::<LlmCliProvider>().is_err());
 }
 
 #[test]
@@ -404,7 +388,7 @@ fn build_cli_command_codex_uses_exec_with_positional_prompt() {
 }
 
 #[test]
-fn build_cli_command_gemini_uses_approval_mode() {
+fn build_cli_command_gemini_matches_documented_invocation() {
     let node = make_node("n", "box", Some("do work"), HashMap::new());
     let graph = make_minimal_graph();
     let cfg = CliRunConfig {
@@ -422,10 +406,18 @@ fn build_cli_command_gemini_uses_approval_mode() {
         .get_args()
         .map(|a| a.to_str().unwrap())
         .collect();
-    assert!(args.contains(&"--approval-mode"));
-    assert!(args.contains(&"yolo"));
-    assert!(args.contains(&"--model"));
-    assert!(args.contains(&"gemini-2.5-pro"));
+    assert_eq!(
+        args,
+        vec![
+            "--output-format",
+            "json",
+            "--approval-mode",
+            "yolo",
+            "--model",
+            "gemini-2.5-pro",
+            "test prompt",
+        ]
+    );
 }
 
 // --- CodergenHandler dry-run with provider ---
@@ -439,14 +431,45 @@ async fn codergen_dry_run_includes_provider() {
     let ctx = Context::default();
     ctx.set("dry_run", serde_json::Value::Bool(true)).await;
     let graph = make_minimal_graph();
+    let resolved = ResolvedNode {
+        node_id: node.id.clone(),
+        kind: ResolvedNodeKind::Task,
+        handler: crate::HandlerIdentity::Codergen,
+        provider: Some(LlmCliProvider::Gemini),
+    };
 
-    let outcome = handler.execute(&node, &ctx, &graph).await.unwrap();
+    let outcome = handler
+        .execute_resolved(&node, &resolved, &ctx, &graph)
+        .await
+        .unwrap();
     assert_eq!(outcome.status, StageStatus::Success);
     assert_eq!(
         outcome.context_updates.get("llm_step.provider"),
         Some(&serde_json::Value::String("Gemini CLI".into()))
     );
     assert!(outcome.notes.contains("Gemini CLI"));
+}
+
+#[tokio::test]
+async fn codergen_rejects_missing_provider_even_in_dry_run() {
+    use attractor_types::Context;
+    let handler = CodergenHandler;
+    let node = make_node("llm_step", "box", Some("Do the thing"), HashMap::new());
+    let ctx = Context::default();
+    ctx.set("dry_run", serde_json::Value::Bool(true)).await;
+    let graph = make_minimal_graph();
+    let resolved = ResolvedNode {
+        node_id: node.id.clone(),
+        kind: ResolvedNodeKind::Task,
+        handler: crate::HandlerIdentity::Codergen,
+        provider: None,
+    };
+
+    let error = handler
+        .execute_resolved(&node, &resolved, &ctx, &graph)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("no provider"));
 }
 
 #[test]

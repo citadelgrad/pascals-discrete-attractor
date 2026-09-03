@@ -266,13 +266,15 @@ pub fn parse_stylesheet(input: &str) -> Result<Stylesheet, AttractorError> {
 ///
 /// Rules are applied in specificity order (Universal < Class < Id).
 /// Within the same specificity level, later rules in the stylesheet win.
-/// Explicit node attributes (fields that are already `Some`) are never overwritten.
+/// Explicitly authored node attributes are never overwritten; stylesheet rules
+/// do override lower-precedence DOT node defaults.
 pub fn apply_stylesheet(graph: &mut PipelineGraph, stylesheet: &Stylesheet) {
+    let authored_attrs = graph.authored_node_attrs().clone();
     for node in graph.all_nodes_mut() {
-        // Save which fields were explicitly set on the node before stylesheet application.
-        let had_llm_model = node.llm_model.is_some();
-        let had_llm_provider = node.llm_provider.is_some();
-        let had_reasoning_effort = node.reasoning_effort.is_some();
+        let authored = authored_attrs.get(&node.id);
+        let had_llm_model = authored.is_some_and(|attrs| attrs.contains("llm_model"));
+        let had_llm_provider = authored.is_some_and(|attrs| attrs.contains("llm_provider"));
+        let had_reasoning_effort = authored.is_some_and(|attrs| attrs.contains("reasoning_effort"));
 
         // Collect matching rules, sorted by specificity ascending so that
         // higher-specificity rules overwrite lower-specificity ones.

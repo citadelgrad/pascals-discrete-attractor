@@ -1,6 +1,6 @@
 # PAS User Guide
 
-PAS (Pascal's Discrete Attractor) is a pipeline runner for AI workflows. You define pipelines as DOT (Graphviz) digraphs. Each node becomes a Claude Code session that runs your prompt. The engine handles traversal, branching, retries, quality gates, and cost tracking.
+PAS (Pascal's Discrete Attractor) is a pipeline runner for AI workflows. You define pipelines as DOT (Graphviz) digraphs. Provider-backed nodes run in their explicitly selected local Claude Code, Codex, or Gemini CLI; other nodes may route, execute tools, or wait for input without starting an LLM. The engine handles traversal, branching, retries, quality gates, and cost tracking.
 
 ## Table of Contents
 
@@ -50,6 +50,7 @@ Create `hello.dot`:
 digraph Hello {
     label="Hello World Pipeline"
     goal="Create a hello world script"
+    node [llm_provider="claude"]
 
     start [shape="Mdiamond"]
     write_code [shape="box", label="Write Code",
@@ -90,6 +91,7 @@ digraph PipelineName {
     label="Human-readable name"
     goal="What this pipeline achieves"
     model="sonnet"                          // Default model for all nodes
+    node [llm_provider="claude"]           // Explicit provider for codergen nodes
 
     // --- Nodes ---
     start [shape="Mdiamond"]               // Entry point (required)
@@ -115,7 +117,7 @@ digraph PipelineName {
 | `model` | Default LLM model for all nodes (e.g. `"sonnet"`, `"haiku"`, `"opus"`) |
 | `retry_target` | Global fallback retry target for goal gates |
 | `fallback_retry_target` | Second-level global fallback |
-| `stylesheet` | Inline CSS-like rules (see [Stylesheets](#stylesheets)) |
+| `model_stylesheet` | Inline CSS-like rules (compatibility alias: `stylesheet`; see [Stylesheets](#stylesheets)) |
 
 ---
 
@@ -127,8 +129,8 @@ digraph PipelineName {
 |-------|------|---------|
 | `Mdiamond` | **Start node.** Entry point. Exactly one required. | StartHandler (instant) |
 | `Msquare` | **Exit node.** Pipeline completion. Exactly one required. | ExitHandler (instant) |
-| `box` | **Task node.** Runs Claude Code with the `prompt`. | CodergenHandler |
-| `diamond` | **Conditional node.** Claude's response picks the outgoing edge. | ConditionalHandler + CodergenHandler |
+| `box` | **Task node.** Runs the selected provider CLI with the `prompt`. | CodergenHandler |
+| `diamond` | **Conditional node.** With a prompt or explicit `type="codergen"` it uses CodergenHandler; otherwise it is pass-through routing. | ConditionalHandler or CodergenHandler |
 | `hexagon` | **Human gate.** Pauses for human input/approval. | WaitHumanHandler |
 | `parallelogram` | **Tool node.** Runs a shell command. | ToolHandler |
 
@@ -137,10 +139,10 @@ digraph PipelineName {
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `label` | string | node ID | Display name shown in logs |
-| `prompt` | string | — | **The task sent to Claude Code.** Required for `box` and `diamond` nodes. |
-| `node_type` | string | auto | Explicit handler type override (`"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"manager"`) |
+| `prompt` | string | — | Task sent to the selected provider CLI. |
+| `type` | string | auto | Explicit handler type override (`node_type` and `handler` are compatibility aliases) |
 | `llm_model` | string | graph `model` | Model override for this node (`"haiku"`, `"sonnet"`, `"opus"`, or full model ID) |
-| `llm_provider` | string | `"claude"` | CLI provider for this node: `"claude"`, `"codex"`, or `"gemini"` |
+| `llm_provider` | string | — | Required whenever the resolved handler consumes a provider: `"claude"`, `"codex"`, or `"gemini"` |
 | `allowed_tools` | string | all | Comma-separated Claude Code tool list (`"Read,Grep,Glob"` for read-only) |
 | `max_budget_usd` | string | unlimited | Maximum spend for this node's Claude Code session |
 | `goal_gate` | boolean | false | If true, this node must succeed for the pipeline to complete |
@@ -149,7 +151,7 @@ digraph PipelineName {
 | `max_retries` | integer | 0 | Maximum retry attempts for this node |
 | `timeout` | duration | — | Max execution time (e.g. `"5m"`, `"1h30m"`) |
 | `fidelity` | string | — | Context fidelity mode: `"full"`, `"truncate"`, `"compact"`, `"summary"` |
-| `classes` | string | — | Space-separated class list for stylesheet matching |
+| `class` | string | — | Space-separated class list for stylesheet matching (`classes` is a compatibility alias) |
 | `tool_command` | string | — | Shell command for `parallelogram` (tool) nodes |
 | `auto_status` | boolean | true | Automatically set status from outcome |
 | `allow_partial` | boolean | false | Allow partial success |
@@ -186,7 +188,7 @@ CLI flags override `pas.toml`. `--settings`-style PAS-owned config does not impl
 
 ### Tool nodes (parallelogram)
 
-Tool nodes run a shell command instead of Claude Code:
+Tool nodes run a shell command instead of a provider CLI:
 
 ```dot
 run_tests [
@@ -235,17 +237,21 @@ This creates edges: `start→investigate`, `investigate→implement`, `implement
 
 ## Conditional Routing
 
-Conditional nodes let Claude's response determine which path the pipeline takes.
+Prompted conditional nodes let the selected provider's response determine which
+path the pipeline takes. A conditional without a prompt is pass-through routing
+unless it explicitly sets `type="codergen"`; that exception remains provider-backed
+and requires `llm_provider`.
 
 ### Setup
 
 1. Make the node a `diamond` shape (or set `node_type="conditional"`)
 2. Add outgoing edges with `label` and `condition` attributes
-3. Write the prompt so Claude outputs one of the labels
+3. Write the prompt so the selected provider outputs one of the labels
 
 ```dot
 review [
     shape="diamond"
+    llm_provider="claude"
     label="Review Changes"
     prompt="Review the code changes. Check for bugs, style issues, and test coverage.
 If everything looks good, respond with PASS on the last line.
@@ -258,8 +264,8 @@ review -> fixup   [label="FAIL", condition="preferred_label=FAIL"]
 
 ### How it works
 
-1. Claude Code runs the prompt
-2. The handler scans Claude's response for one of the edge labels
+1. The selected provider CLI runs the prompt
+2. The handler scans the selected provider's response for one of the edge labels
 3. It checks the last 5 lines for an exact match (case-insensitive)
 4. Falls back to scanning the full response
 5. Sets `preferred_label` on the outcome
@@ -279,7 +285,7 @@ preferred_label=BUY          // Check the extracted label
 
 Available context keys in conditions:
 - `outcome` — the node's status: `success`, `fail`, `partial_success`, `retry`, `skipped`
-- `preferred_label` — the label extracted from Claude's response
+- `preferred_label` — the label extracted from the selected provider's response
 
 ---
 
@@ -292,6 +298,7 @@ Goal gates enforce quality requirements before the pipeline can exit. If a goal 
 ```dot
 final_review [
     shape="box"
+    llm_provider="claude"
     label="Final Review"
     prompt="Verify all acceptance criteria are met."
     goal_gate=true
@@ -321,6 +328,7 @@ You can have multiple goal gate nodes. All are checked when the pipeline reaches
 ```dot
 digraph QualityPipeline {
     goal="Ship quality code"
+    node [llm_provider="claude"]
 
     start [shape="Mdiamond"]
     implement [shape="box", prompt="Write the feature"]
@@ -344,12 +352,15 @@ Stylesheets can be set as a graph attribute or applied programmatically:
 
 ```dot
 digraph Pipeline {
-    stylesheet="
+    model_stylesheet="
         * { llm_model: haiku; }
         .critical { llm_model: opus; }
         #final_review { llm_model: opus; reasoning_effort: high; }
     "
-    // ...nodes...
+    start [shape="Mdiamond"]
+    work [shape="box", llm_provider="claude"]
+    done [shape="Msquare"]
+    start -> work -> done
 }
 ```
 
@@ -358,7 +369,7 @@ digraph Pipeline {
 | Selector | Specificity | Matches |
 |----------|-------------|---------|
 | `*` | 0 | Every node |
-| `.classname` | 1 | Nodes with `classes="classname"` |
+| `.classname` | 1 | Nodes with `class="classname"` |
 | `#node_id` | 2 | Node with matching ID |
 
 Higher specificity wins. Explicit node attributes always override stylesheet values.
@@ -375,14 +386,14 @@ Higher specificity wins. Explicit node attributes always override stylesheet val
 
 ```dot
 digraph Pipeline {
-    stylesheet="
+    model_stylesheet="
         * { llm_model: haiku; }
         .analysis { llm_model: sonnet; }
     "
 
     start [shape="Mdiamond"]
-    fetch [shape="box", classes="cheap", prompt="Fetch data"]
-    analyze [shape="box", classes="analysis", prompt="Deep analysis"]
+    fetch [shape="box", class="cheap", prompt="Fetch data", llm_provider="claude"]
+    analyze [shape="box", class="analysis", prompt="Deep analysis", llm_provider="claude"]
     done [shape="Msquare"]
 
     start -> fetch -> analyze -> done
@@ -395,33 +406,33 @@ Here `fetch` uses haiku (from `*`), `analyze` uses sonnet (from `.analysis`).
 
 ## Variable Expansion
 
-Node prompts can reference context values using `${ctx.key}` syntax. Variables are expanded before the prompt is sent to Claude Code.
+Node prompts can reference graph attributes using `${key}` syntax. Variables are expanded before semantic compilation.
 
 ```dot
 digraph Pipeline {
     goal="Build feature X"
     project_name="my-app"
+    node [llm_provider="claude"]
 
     start [shape="Mdiamond"]
-    task [shape="box", prompt="Working on ${ctx.project_name}: implement the feature described in ${ctx.goal}"]
+    task [shape="box", prompt="Working on ${project_name}: implement the feature described in ${goal}"]
     done [shape="Msquare"]
 
     start -> task -> done
 }
 ```
 
-Graph attributes are available as `${ctx.attribute_name}`. Context values set by prior nodes (e.g. `node_id.result`) are also available.
+String, number, and boolean graph attributes are available as `${attribute_name}`.
 
 ---
 
 ## Validation Rules
 
-Run `pas validate pipeline.dot` to check your pipeline. The validator runs 12 lint rules:
+Run `pas validate pipeline.dot` to compile canonical semantics and run structural lint rules:
 
 | Rule | Severity | What it checks |
 |------|----------|----------------|
-| StartNodeRule | Error | Exactly one `Mdiamond` node exists |
-| TerminalNodeRule | Error | At least one `Msquare` node exists |
+| Semantic compilation | Error | Exactly one start/exit; known compatible roles, handlers, and providers; provider present for every `codergen` node |
 | ReachabilityRule | Error | All nodes are reachable from start |
 | EdgeTargetExistsRule | Error | All edge targets reference existing nodes |
 | StartNoIncomingRule | Error | Start node has no incoming edges |
@@ -430,8 +441,7 @@ Run `pas validate pipeline.dot` to check your pipeline. The validator runs 12 li
 | FidelityValidRule | Warning | Fidelity values are one of: full, truncate, compact, summary |
 | RetryTargetExistsRule | Warning | Retry targets reference existing nodes |
 | GoalGateHasRetryRule | Warning | Goal gate nodes have a retry target defined |
-| ProviderValidRule | Warning | `llm_provider` values are one of: claude, codex, gemini |
-| PromptOnLlmNodesRule | Warning | Box/diamond nodes have a `prompt` attribute |
+| PromptOnLlmNodesRule | Warning | Resolved `codergen` nodes have a prompt or descriptive label |
 
 Errors prevent execution. Warnings are reported but don't block.
 
@@ -459,6 +469,7 @@ The simplest pattern — sequential steps:
 
 ```dot
 digraph Linear {
+    node [llm_provider="claude"]
     start [shape="Mdiamond"]
     step1 [shape="box", prompt="Do step 1"]
     step2 [shape="box", prompt="Do step 2"]
@@ -479,6 +490,7 @@ start → work → verify ──PASS──→ done
 
 ```dot
 digraph VerifyLoop {
+    node [llm_provider="claude"]
     start  [shape="Mdiamond"]
     work   [shape="box", prompt="Implement the feature"]
     verify [shape="diamond", label="Verify",
@@ -499,6 +511,7 @@ Route to different paths based on analysis:
 
 ```dot
 digraph Branch {
+    node [llm_provider="claude"]
     start   [shape="Mdiamond"]
     analyze [shape="diamond", label="Analyze",
              prompt="Analyze the issue. Is this a BUG or a FEATURE? Respond with one word."]
@@ -520,6 +533,7 @@ Enforce that critical nodes succeed before the pipeline completes:
 
 ```dot
 digraph GoalGated {
+    node [llm_provider="claude"]
     start     [shape="Mdiamond"]
     implement [shape="box", prompt="Implement the feature"]
     test      [shape="box", prompt="Write and run tests",
@@ -541,6 +555,7 @@ digraph FixBug {
     label="Fix the authentication timeout bug"
     goal="Fix issue #123: sessions expire after 5 minutes instead of 30"
     model="sonnet"
+    node [llm_provider="claude"]
 
     start       [shape="Mdiamond"]
     done        [shape="Msquare"]
@@ -729,6 +744,7 @@ The final node before `done` should commit and close:
 ```dot
 close_issue [
     shape="box"
+    llm_provider="claude"
     label="Close Issue"
     allowed_tools="Bash(bd:*),Bash(git:*)"
     prompt="Stage changes: git add -A
@@ -799,21 +815,23 @@ echo ".pas/" >> .gitignore
 
 ## Writing Effective Prompts
 
-Each node's `prompt` is the entire context Claude Code receives. It has no memory of prior conversation — it's a fresh `-p` (print mode) session.
+Each provider-backed node's `prompt` is the task context its selected CLI receives.
+Provider invocations are independent; pass information through files or pipeline
+context instead of assuming prior conversation state.
 
 ### Do
 
 - **Be specific about file paths.** `"Edit mlb_fantasy_jobs/app/tasks/processors.py"` not `"Edit the processor file"`.
 - **Include exact commands.** `"Run: cd mlb_fantasy_jobs && uv run pytest tests/ -x -v -k sync"` not `"Run the tests"`.
 - **One concern per node.** Investigation, implementation, and testing should be separate nodes.
-- **Tell Claude to write output.** `"Write your findings to .pas/analysis.md"` — otherwise the response vanishes when the node completes.
+- **Tell the provider to write durable output.** `"Write your findings to .pas/analysis.md"` — otherwise only the captured result flows forward.
 - **Reference the goal.** The pipeline `goal` is injected automatically, but reinforcing key details in the prompt helps.
 
 ### Don't
 
 - **Don't combine investigation and implementation.** Read-only first, then edit.
-- **Don't assume context.** Each node is a fresh Claude Code session. Pass information via files (`.pas/`) or context keys.
-- **Don't leave prompts vague.** `"Fix the bug"` gives Claude nothing to work with. Include the file, function, and expected behavior.
+- **Don't assume context.** Each provider invocation is independent. Pass information via files (`.pas/`) or context keys.
+- **Don't leave prompts vague.** `"Fix the bug"` gives the selected provider too little context. Include the file, function, and expected behavior.
 
 ### Context flow between nodes
 
@@ -828,19 +846,20 @@ implement  [prompt="Read .pas/findings.md for context, then..."]
 
 ## Multi-Provider Support
 
-By default, pipeline nodes use Claude Code CLI. You can switch individual nodes (or all nodes via stylesheets) to use **OpenAI Codex CLI** or **Google Gemini CLI** instead.
+Every node whose resolved handler consumes a provider must resolve an explicit provider from its node attributes, DOT defaults, or stylesheet. `pas generate` and `pas scaffold` insert Claude explicitly when needed. Hand-written runtime pipelines have no implicit provider fallback.
 
 ### Supported providers
 
 | Provider | Binary | Value |
 |----------|--------|-------|
-| Claude Code | `claude` | `"claude"` (default) |
+| Claude Code | `claude` | `"claude"` |
 | OpenAI Codex | `codex` | `"codex"` |
 | Google Gemini | `gemini` | `"gemini"` |
 
 ### Per-node provider
 
-Set `llm_provider` on any `box` or `diamond` node:
+Set `llm_provider` on every node whose resolved handler consumes a provider.
+An unprompted pass-through diamond does not consume a provider, while a registered custom provider-consuming handler does regardless of its omitted or custom shape.
 
 ```dot
 digraph MultiProvider {
@@ -865,14 +884,14 @@ Apply a provider to all nodes or groups of nodes:
 
 ```dot
 digraph Pipeline {
-    stylesheet="
+    model_stylesheet="
         * { llm_provider: codex; }
         .review { llm_provider: claude; }
     "
 
     start [shape="Mdiamond"]
     work [shape="box", prompt="Do the work"]
-    check [shape="box", classes="review", prompt="Review results"]
+    check [shape="box", class="review", prompt="Review results"]
     done [shape="Msquare"]
 
     start -> work -> check -> done
@@ -885,7 +904,7 @@ Each provider has different CLI flags and output formats. PAS handles this autom
 
 - **Claude**: Uses `--output-format json` and `-p` for the prompt. Returns structured JSON.
 - **Codex**: Uses `codex exec --json --yolo` with the prompt as a positional argument. Returns streaming JSONL events; PAS extracts the last completed agent-message item.
-- **Gemini**: Uses `--output-format json` and `-p` for the prompt, plus `--sandbox none` for full access. Returns structured JSON.
+- **Gemini**: Uses `--output-format json --approval-mode yolo` with the prompt as a positional argument. PAS does not pass a `--sandbox` flag to Gemini. Returns structured JSON.
 
 ### CLI not found
 
@@ -902,7 +921,7 @@ If a provider's CLI binary isn't installed, the pipeline will fail with a `CliNo
 ### Per-node budgets
 
 ```dot
-cheap_task [shape="box", max_budget_usd="0.50", prompt="Simple task"]
+cheap_task [shape="box", llm_provider="claude", max_budget_usd="0.50", prompt="Simple task"]
 ```
 
 ### Model selection
@@ -910,9 +929,9 @@ cheap_task [shape="box", max_budget_usd="0.50", prompt="Simple task"]
 Use cheaper models for simple tasks:
 
 ```dot
-fetch_data [shape="box", llm_model="haiku", prompt="Fetch and format data"]
-analyze    [shape="box", llm_model="sonnet", prompt="Deep analysis"]
-review     [shape="box", llm_model="opus", prompt="Critical review"]
+fetch_data [shape="box", llm_provider="claude", llm_model="haiku", prompt="Fetch and format data"]
+analyze    [shape="box", llm_provider="claude", llm_model="sonnet", prompt="Deep analysis"]
+review     [shape="box", llm_provider="claude", llm_model="opus", prompt="Critical review"]
 ```
 
 ### Restrict tools for read-only nodes
@@ -920,7 +939,7 @@ review     [shape="box", llm_model="opus", prompt="Critical review"]
 Nodes that only need to read code run faster and cheaper:
 
 ```dot
-investigate [shape="box", allowed_tools="Read,Grep,Glob", prompt="Analyze the codebase"]
+investigate [shape="box", llm_provider="claude", allowed_tools="Read,Grep,Glob", prompt="Analyze the codebase"]
 ```
 
 ### Cost reporting
@@ -952,7 +971,9 @@ The provider's CLI binary isn't in your PATH, or it returned a non-zero exit cod
 
 ### Node always takes the same branch
 
-The conditional handler scans Claude's response for edge labels. If Claude doesn't output the label clearly, the first edge wins. Fix by being explicit in the prompt:
+The prompted conditional handler scans the selected provider's response for edge
+labels. If the provider doesn't output the label clearly, the first edge wins.
+Fix this by being explicit in the prompt:
 
 ```
 You MUST end your response with exactly one of: PASS, FAIL

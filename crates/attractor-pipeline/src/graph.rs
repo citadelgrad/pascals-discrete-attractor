@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use attractor_dot::{AttributeValue, DotGraph, EdgeDef, NodeDef};
@@ -9,6 +9,7 @@ pub struct PipelineGraph {
     pub goal: String,
     pub attrs: HashMap<String, AttributeValue>,
     nodes: HashMap<String, PipelineNode>,
+    authored_node_attrs: HashMap<String, HashSet<String>>,
     edges: Vec<PipelineEdge>,
     /// Maps node_id to a range (start, count) into the sorted `edges` vec.
     /// Edges are sorted by `from` so each node's outgoing edges are contiguous.
@@ -166,12 +167,17 @@ fn edge_def_to_pipeline_edge(
 impl PipelineGraph {
     pub fn from_dot(graph: DotGraph) -> attractor_types::Result<Self> {
         let mut nodes = HashMap::new();
+        let mut authored_node_attrs = HashMap::new();
         let mut all_edges = Vec::new();
 
         // Collect top-level nodes with graph-level defaults
         for (id, node_def) in &graph.nodes {
             let pn = node_def_to_pipeline_node(id, node_def, &graph.node_defaults, None);
             nodes.insert(id.clone(), pn);
+            authored_node_attrs.insert(
+                id.clone(),
+                node_def.authored_attrs.keys().cloned().collect(),
+            );
         }
 
         // Collect subgraph nodes (with subgraph-level defaults layered on top)
@@ -184,6 +190,10 @@ impl PipelineGraph {
                     Some(&sg.node_defaults),
                 );
                 nodes.insert(id.clone(), pn);
+                authored_node_attrs.insert(
+                    id.clone(),
+                    node_def.authored_attrs.keys().cloned().collect(),
+                );
             }
         }
 
@@ -223,6 +233,7 @@ impl PipelineGraph {
             goal,
             attrs: graph.attrs,
             nodes,
+            authored_node_attrs,
             edges: all_edges,
             adjacency,
         })
@@ -258,6 +269,10 @@ impl PipelineGraph {
 
     pub fn all_nodes_mut(&mut self) -> impl Iterator<Item = &mut PipelineNode> {
         self.nodes.values_mut()
+    }
+
+    pub(crate) fn authored_node_attrs(&self) -> &HashMap<String, HashSet<String>> {
+        &self.authored_node_attrs
     }
 
     pub fn all_edges(&self) -> &[PipelineEdge] {

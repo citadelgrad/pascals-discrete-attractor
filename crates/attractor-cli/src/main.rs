@@ -531,3 +531,11 @@ pub(crate) fn load_pipeline(
     let graph = attractor_pipeline::PipelineGraph::from_dot(dot)?;
     Ok(graph)
 }
+
+pub(crate) fn load_execution_plan(
+    path: &std::path::Path,
+) -> anyhow::Result<attractor_pipeline::ExecutionPlan> {
+    let graph = load_pipeline(path)?;
+    attractor_pipeline::ExecutionPlan::compile(graph)
+        .map_err(|error| anyhow::anyhow!("Pipeline validation failed: {error}"))
+}

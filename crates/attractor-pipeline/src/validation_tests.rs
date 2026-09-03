@@ -233,7 +233,7 @@ fn exit_with_outgoing_edges_error() {
 }
 
 #[test]
-fn provider_valid_warns_on_unknown() {
+fn provider_valid_errors_on_unknown() {
     let pg = parse_and_build(
         r#"digraph G {
         start [shape="Mdiamond"]
@@ -246,8 +246,8 @@ fn provider_valid_warns_on_unknown() {
     assert!(
         diags
             .iter()
-            .any(|d| d.rule == "provider_valid" && d.severity == Severity::Warning),
-        "Expected provider_valid warning for unknown provider, got: {diags:?}"
+            .any(|d| d.rule == "provider_valid" && d.severity == Severity::Error),
+        "Expected provider_valid error for unknown provider, got: {diags:?}"
     );
 }
 
@@ -308,6 +308,83 @@ fn retry_target_nonexistent_warning() {
     );
 }
 
+#[test]
+fn unknown_provider_is_a_blocking_error() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="box", prompt="Do work", llm_provider="llama"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+
+    let diags = validate(&pg);
+    assert!(
+        diags.iter().any(|d| d.rule == "provider_valid"
+            && d.severity == Severity::Error
+            && d.node_id.as_deref() == Some("work")),
+        "unknown providers must block execution; got: {diags:?}"
+    );
+}
+
+#[test]
+fn magic_start_id_with_explicit_task_shape_is_a_semantic_conflict() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="box", prompt="This must not execute", llm_provider="claude"]
+        done [shape="Msquare"]
+        start -> done
+    }"#,
+    );
+
+    let diags = validate(&pg);
+    assert!(
+        diags.iter().any(|d| d.rule == "semantic_conflict"
+            && d.severity == Severity::Error
+            && d.node_id.as_deref() == Some("start")),
+        "conflicting role signals must fail closed; got: {diags:?}"
+    );
+}
+
+#[test]
+fn pass_through_conditional_does_not_require_a_provider() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        pick [shape="diamond"]
+        done [shape="Msquare"]
+        start -> pick -> done
+    }"#,
+    );
+
+    let diags = validate(&pg);
+    assert!(
+        !diags.iter().any(|d| d.rule == "provider_required"),
+        "a pass-through conditional consumes no provider; got: {diags:?}"
+    );
+}
+
+#[test]
+fn explicit_codergen_type_requires_provider_regardless_of_shape() {
+    let pg = parse_and_build(
+        r#"digraph G {
+        start [shape="Mdiamond"]
+        work [shape="ellipse", type="codergen", prompt="Do work"]
+        done [shape="Msquare"]
+        start -> work -> done
+    }"#,
+    );
+
+    let diags = validate(&pg);
+    assert!(
+        diags.iter().any(|d| d.rule == "provider_required"
+            && d.severity == Severity::Error
+            && d.node_id.as_deref() == Some("work")),
+        "provider safety must follow the resolved handler, not shape; got: {diags:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // provider_required: a runtime box/diamond node with no llm_provider must
 // never silently default to Claude. These tests cover both node shapes that
@@ -337,11 +414,11 @@ fn provider_required_box_node_without_provider_is_error() {
 }
 
 #[test]
-fn provider_required_diamond_node_without_provider_is_error() {
+fn provider_required_llm_backed_diamond_without_provider_is_error() {
     let pg = parse_and_build(
         r#"digraph G {
         start [shape="Mdiamond"]
-        pick [shape="diamond"]
+        pick [shape="diamond", prompt="Choose a branch"]
         a [shape="box", llm_provider="claude"]
         b [shape="box", llm_provider="claude"]
         done [shape="Msquare"]
@@ -464,7 +541,7 @@ fn provider_required_multiple_offending_nodes_each_get_own_diagnostic() {
         r#"digraph G {
         start [shape="Mdiamond"]
         a [shape="box", prompt="A"]
-        b [shape="diamond"]
+        b [shape="diamond", prompt="Choose a branch"]
         c [shape="box", llm_provider="claude"]
         done [shape="Msquare"]
         start -> a -> b

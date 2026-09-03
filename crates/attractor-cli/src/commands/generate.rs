@@ -229,7 +229,7 @@ pub async fn cmd_generate(
     std::fs::write(&output_path, &dot_content)?;
 
     // Validate the generated pipeline
-    let graph = match crate::load_pipeline(&output_path) {
+    let plan = match crate::load_execution_plan(&output_path) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("Generated file written to: {}", output_path.display());
@@ -238,7 +238,7 @@ pub async fn cmd_generate(
             anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
         }
     };
-    let diagnostics = attractor_pipeline::validate(&graph);
+    let diagnostics = attractor_pipeline::validate_plan(&plan);
 
     let has_error = diagnostics
         .iter()
@@ -253,7 +253,7 @@ pub async fn cmd_generate(
         }
     }
 
-    let node_count = graph.all_nodes().count();
+    let node_count = plan.all_nodes().count();
 
     println!("Pipeline generated");
     println!("  Output: {}", output_path.display());
@@ -283,7 +283,7 @@ fn build_prompt(spec: &str, prd: Option<&str>) -> String {
     };
 
     format!(
-        r#"Generate a Graphviz DOT pipeline for an AI workflow engine. Each node is a Claude Code session that receives the `prompt` attribute as its task.
+        r#"Generate a Graphviz DOT pipeline for an AI workflow engine. Each provider-backed `codergen` node runs its explicitly selected local provider CLI with the `prompt` attribute as its task.
 
 {prd_section}## Technical Specification
 
@@ -299,9 +299,9 @@ Node attrs: `label`, `shape`, `prompt` (self-contained instructions with ALL con
 Optional: `allowed_tools` (e.g. "Read,Grep,Glob"), `goal_gate="true"`, `llm_model`.
 Edge attrs: `label` (e.g. "PASS","FAIL"), `condition` (e.g. preferred_label=PASS), `loop_restart="true"` on back-edges.
 
-## Provider (REQUIRED on every work/decision node)
+## Provider (REQUIRED on every provider-backed node)
 
-Every `"box"` and `"diamond"` node — except the `"Mdiamond"` start node, the `"Msquare"` done node, and any node with `type="quality"` — MUST have an explicit `llm_provider` attribute (e.g. `llm_provider="claude"`). Do not omit it and do not rely on any implicit default: an implicit default is exactly what this pipeline format forbids, because a pipeline author must be able to read the DOT file and see which provider each node runs on. Use `llm_provider="claude"` unless the spec says otherwise.
+Every node whose resolved handler is `codergen` MUST have an explicit `llm_provider` attribute (e.g. `llm_provider="claude"`). This includes conventional `box` tasks, prompted `diamond` conditionals, and any node that explicitly sets `type="codergen"`. An unprompted `diamond` is pass-through and needs no provider unless `type="codergen"` explicitly selects provider-backed execution. Start, exit, quality, tool, human-gate, parallel, and pass-through conditional handlers do not consume providers. Do not rely on an implicit default: a pipeline author must be able to read the DOT file and see which provider each provider-backed node runs on. Use `llm_provider="claude"` unless the spec says otherwise.
 
 ## Timeouts
 

@@ -202,26 +202,23 @@ pub async fn cmd_run(
     codergen_claude: &CodergenClaudeCliOpts,
 ) -> anyhow::Result<()> {
     let graph = crate::load_pipeline(path)?;
+    let plan = match attractor_pipeline::ExecutionPlan::compile(graph.clone()) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let diagnostics = attractor_pipeline::validate(&graph);
+            super::print_diagnostics(&diagnostics);
+            anyhow::bail!("Pipeline validation failed: {error}");
+        }
+    };
+    let graph = plan.graph();
 
     // Validate before doing any other work: a runtime node with no explicit
     // llm_provider must never silently default to Claude and spawn a real
     // provider CLI process. (The engine also validates internally before
     // executing any node, but checking here gives clear, per-node output
     // before we even touch the filesystem for logs/checkpoints.)
-    let diagnostics = attractor_pipeline::validate(&graph);
-    let mut has_error = false;
-    for diag in &diagnostics {
-        let severity = match diag.severity {
-            attractor_pipeline::Severity::Error => {
-                has_error = true;
-                "ERROR"
-            }
-            attractor_pipeline::Severity::Warning => "WARN",
-            attractor_pipeline::Severity::Info => "INFO",
-        };
-        println!("[{}] {}: {}", severity, diag.rule, diag.message);
-    }
-    if has_error {
+    let diagnostics = attractor_pipeline::validate_plan(&plan);
+    if super::print_diagnostics(&diagnostics) {
         anyhow::bail!("Pipeline validation failed");
     }
 
@@ -231,9 +228,11 @@ pub async fn cmd_run(
     let preflight_workdir = workdir
         .map(|d| d.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    for finding in
-        attractor_pipeline::preflight_run_with_budget(&graph, &preflight_workdir, max_budget_usd)
-    {
+    for finding in attractor_pipeline::preflight_run_plan_with_budget(
+        &plan,
+        &preflight_workdir,
+        max_budget_usd,
+    ) {
         let severity = match finding.severity {
             attractor_pipeline::PreflightSeverity::Warn => "WARN",
             attractor_pipeline::PreflightSeverity::Error => "ERROR",
@@ -307,7 +306,7 @@ pub async fn cmd_run(
     let registry = attractor_pipeline::default_registry_with_interviewer(interviewer);
     let executor = attractor_pipeline::PipelineExecutor::new(registry);
     let result = executor
-        .run_with_checkpoint(&graph, context, &logs_dir)
+        .run_plan_with_checkpoint(&plan, context, &logs_dir)
         .await?;
 
     println!("\nPipeline completed");

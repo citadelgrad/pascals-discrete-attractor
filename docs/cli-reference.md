@@ -18,7 +18,9 @@ pas [OPTIONS] <COMMAND>
 
 ### `run` — Execute a pipeline
 
-Parses the DOT file, validates it, and executes each node sequentially. Each `box` node spawns a Claude Code session with the node's prompt.
+Parses the DOT file, compiles and validates canonical semantics, then executes the
+pipeline. Each provider-backed `codergen` node starts its explicitly selected
+local Claude Code, Codex, or Gemini CLI.
 
 ```
 pas run <PIPELINE> [OPTIONS]
@@ -34,9 +36,9 @@ pas run <PIPELINE> [OPTIONS]
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--workdir <DIR>` | `-w` | current directory | Working directory for Claude Code sessions. Each node's `claude -p` runs in this directory, so file paths in prompts are relative to it. |
+| `--workdir <DIR>` | `-w` | current directory | Working directory for provider CLI sessions, so file paths in prompts are relative to it. |
 | `--logs <DIR>` | `-l` | `.pas/logs` | Directory for log output. |
-| `--dry-run` | — | false | Parse and validate the pipeline without executing any nodes. No Claude Code sessions are spawned, no cost incurred. |
+| `--dry-run` | — | false | Parse and validate the pipeline without executing provider processes or tools; no cost is incurred. |
 | `--max-budget-usd <AMOUNT>` | — | $200 | Maximum tracked spend across all nodes. Pipeline aborts with an error if exceeded. Codex and Gemini CLI calls report no dollar cost and therefore do not count toward this limit; use `--max-steps` to bound them. |
 | `--max-steps <COUNT>` | — | 200 | Maximum number of node executions before aborting. Prevents runaway loops. A 6-node pipeline that loops 3 times = 18 steps. |
 | `--fresh` | — | false | Discard any saved checkpoint and start from the beginning. By default, re-running the same command resumes from the last completed node. |
@@ -106,7 +108,9 @@ CLI flags override `pas.toml` for the current run.
 
 ### `validate` — Check a pipeline for errors
 
-Runs all 11 lint rules against the pipeline without executing it. Useful for checking syntax and structure before committing a dot file.
+Runs canonical semantic compilation followed by nine structural checks without
+executing the pipeline. Useful for checking typed roles, providers, syntax, and
+structure before committing a DOT file.
 
 ```
 pas validate <PIPELINE>
@@ -127,8 +131,10 @@ Pipeline is valid
 
 If issues found:
 ```
-[ERROR] StartNodeRule: No start node (Mdiamond) found
-[WARN] PromptOnLlmNodesRule: Node 'analyze' has no prompt attribute
+[ERROR] provider_valid (node: analyze): Node 'analyze' has unknown llm_provider 'llama'
+  Fix: Use claude/anthropic, codex/openai, or gemini/google
+[WARN] prompt_on_llm_nodes (node: review): Node 'review' (handler=codergen) has no prompt and label matches id
+  Fix: Add a prompt or a descriptive label attribute
 ```
 
 #### Exit codes
@@ -142,7 +148,7 @@ If issues found:
 
 ### `info` — Inspect a pipeline
 
-Displays the pipeline structure: name, goal, node count, edge count, start/exit nodes, and a list of all nodes with their shapes and types.
+Displays the pipeline structure: name, goal, node count, edge count, start/exit nodes, and a list of all nodes with their resolved kind, handler, and provider.
 
 ```
 pas info <PIPELINE>
@@ -165,9 +171,10 @@ Start: start (Start)
 Exit: done (Done)
 
 Nodes:
-  investigate [Investigate Current Behavior] shape=box type=(default)
-  implement [Implement Fix] shape=box type=(default)
-  verify [Verify Quality] shape=diamond type=(default)
+  done [Done] kind=Exit handler=exit provider=-
+  implement [Implement Fix] kind=Task handler=codergen provider=codex
+  start [Start] kind=Start handler=start provider=-
+  verify [Verify Quality] kind=Conditional { llm_backed: true } handler=codergen provider=claude
   ...
 ```
 
@@ -378,7 +385,7 @@ pas launch <DOCS_DIR> [OPTIONS]
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--workdir <DIR>` | `-w` | current directory | Working directory for Claude Code sessions during the run phase. |
+| `--workdir <DIR>` | `-w` | current directory | Working directory for selected provider CLI sessions during the run phase. |
 | `--output <DIR>` | `-o` | `pipelines/` | Directory where generated `.dot` files are written. |
 | `--dry-run` | — | false | Generate and validate pipelines but don't execute them. |
 | `--max-budget-usd <AMOUNT>` | — | $200 | Maximum tracked spend across all nodes in each pipeline. Codex and Gemini CLI calls do not report dollar cost and therefore do not count toward this limit. |
@@ -594,7 +601,7 @@ The pipeline stops at whichever limit is hit first.
 pas run pipelines/fix-bug.dot -w .
 ```
 
-The `-w .` sets the working directory to the current directory. Claude Code can read, edit, and create files relative to this path.
+The `-w .` sets the working directory to the current directory. Selected provider CLIs and tool commands use this path as their working directory.
 
 ### Run a pipeline for a different project
 
@@ -639,7 +646,7 @@ The `-v` flag enables debug logging. You'll see:
 pas run pipelines/complex-feature.dot --dry-run
 ```
 
-Parses and validates the pipeline, prints the structure, but doesn't spawn any Claude Code sessions. Zero cost.
+Parses and validates the pipeline, prints the structure, but doesn't execute any selected provider CLI or tool command. Zero cost.
 
 ### Run from anywhere with an alias
 
@@ -745,7 +752,9 @@ Quick way to compare node counts and structure between pipeline revisions.
 
 ### Required
 
-- **`claude`** must be in your PATH. The `run` command shells out to `claude -p` for each node. Verify with: `which claude`
+- Every provider binary selected by an executable `codergen` node must be in
+  `PATH`: `claude`, `codex`, and/or `gemini`. Unselected provider binaries are
+  not required. Verify a selected binary with `command -v <provider>`.
 
 ### Optional
 
@@ -775,6 +784,7 @@ Every node also gets:
 // Cheap read-only investigation using haiku
 investigate [
     shape="box"
+    llm_provider="claude"
     llm_model="haiku"
     allowed_tools="Read,Grep,Glob"
     prompt="Find all usages of deprecated_function"
@@ -783,6 +793,7 @@ investigate [
 // Expensive deep analysis using opus with a budget cap
 analyze [
     shape="box"
+    llm_provider="claude"
     llm_model="opus"
     max_budget_usd="5.00"
     prompt="Perform a security audit of the authentication module"
@@ -791,6 +802,7 @@ analyze [
 // Default model (inherits from graph-level model attribute)
 implement [
     shape="box"
+    llm_provider="claude"
     prompt="Fix the SQL injection in the search endpoint"
 ]
 ```

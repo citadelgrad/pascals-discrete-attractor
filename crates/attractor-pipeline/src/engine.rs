@@ -9,10 +9,11 @@ use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
 use crate::checkpoint::{clear_checkpoint, load_checkpoint, save_checkpoint, PipelineCheckpoint};
 use crate::edge_selection::select_edge;
+use crate::execution_plan::{ExecutionPlan, HandlerIdentity};
 use crate::goal_gate::enforce_goal_gates;
 use crate::graph::PipelineGraph;
 use crate::handler::{default_registry, HandlerRegistry};
-use crate::validation::validate_or_raise;
+use crate::validation::validate_plan;
 
 pub const DEFAULT_MAX_BUDGET_USD: f64 = 200.0;
 
@@ -92,7 +93,8 @@ impl PipelineExecutor {
 
     /// Run the full 5-phase pipeline lifecycle on the given graph.
     pub async fn run(&self, graph: &PipelineGraph) -> Result<PipelineResult> {
-        self.run_with_context(graph, Context::new()).await
+        let plan = self.compile(graph)?;
+        self.run_plan(&plan).await
     }
 
     /// Run the pipeline with a pre-seeded context (e.g. workdir, dry_run).
@@ -101,7 +103,8 @@ impl PipelineExecutor {
         graph: &PipelineGraph,
         context: Context,
     ) -> Result<PipelineResult> {
-        self.run_inner(graph, context, None).await
+        let plan = self.compile(graph)?;
+        self.run_plan_with_context(&plan, context).await
     }
 
     /// Run the pipeline with checkpoint-based resume.
@@ -115,19 +118,76 @@ impl PipelineExecutor {
         context: Context,
         logs_root: &Path,
     ) -> Result<PipelineResult> {
-        self.run_inner(graph, context, Some(logs_root)).await
+        let plan = self.compile(graph)?;
+        self.run_plan_with_checkpoint(&plan, context, logs_root)
+            .await
+    }
+
+    pub async fn run_plan(&self, plan: &ExecutionPlan) -> Result<PipelineResult> {
+        self.run_plan_with_context(plan, Context::new()).await
+    }
+
+    pub async fn run_plan_with_context(
+        &self,
+        plan: &ExecutionPlan,
+        context: Context,
+    ) -> Result<PipelineResult> {
+        self.run_inner(plan, context, None).await
+    }
+
+    pub async fn run_plan_with_checkpoint(
+        &self,
+        plan: &ExecutionPlan,
+        context: Context,
+        logs_root: &Path,
+    ) -> Result<PipelineResult> {
+        self.run_inner(plan, context, Some(logs_root)).await
+    }
+
+    fn compile(&self, graph: &PipelineGraph) -> Result<ExecutionPlan> {
+        ExecutionPlan::compile_with_registry(graph.clone(), &self.registry).map_err(|error| {
+            AttractorError::ValidationError(
+                error
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })
     }
 
     /// Core execution loop. When `logs_root` is `Some`, checkpoints are
     /// saved after each node and an existing checkpoint triggers resume.
     async fn run_inner(
         &self,
-        graph: &PipelineGraph,
+        plan: &ExecutionPlan,
         context: Context,
         logs_root: Option<&Path>,
     ) -> Result<PipelineResult> {
+        plan.ensure_registry_compatible(&self.registry)
+            .map_err(|error| {
+                AttractorError::ValidationError(
+                    error
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| diagnostic.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )
+            })?;
+
+        let graph = plan.graph();
         // Phase 2: Validate
-        validate_or_raise(graph)?;
+        let diagnostics = validate_plan(plan);
+        let errors = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == crate::validation::Severity::Error)
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return Err(AttractorError::ValidationError(errors.join("; ")));
+        }
 
         // Phase 3: Initialize (merge graph attrs into existing context)
         for (key, val) in &graph.attrs {
@@ -144,8 +204,8 @@ impl PipelineExecutor {
 
         // Phase 4: Execute — check for checkpoint to resume from
         let start = graph
-            .start_node()
-            .ok_or_else(|| AttractorError::ValidationError("No start node found".into()))?;
+            .node(plan.start_id())
+            .expect("compiled start node must exist in source graph");
         let mut current_node = start;
 
         // Safety limits from context (set by CLI flags)
@@ -208,7 +268,7 @@ impl PipelineExecutor {
             }
 
             // Terminal check (exit node)
-            if current_node.shape == "Msquare" {
+            if plan.is_exit(&current_node.id) {
                 // Check goal gates
                 let gate_result = enforce_goal_gates(graph, &node_outcomes)?;
                 if !gate_result.all_satisfied {
@@ -221,33 +281,41 @@ impl PipelineExecutor {
                 }
 
                 // Execute the exit handler
-                let handler_type = self.registry.resolve_type(current_node);
-                let handler = self.registry.get(&handler_type).ok_or_else(|| {
+                let resolved_node = plan
+                    .node(&current_node.id)
+                    .expect("executed node must be compiled");
+                let handler_type = resolved_node.handler.as_str();
+                let handler = self.registry.get(handler_type).ok_or_else(|| {
                     AttractorError::HandlerError {
-                        handler: handler_type.clone(),
+                        handler: handler_type.to_string(),
                         node: current_node.id.clone(),
                         message: format!("No handler registered for type '{}'", handler_type),
                     }
                 })?;
-                let outcome = handler.execute(current_node, &context, graph).await?;
+                let outcome = handler
+                    .execute_resolved(current_node, resolved_node, &context, graph)
+                    .await?;
                 completed_nodes.push(current_node.id.clone());
                 node_outcomes.insert(current_node.id.clone(), outcome);
                 break;
             }
 
             // Execute handler
-            let handler_type = self.registry.resolve_type(current_node);
+            let resolved_node = plan
+                .node(&current_node.id)
+                .expect("executed node must be compiled");
+            let handler_type = resolved_node.handler.as_str();
             let handler =
                 self.registry
-                    .get(&handler_type)
+                    .get(handler_type)
                     .ok_or_else(|| AttractorError::HandlerError {
-                        handler: handler_type.clone(),
+                        handler: handler_type.to_string(),
                         node: current_node.id.clone(),
                         message: format!("No handler registered for type '{}'", handler_type),
                     })?;
 
             // Quality loop control: track entries and enforce max_fix_iterations
-            let is_quality = handler_type == "quality";
+            let is_quality = resolved_node.handler == HandlerIdentity::Quality;
             if is_quality {
                 let upstream = prev_node_id.as_deref().unwrap_or("__start__");
                 let loop_key = format!("{}::{}", current_node.id, upstream);
@@ -306,7 +374,9 @@ impl PipelineExecutor {
                 }
             }
 
-            let outcome = handler.execute(current_node, &context, graph).await?;
+            let outcome = handler
+                .execute_resolved(current_node, resolved_node, &context, graph)
+                .await?;
 
             // Extract failure_footprint for the quality loop tracker
             if is_quality && outcome.status == StageStatus::Fail {
@@ -416,7 +486,7 @@ impl PipelineExecutor {
                     // No outgoing edge and not an exit node
                     if outcome.status == StageStatus::Fail {
                         return Err(AttractorError::HandlerError {
-                            handler: handler_type,
+                            handler: handler_type.to_string(),
                             node: current_node.id.clone(),
                             message: "Handler failed with no outgoing edge".into(),
                         });

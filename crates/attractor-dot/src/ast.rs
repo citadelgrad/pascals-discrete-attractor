@@ -16,7 +16,11 @@ pub struct DotGraph {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeDef {
     pub id: String,
+    /// Effective attributes after DOT defaults have been applied.
     pub attrs: HashMap<String, AttributeValue>,
+    /// Attributes written directly on this node in source.
+    #[serde(default)]
+    pub authored_attrs: HashMap<String, AttributeValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

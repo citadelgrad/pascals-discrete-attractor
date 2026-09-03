@@ -1,20 +1,22 @@
-//! Fill in a default `llm_provider` on runtime nodes that don't have one.
+//! Fill in a default `llm_provider` on provider-consuming nodes that don't have one.
 //!
-//! `pas scaffold` and `pas generate` produce DOT pipelines whose `box`/`diamond`
-//! runtime nodes had no explicit `llm_provider`. Such nodes silently defaulted to
-//! Claude deep inside the handler layer, with no warning to the pipeline author.
+//! `pas scaffold` and `pas generate` can produce DOT pipelines whose resolved handler consumes a
+//! provider but has no explicit `llm_provider`. Such nodes
+//! historically defaulted to Claude deep inside the handler layer, with no warning
+//! to the pipeline author.
 //! [`fill_missing_llm_providers`] makes that default explicit in the DOT source
 //! itself, at the point the pipeline is written to disk, so the file always says
 //! what it does.
 
 use attractor_dot::{AttributeValue, DotGraph};
 
+use crate::execution_plan::{ExecutionPlan, LlmProvider};
 use crate::graph::PipelineGraph;
-use crate::validation::is_provider_required_node;
 
-/// Insert `llm_provider="<default_provider>"` on every runtime node (`box`/`diamond`,
-/// not start, not terminal, not `type="quality"`) that has no effective `llm_provider`
-/// — resolved through graph/subgraph defaults, same as the pipeline engine sees it.
+/// Insert `llm_provider="<default_provider>"` on every node whose canonically
+/// resolved handler consumes a provider and has no effective `llm_provider`.
+/// Handler identity and existing providers are resolved through graph/subgraph
+/// defaults, styles, aliases, and transforms exactly as the pipeline engine sees them.
 ///
 /// Nodes that already have an explicit (or defaulted-through-`node [...]`) provider
 /// are left untouched, even if it's not `default_provider` (e.g. `"codex"`).
@@ -30,32 +32,37 @@ pub fn fill_missing_llm_providers(dot_graph: &mut DotGraph, default_provider: &s
         Err(_) => return Vec::new(),
     };
 
-    let mut defaulted = Vec::new();
-    for node in pipeline_graph.all_nodes() {
-        if !is_provider_required_node(&node.id, &node.shape, node.node_type.as_deref()) {
-            continue;
-        }
-        if node.llm_provider.is_some() {
-            continue;
-        }
+    let Some(provider) = LlmProvider::parse(default_provider) else {
+        return Vec::new();
+    };
+    let Ok(compilation) = ExecutionPlan::compile_for_generation(pipeline_graph, provider) else {
+        return Vec::new();
+    };
 
-        let node_def = dot_graph.nodes.get_mut(&node.id).or_else(|| {
-            dot_graph
-                .subgraphs
-                .iter_mut()
-                .find_map(|sg| sg.nodes.get_mut(&node.id))
-        });
+    let defaulted = compilation.defaulted_provider_nodes;
+    for node_id in &defaulted {
+        // PipelineGraph applies top-level definitions first and subgraph
+        // definitions afterward, so the last subgraph definition wins. Match
+        // that precedence when mutating the source AST; top-level edge
+        // references may have created an implicit node with the same ID.
+        let node_def = dot_graph
+            .subgraphs
+            .iter_mut()
+            .rev()
+            .find_map(|sg| sg.nodes.get_mut(node_id))
+            .or_else(|| dot_graph.nodes.get_mut(node_id));
 
         if let Some(node_def) = node_def {
-            node_def.attrs.insert(
-                "llm_provider".to_string(),
-                AttributeValue::String(default_provider.to_string()),
-            );
-            defaulted.push(node.id.clone());
+            let value = AttributeValue::String(provider.as_str().to_string());
+            node_def
+                .attrs
+                .insert("llm_provider".to_string(), value.clone());
+            node_def
+                .authored_attrs
+                .insert("llm_provider".to_string(), value);
         }
     }
 
-    defaulted.sort();
     defaulted
 }
 
@@ -97,7 +104,7 @@ mod tests {
             r#"digraph G {
                 start [shape="Mdiamond"]
                 done [shape="Msquare"]
-                pick [shape="diamond", node_type="conditional"]
+                pick [shape="diamond", node_type="conditional", prompt="choose"]
                 start -> pick -> done
             }"#,
             "claude",
@@ -139,9 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn adversarial_id_based_start_and_terminal_nodes_are_never_touched() {
-        // Nodes identified as start/terminal purely by id (not shape) must also
-        // be exempt, even though their shape is "box" and would otherwise match.
+    fn conflicting_magic_ids_are_not_partially_normalized() {
         let (graph, defaulted) = fill(
             r#"digraph G {
                 start [shape="box"]
@@ -159,11 +164,12 @@ mod tests {
         assert!(!defaulted.contains(&"exit".to_string()));
         assert!(!defaulted.contains(&"end".to_string()));
         assert!(!defaulted.contains(&"done".to_string()));
-        assert!(defaulted.contains(&"middle".to_string()));
+        assert!(defaulted.is_empty());
         assert_eq!(provider_of(&graph, "start"), None);
         assert_eq!(provider_of(&graph, "exit"), None);
         assert_eq!(provider_of(&graph, "end"), None);
         assert_eq!(provider_of(&graph, "done"), None);
+        assert_eq!(provider_of(&graph, "middle"), None);
     }
 
     #[test]
@@ -208,13 +214,55 @@ mod tests {
     }
 
     #[test]
+    fn sequential_defaults_keep_compiled_semantics_across_normalization() {
+        let source = r#"digraph G {
+            start [shape="Mdiamond", type="start"]
+            node [llm_provider="claude", shape="box", type="codergen"]
+            first [prompt="first"]
+            node [llm_provider="codex", shape="diamond", type="conditional"]
+            second [prompt="second"]
+            done [shape="Msquare", type="exit"]
+            start -> first -> second -> done
+        }"#;
+        let mut graph = attractor_dot::parse(source).unwrap();
+        let before =
+            ExecutionPlan::compile(PipelineGraph::from_dot(graph.clone()).unwrap()).unwrap();
+        let before_semantics = ["first", "second"].map(|id| {
+            let node = before.node(id).unwrap();
+            (node.kind.clone(), node.handler.clone(), node.provider)
+        });
+
+        let defaulted = fill_missing_llm_providers(&mut graph, "gemini");
+        assert!(defaulted.is_empty());
+        let normalized = attractor_dot::to_dot_string(&graph);
+        let after = ExecutionPlan::compile(
+            PipelineGraph::from_dot(attractor_dot::parse(&normalized).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let after_semantics = ["first", "second"].map(|id| {
+            let node = after.node(id).unwrap();
+            (node.kind.clone(), node.handler.clone(), node.provider)
+        });
+
+        assert_eq!(before_semantics, after_semantics, "{normalized}");
+        assert_eq!(
+            after.node("first").unwrap().provider,
+            Some(LlmProvider::Claude)
+        );
+        assert_eq!(
+            after.node("second").unwrap().provider,
+            Some(LlmProvider::Codex)
+        );
+    }
+
+    #[test]
     fn multiple_missing_nodes_all_defaulted() {
         let (graph, defaulted) = fill(
             r#"digraph G {
                 start [shape="Mdiamond"]
                 done [shape="Msquare"]
                 a [shape="box"]
-                b [shape="diamond", node_type="conditional"]
+                b [shape="diamond", node_type="conditional", prompt="choose"]
                 c [shape="box", llm_provider="codex"]
                 start -> a -> b -> c -> done
             }"#,
@@ -224,5 +272,30 @@ mod tests {
         assert_eq!(provider_of(&graph, "a"), Some("claude"));
         assert_eq!(provider_of(&graph, "b"), Some("claude"));
         assert_eq!(provider_of(&graph, "c"), Some("codex"));
+    }
+
+    #[test]
+    fn subgraph_node_referenced_by_top_level_edge_remains_valid_after_defaulting() {
+        let (graph, defaulted) = fill(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                subgraph cluster_work {
+                    work [shape="box", prompt="work"]
+                }
+                done [shape="Msquare"]
+                start -> work -> done
+            }"#,
+            "claude",
+        );
+
+        assert_eq!(defaulted, vec!["work".to_string()]);
+        let serialized = attractor_dot::to_dot_string(&graph);
+        let reparsed = attractor_dot::parse(&serialized).unwrap();
+        let pipeline = PipelineGraph::from_dot(reparsed).unwrap();
+        let plan = ExecutionPlan::compile(pipeline).unwrap();
+        assert_eq!(
+            plan.node("work").unwrap().provider,
+            Some(LlmProvider::Claude)
+        );
     }
 }

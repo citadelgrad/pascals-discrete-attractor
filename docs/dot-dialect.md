@@ -49,6 +49,13 @@ The parser recognizes five value types, tried in this order:
 | **Float** | Digits `.` digits | `1.5`, `-0.75` |
 | **Integer** | Optional sign + digits | `42`, `-3`, `+10` |
 
+Semantic discriminator attributes must be strings even though the dialect also
+supports typed scalar values. Quote values for `shape`, `type`, `node_type`,
+`handler`, `prompt`, `llm_provider`, `class`, `classes`, `stylesheet`, and
+`model_stylesheet`. A non-string value such as `shape=123` or `prompt=true` is
+an `InvalidAttributeType` compilation error; PAS does not discard it and infer
+an executable default.
+
 ### Strings
 
 - Delimited by double quotes: `"content"`
@@ -173,9 +180,11 @@ The grammar above defines what **parses**. This section defines what the attract
 |-------|------|---------|---------------------|
 | `Mdiamond` | **Start** -- entry point, exactly one | StartHandler | none |
 | `Msquare` | **Exit** -- pipeline completion, exactly one | ExitHandler | none |
-| `box` | **Task** -- runs Claude Code with the prompt | CodergenHandler | `prompt` |
-| `diamond` | **Conditional** -- Claude picks the outgoing edge | ConditionalHandler | `prompt`, `node_type="conditional"` |
-| `hexagon` | **Human gate** -- pauses for human approval | WaitHumanHandler | `node_type="wait.human"` |
+| `box` | **Task** -- runs the selected provider CLI; `prompt` is optional | CodergenHandler | `llm_provider` |
+| `diamond` with a prompt | **LLM conditional** -- provider output picks the outgoing edge | CodergenHandler | `prompt`, `llm_provider` |
+| `diamond` without a prompt or explicit `type="codergen"` | **Conditional** -- pass-through routing | ConditionalHandler | none |
+| `diamond` with explicit `type="codergen"` | **LLM conditional** -- provider output picks the outgoing edge, even when `prompt` is absent | CodergenHandler | `llm_provider`; `prompt` is optional |
+| `hexagon` | **Human gate** -- pauses for human approval | WaitHumanHandler | none |
 | `parallelogram` | **Tool** -- runs a shell command | ToolHandler | `tool_command` |
 
 ## Node Attributes
@@ -183,11 +192,11 @@ The grammar above defines what **parses**. This section defines what the attract
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `label` | string | node ID | Display name in logs |
-| `prompt` | string | -- | Task sent to Claude Code. Required for `box` and `diamond`. |
+| `prompt` | string | -- | Task sent to the selected provider CLI. Its presence makes a conditional LLM-backed; explicit `type="codergen"` does so even without a prompt. |
 | `shape` | string | -- | Node shape (see table above) |
-| `node_type` | string | auto | Handler override: `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"manager"`, `"wait.human"` |
+| `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"manager"`, `"quality"`, `"wait.human"` |
 | `llm_model` | string | graph `model` | Model override: `"haiku"`, `"sonnet"`, `"opus"`, or full model ID |
-| `llm_provider` | string | `"claude"` | CLI provider: `"claude"`, `"codex"`, `"gemini"` |
+| `llm_provider` | string | -- | Required whenever the resolved handler consumes a provider. Values: `"claude"`, `"codex"`, `"gemini"`; aliases: `anthropic`, `openai`, `google` (case-insensitive). |
 | `allowed_tools` | string | all | Comma-separated tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"` |
 | `max_budget_usd` | string | unlimited | Spend cap for this node's session |
 | `goal_gate` | boolean | false | Must succeed for pipeline completion |
@@ -197,9 +206,35 @@ The grammar above defines what **parses**. This section defines what the attract
 | `timeout` | duration | -- | Max execution time: `120s`, `600s`, `15m`, `1h` |
 | `tool_command` | string | -- | Shell command for `parallelogram` nodes |
 | `fidelity` | string | -- | Context mode: `"full"`, `"truncate"`, `"compact"`, `"summary"` |
-| `classes` | string | -- | Space-separated class list for stylesheet matching |
+| `class` | string | -- | Space-separated class list for stylesheet matching |
 | `auto_status` | boolean | true | Auto-set status from outcome |
 | `allow_partial` | boolean | false | Allow partial success |
+
+Compatibility aliases are accepted at the semantic compilation boundary: `node_type` or
+`handler` for `type`, `stylesheet` for `model_stylesheet`, and `classes` for `class`.
+If canonical and compatibility spellings are both present with different values,
+compilation fails with a typed `ConflictingAttributeAliases` diagnostic.
+
+## Canonical semantic compilation
+
+After parsing and DOT-default resolution, PAS normalizes aliases, applies stylesheets,
+expands prompt variables, and compiles one immutable `ExecutionPlan`. Validation,
+preflight, handler dispatch, provider selection, start/exit recognition, and execution
+all consume that plan. They do not independently reinterpret shape or provider strings.
+
+Runtime compilation is fail-closed. Unknown shapes without an explicit registered
+handler, unknown handlers/providers, conflicting role signals, missing providers on
+`codergen` nodes, and ambiguous start/exit cardinality prevent execution before logs,
+checkpoints, handlers, or provider CLIs start. `pas generate` and `pas scaffold` may
+insert an explicit Claude provider into generated source, then recompile it strictly.
+A registered custom handler may use an omitted or otherwise unknown custom shape; it
+cannot override a known built-in role shape without producing
+`ConflictingRoleSignals`.
+
+Exactly one start and one exit are required. `shape="Mdiamond"` and
+`shape="Msquare"` are canonical. For compatibility, a node whose shape and type are
+both omitted may use case-insensitive ID `start` for start or `exit`, `end`, or `done`
+for exit. Combining a magic ID with incompatible shape/type signals is an error.
 
 ## Edge Attributes
 
@@ -226,6 +261,7 @@ The grammar above defines what **parses**. This section defines what the attract
 ```dot
 work_step [
     shape="box"
+    llm_provider="claude"
     label="Implement Feature"
     timeout=900s
     prompt="Implement the feature described in .pas/current_task.md"
@@ -233,6 +269,7 @@ work_step [
 
 verify_step [
     shape="diamond"
+    llm_provider="claude"
     label="Verify"
     node_type="conditional"
     timeout=600s
@@ -241,6 +278,7 @@ verify_step [
 
 fixup [
     shape="box"
+    llm_provider="claude"
     label="Fix Issues"
     timeout=600s
     prompt="Fix the problems found during verification."
@@ -281,6 +319,7 @@ design_review [
 ```dot
 commit_changes [
     shape="box"
+    llm_provider="claude"
     label="Commit Changes"
     timeout=120s
     allowed_tools="Bash(git:*)"
@@ -293,17 +332,22 @@ commit_changes [
 
 ## Validation Rules
 
-The pipeline engine validates graphs against these rules (run `pas validate <file>`):
+`pas validate <file>` first compiles canonical semantics, then applies nine
+structural checks. The enforced contract is:
 
-1. Exactly one `Mdiamond` (start) node
-2. Exactly one `Msquare` (exit) node
-3. Start node has no incoming edges
-4. Exit node has no outgoing edges
-5. All nodes are reachable from start
-6. Exit is reachable from all nodes
-7. `box` and `diamond` nodes have a `prompt` attribute
-8. `parallelogram` nodes have a `tool_command` attribute
-9. `diamond` nodes have at least two outgoing edges
-10. No orphan nodes (every non-start/exit node has at least one incoming edge)
-11. Back-edges in loops should have `loop_restart=true`
-12. `timeout` is set on every work node
+1. Semantic compilation requires exactly one canonical start and one canonical exit.
+2. Shape, type/handler aliases, and magic-ID role signals must be compatible.
+3. Semantic discriminator attributes have their documented string type; malformed typed values fail closed.
+4. Handlers and providers must be known; every provider-consuming handler requires an explicit `llm_provider`.
+5. The start has no incoming edge, and the exit has no outgoing edge.
+6. Every node is reachable from the start, and every edge target exists.
+7. Edge conditions parse correctly.
+8. Fidelity values use a supported prefix (`full`, `truncate`, `compact`, or `summary`).
+8. Retry targets name existing nodes, and goal gates name a retry target.
+9. A `codergen` node should have a prompt or a descriptive label.
+
+The first six items are errors when violated. Fidelity, retry-target, goal-gate,
+and prompt findings are warnings. Missing timeouts and provider cost limitations
+are runtime preflight warnings, not static validation errors. The validator does
+not currently enforce tool-command cardinality, conditional fan-out cardinality,
+exit reachability from every node, or `loop_restart` guidance.

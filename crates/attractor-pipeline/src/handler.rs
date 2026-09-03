@@ -6,16 +6,57 @@ use async_trait::async_trait;
 
 use attractor_types::{Context, Outcome, Result};
 
+use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
 
 // ---------------------------------------------------------------------------
-// NodeHandler trait
+// Handler traits
 // ---------------------------------------------------------------------------
+
+/// Optional typed execution contract for non-provider handlers that inspect
+/// canonical node semantics.
+#[async_trait]
+pub trait ResolvedNodeHandler: Send + Sync {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome>;
+}
+
+/// Typed execution contract for handlers that consume compiled provider semantics.
+///
+/// A provider-consuming handler is identified by returning this interface from
+/// [`NodeHandler::provider_handler`]. This couples the capability declaration to
+/// an execution method that receives the canonical [`ResolvedNode`], preventing
+/// provider-backed handlers from falling through to raw stringly dispatch.
+#[async_trait]
+pub trait ProviderNodeHandler: Send + Sync {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome>;
+}
 
 #[async_trait]
 pub trait NodeHandler: Send + Sync {
     /// The handler type identifier (e.g. "start", "exit", "codergen").
     fn handler_type(&self) -> &str;
+
+    /// Return the typed executor when this handler consumes an LLM provider.
+    fn provider_handler(&self) -> Option<&dyn ProviderNodeHandler> {
+        None
+    }
+
+    /// Return an optional typed executor for a non-provider handler.
+    fn resolved_handler(&self) -> Option<&dyn ResolvedNodeHandler> {
+        None
+    }
 
     /// Execute this handler for a given node.
     async fn execute(
@@ -49,6 +90,31 @@ impl DynHandler {
     ) -> Result<Outcome> {
         self.0.execute(node, context, graph).await
     }
+
+    /// Execute through the canonical resolved-semantic dispatch path.
+    pub async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        match self.0.provider_handler() {
+            Some(handler) => {
+                handler
+                    .execute_resolved(node, resolved, context, graph)
+                    .await
+            }
+            None => match self.0.resolved_handler() {
+                Some(handler) => {
+                    handler
+                        .execute_resolved(node, resolved, context, graph)
+                        .await
+                }
+                None => self.0.execute(node, context, graph).await,
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -57,25 +123,12 @@ impl DynHandler {
 
 pub struct HandlerRegistry {
     handlers: HashMap<String, DynHandler>,
-    shape_to_type: HashMap<String, String>,
 }
 
 impl HandlerRegistry {
     pub fn new() -> Self {
-        let mut shape_to_type = HashMap::new();
-        shape_to_type.insert("Mdiamond".into(), "start".into());
-        shape_to_type.insert("Msquare".into(), "exit".into());
-        shape_to_type.insert("box".into(), "codergen".into());
-        shape_to_type.insert("hexagon".into(), "wait.human".into());
-        shape_to_type.insert("diamond".into(), "conditional".into());
-        shape_to_type.insert("component".into(), "parallel".into());
-        shape_to_type.insert("tripleoctagon".into(), "parallel.fan_in".into());
-        shape_to_type.insert("parallelogram".into(), "tool".into());
-        shape_to_type.insert("house".into(), "stack.manager_loop".into());
-
         Self {
             handlers: HashMap::new(),
-            shape_to_type,
         }
     }
 
@@ -84,36 +137,49 @@ impl HandlerRegistry {
         self.handlers.insert(t, DynHandler::new(handler));
     }
 
-    /// Resolve a node to its handler type using 3-step priority:
-    /// 1. Explicit `type` attribute on the node
-    /// 2. Shape-based mapping
-    /// 3. Default: `"codergen"`
-    ///
-    /// Special case: conditional nodes with a prompt are routed to `"codergen"`
-    /// so the prompt actually gets executed via Claude. The `ConditionalHandler`
-    /// is a pass-through for pure routing nodes with no prompt.
-    pub fn resolve_type(&self, node: &PipelineNode) -> String {
-        if let Some(ref t) = node.node_type {
-            if t == "conditional" && node.prompt.is_some() {
-                return "codergen".to_string();
-            }
-            return t.clone();
-        }
-        if let Some(t) = self.shape_to_type.get(&node.shape) {
-            if t == "conditional" && node.prompt.is_some() {
-                return "codergen".to_string();
-            }
-            return t.clone();
-        }
-        "codergen".to_string()
-    }
-
     pub fn get(&self, handler_type: &str) -> Option<&DynHandler> {
         self.handlers.get(handler_type)
     }
 
     pub fn has(&self, handler_type: &str) -> bool {
         self.handlers.contains_key(handler_type)
+    }
+
+    pub fn handler_catalog(&self) -> std::collections::HashSet<String> {
+        self.handlers.keys().cloned().collect()
+    }
+
+    pub(crate) fn handler_capabilities(&self) -> HashMap<String, bool> {
+        self.handlers
+            .iter()
+            .map(|(name, handler)| (name.clone(), handler.0.provider_handler().is_some()))
+            .collect()
+    }
+
+    /// Legacy raw-node classification retained for consumers that have not
+    /// migrated to `ExecutionPlan` yet. Non-web execution compiles semantics
+    /// once and never calls this compatibility method.
+    pub fn resolve_type(&self, node: &PipelineNode) -> String {
+        if let Some(node_type) = &node.node_type {
+            if node_type == "conditional" && node.prompt.is_some() {
+                return "codergen".to_string();
+            }
+            return node_type.clone();
+        }
+
+        match node.shape.as_str() {
+            "Mdiamond" => "start",
+            "Msquare" => "exit",
+            "diamond" if node.prompt.is_some() => "codergen",
+            "diamond" => "conditional",
+            "hexagon" => "wait.human",
+            "parallelogram" => "tool",
+            "component" => "parallel",
+            "tripleoctagon" => "parallel.fan_in",
+            "house" => "stack.manager_loop",
+            _ => "codergen",
+        }
+        .to_string()
     }
 }
 
@@ -223,6 +289,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    #[cfg(unix)]
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::process::Command;
+
     fn make_node(id: &str, shape: &str, node_type: Option<&str>) -> PipelineNode {
         PipelineNode {
             id: id.to_string(),
@@ -248,53 +321,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_type_explicit_attribute() {
-        let reg = HandlerRegistry::new();
-        let node = make_node("n", "box", Some("custom_handler"));
-        assert_eq!(reg.resolve_type(&node), "custom_handler");
-    }
-
-    #[test]
-    fn resolve_type_shape_mapping() {
-        let reg = HandlerRegistry::new();
-        let node = make_node("begin", "Mdiamond", None);
-        assert_eq!(reg.resolve_type(&node), "start");
-    }
-
-    #[test]
-    fn resolve_type_defaults_to_codergen() {
-        let reg = HandlerRegistry::new();
-        let node = make_node("x", "unknown_shape", None);
-        assert_eq!(reg.resolve_type(&node), "codergen");
-    }
-
-    #[test]
-    fn resolve_type_conditional_without_prompt_stays_conditional() {
-        let reg = HandlerRegistry::new();
-        // Diamond with no prompt → conditional (pass-through)
-        let node = make_node("check", "diamond", None);
-        assert_eq!(reg.resolve_type(&node), "conditional");
-    }
-
-    #[test]
-    fn resolve_type_conditional_with_prompt_becomes_codergen() {
-        let reg = HandlerRegistry::new();
-        // Diamond with a prompt → codergen (needs LLM to run the prompt)
-        let mut node = make_node("check", "diamond", None);
-        node.prompt = Some("Check if tasks remain".to_string());
-        assert_eq!(reg.resolve_type(&node), "codergen");
-    }
-
-    #[test]
-    fn resolve_type_explicit_conditional_with_prompt_becomes_codergen() {
-        let reg = HandlerRegistry::new();
-        // Explicit node_type="conditional" with a prompt → codergen
-        let mut node = make_node("check", "diamond", Some("conditional"));
-        node.prompt = Some("Check if tasks remain".to_string());
-        assert_eq!(reg.resolve_type(&node), "codergen");
-    }
-
-    #[test]
     fn register_and_get_handler() {
         let mut reg = HandlerRegistry::new();
         reg.register(StartHandler);
@@ -302,6 +328,127 @@ mod tests {
         assert!(reg.get("start").is_some());
         assert!(!reg.has("nonexistent"));
         assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn legacy_dynamic_api_remains_available_for_unchanged_consumers() {
+        let mut reg = HandlerRegistry::new();
+        reg.register(StartHandler);
+        let node = make_node("s", "Mdiamond", None);
+        let graph = make_minimal_graph();
+        let context = Context::default();
+
+        assert_eq!(reg.resolve_type(&node), "start");
+        let outcome = reg
+            .get("start")
+            .unwrap()
+            .execute(&node, &context, &graph)
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, attractor_types::StageStatus::Success);
+    }
+
+    #[tokio::test]
+    async fn legacy_codergen_call_preserves_claude_fallback_for_unknown_provider() {
+        let graph = PipelineGraph::from_dot(
+            attractor_dot::parse(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    work [shape="box", prompt="work", llm_provider="legacy-provider"]
+                    done [shape="Msquare"]
+                    start -> work -> done
+                }"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let context = Context::default();
+        context.set("dry_run", serde_json::Value::Bool(true)).await;
+        let registry = default_registry();
+        let node = graph.node("work").unwrap();
+
+        let outcome = registry
+            .get(&registry.resolve_type(node))
+            .unwrap()
+            .execute(node, &context, &graph)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome.context_updates["work.provider"],
+            serde_json::Value::String("Claude Code".into())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_prompted_conditional_executes_codergen_and_extracts_label() {
+        let shims = tempfile::tempdir().unwrap();
+        let claude = shims.path().join("claude");
+        fs::write(
+            &claude,
+            "#!/bin/sh\nprintf '%s\\n' '{\"result\":\"APPROVE\",\"is_error\":false,\"subtype\":\"\",\"total_cost_usd\":0.0,\"num_turns\":1}'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&claude).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&claude, permissions).unwrap();
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "handler::tests::legacy_prompted_conditional_child",
+                "--nocapture",
+            ])
+            .env("PATH", shims.path())
+            .env("PAS_LEGACY_CONDITIONAL_CHILD", "1")
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "child stdout={}\nchild stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn legacy_prompted_conditional_child() {
+        if std::env::var_os("PAS_LEGACY_CONDITIONAL_CHILD").is_none() {
+            return;
+        }
+
+        let graph = PipelineGraph::from_dot(
+            attractor_dot::parse(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    choice [type="conditional", prompt="choose", llm_provider="claude"]
+                    approved [shape="diamond"]
+                    rejected [shape="diamond"]
+                    done [shape="Msquare"]
+                    start -> choice
+                    choice -> rejected [label="REJECT"]
+                    choice -> approved [label="APPROVE"]
+                    approved -> done
+                    rejected -> done
+                }"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let registry = default_registry();
+        let node = graph.node("choice").unwrap();
+
+        assert_eq!(registry.resolve_type(node), "codergen");
+        let outcome = registry
+            .get(&registry.resolve_type(node))
+            .unwrap()
+            .execute(node, &Context::default(), &graph)
+            .await
+            .unwrap();
+        assert_eq!(outcome.preferred_label.as_deref(), Some("APPROVE"));
     }
 
     #[tokio::test]

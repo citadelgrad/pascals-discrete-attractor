@@ -315,11 +315,19 @@ fn merge_statements(
                 edge_defaults.extend(attrs);
             }
             Statement::Node(id, mut attrs) => {
+                let authored_attrs = attrs.clone();
                 // Apply node defaults for keys not explicitly set
                 for (k, v) in &node_defaults {
                     attrs.entry(k.clone()).or_insert_with(|| v.clone());
                 }
-                nodes.insert(id.clone(), NodeDef { id, attrs });
+                nodes.insert(
+                    id.clone(),
+                    NodeDef {
+                        id,
+                        attrs,
+                        authored_attrs,
+                    },
+                );
             }
             Statement::Edge(chain, attrs) => {
                 // Expand chained edges: A -> B -> C => (A,B), (B,C)
@@ -341,6 +349,7 @@ fn merge_statements(
                             NodeDef {
                                 id: node_id.clone(),
                                 attrs: na,
+                                authored_attrs: HashMap::new(),
                             }
                         });
                     }

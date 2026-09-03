@@ -116,7 +116,9 @@ fn build_prompt_requires_llm_provider() {
     // explicitly, and the example node format must demonstrate it.
     let result = build_prompt("spec", None);
     assert!(result.contains("llm_provider"));
-    assert!(result.contains("REQUIRED on every work/decision node"));
+    assert!(result.contains("REQUIRED on every provider-backed node"));
+    assert!(result.contains("An unprompted `diamond` is pass-through"));
+    assert!(result.contains("`type=\"codergen\"` explicitly"));
     assert!(result.contains("llm_provider=\"claude\""));
     // The example node format block should itself set llm_provider.
     let example_start = result.find("Example node format:").unwrap();

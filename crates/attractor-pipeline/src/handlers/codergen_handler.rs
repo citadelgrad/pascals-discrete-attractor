@@ -9,27 +9,26 @@ use attractor_quality::{
 };
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
+use crate::execution_plan::{HandlerIdentity, LlmProvider, ResolvedNode, ResolvedNodeKind};
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::handler::NodeHandler;
+use crate::handler::{NodeHandler, ProviderNodeHandler};
 
 #[path = "codergen_provider.rs"]
 mod provider;
-use provider::{
-    build_cli_command, parse_cli_output, ClaudeCliConfig, CliRunConfig, LlmCliProvider,
-};
+use provider::{build_cli_command, parse_cli_output, ClaudeCliConfig, CliRunConfig};
 #[cfg(test)]
-use provider::{parse_claude_output, parse_codex_output, parse_gemini_output};
+use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, LlmCliProvider};
 
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)
 //
 // Shells out to a CLI tool (Claude Code, Codex CLI, or Gemini CLI) for each
-// node, passing the node's prompt. The provider is selected via the
-// `llm_provider` node attribute (default: claude).
+// node, passing the node's prompt. The provider is supplied by the canonical
+// ExecutionPlan after strict validation.
 //
 // Supported node attributes:
-//   - prompt (required): The task prompt sent to the CLI
-//   - llm_provider: "claude", "codex", or "gemini" (default: "claude")
+//   - prompt: Optional task prompt sent to the CLI
+//   - llm_provider: "claude", "codex", or "gemini" (required)
 //   - llm_model: Override the model (e.g. "sonnet", "o3", "gemini-2.5-pro")
 //   - allowed_tools: Comma-separated tool list (Claude only)
 //   - max_budget_usd: Spending cap for this node (Claude only)
@@ -46,15 +45,56 @@ impl NodeHandler for CodergenHandler {
         "codergen"
     }
 
+    fn provider_handler(&self) -> Option<&dyn ProviderNodeHandler> {
+        Some(self)
+    }
+
     async fn execute(
         &self,
         node: &PipelineNode,
         context: &Context,
         graph: &PipelineGraph,
     ) -> Result<Outcome> {
+        // Compatibility path for consumers that still dispatch raw nodes (the
+        // web executor). Preserve their historical fallback behavior until
+        // they are explicitly migrated to ExecutionPlan.
+        let provider = node
+            .llm_provider
+            .as_deref()
+            .and_then(LlmProvider::parse)
+            .unwrap_or(LlmProvider::Claude);
+        let resolved = ResolvedNode {
+            node_id: node.id.clone(),
+            kind: if node.shape == "diamond" || node.node_type.as_deref() == Some("conditional") {
+                ResolvedNodeKind::Conditional { llm_backed: true }
+            } else {
+                ResolvedNodeKind::Task
+            },
+            handler: HandlerIdentity::Codergen,
+            provider: Some(provider),
+        };
+        ProviderNodeHandler::execute_resolved(self, node, &resolved, context, graph).await
+    }
+}
+
+#[async_trait]
+impl ProviderNodeHandler for CodergenHandler {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
         let prompt = node.prompt.as_deref().unwrap_or("No prompt specified");
         let label = node.label.clone();
-        let provider = LlmCliProvider::from_node(node);
+        let provider = resolved
+            .provider
+            .ok_or_else(|| AttractorError::HandlerError {
+                handler: "codergen".into(),
+                node: node.id.clone(),
+                message: "compiled codergen node has no provider".into(),
+            })?;
 
         tracing::info!(
             node = %node.id,
@@ -134,7 +174,10 @@ impl NodeHandler for CodergenHandler {
         full_prompt.push_str(&format!("Task ({}): {}", label, prompt));
 
         // If this is a conditional node, instruct the LLM to output a label
-        if node.shape == "diamond" || node.node_type.as_deref() == Some("conditional") {
+        if matches!(
+            resolved.kind,
+            ResolvedNodeKind::Conditional { llm_backed: true }
+        ) {
             let edges = graph.outgoing_edges(&node.id);
             let labels: Vec<_> = edges.iter().filter_map(|e| e.label.as_deref()).collect();
             if !labels.is_empty() {
@@ -258,14 +301,16 @@ impl NodeHandler for CodergenHandler {
         };
 
         // Extract preferred_label from the response for conditional routing
-        let preferred_label =
-            if node.shape == "diamond" || node.node_type.as_deref() == Some("conditional") {
-                let edges = graph.outgoing_edges(&node.id);
-                let labels: Vec<String> = edges.iter().filter_map(|e| e.label.clone()).collect();
-                extract_label(&cli_result.text, &labels)
-            } else {
-                None
-            };
+        let preferred_label = if matches!(
+            resolved.kind,
+            ResolvedNodeKind::Conditional { llm_backed: true }
+        ) {
+            let edges = graph.outgoing_edges(&node.id);
+            let labels: Vec<String> = edges.iter().filter_map(|e| e.label.clone()).collect();
+            extract_label(&cli_result.text, &labels)
+        } else {
+            None
+        };
 
         // Build context updates
         let mut updates = HashMap::new();

@@ -1,13 +1,14 @@
 //! Pipeline validation: lint rules and diagnostics.
 //!
-//! Provides 13 built-in rules that check structural and semantic correctness of
-//! a [`PipelineGraph`].  Call [`validate`] for advisory diagnostics or
+//! Performs canonical semantic compilation followed by nine structural checks
+//! for a [`PipelineGraph`]. Call [`validate`] for advisory diagnostics or
 //! [`validate_or_raise`] to fail on the first `Error`-severity issue.
 
 use std::collections::{HashSet, VecDeque};
 
 use crate::graph::PipelineGraph;
 use crate::parse_condition;
+use crate::{ExecutionPlan, LlmProvider, SemanticDiagnostic, SemanticDiagnosticKind};
 
 // ---------------------------------------------------------------------------
 // Diagnostic types
@@ -39,18 +40,6 @@ pub trait LintRule: Send + Sync {
     fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic>;
 }
 
-// ---------------------------------------------------------------------------
-// Helper predicates
-// ---------------------------------------------------------------------------
-
-pub(crate) fn is_start_node(id: &str, shape: &str) -> bool {
-    shape == "Mdiamond" || id == "start" || id == "Start"
-}
-
-pub(crate) fn is_terminal_node(id: &str, shape: &str) -> bool {
-    shape == "Msquare" || id == "exit" || id == "end" || id == "done"
-}
-
 const VALID_FIDELITY_PREFIXES: &[&str] = &["full", "truncate", "compact", "summary"];
 
 fn is_valid_fidelity(val: &str) -> bool {
@@ -69,133 +58,9 @@ fn is_valid_fidelity(val: &str) -> bool {
     }
 }
 
-fn is_llm_node(shape: &str) -> bool {
-    matches!(shape, "box" | "cds" | "component" | "note")
-}
-
-/// A "runtime node requiring an explicit LLM provider": a task (`box`) or
-/// conditional (`diamond`) node that is not the start node, not a terminal
-/// node, and not a `type="quality"` node (quality nodes run a fixed stage
-/// pipeline rather than calling an LLM provider directly).
-///
-/// Shared by [`ProviderRequiredRule`] and
-/// [`crate::provider_defaults::fill_missing_llm_providers`] so both stay in sync.
-pub(crate) fn is_provider_required_node(id: &str, shape: &str, node_type: Option<&str>) -> bool {
-    (shape == "box" || shape == "diamond")
-        && !is_start_node(id, shape)
-        && !is_terminal_node(id, shape)
-        && node_type != Some("quality")
-}
-
 // ---------------------------------------------------------------------------
 // Rules
 // ---------------------------------------------------------------------------
-
-struct StartNodeRule;
-impl LintRule for StartNodeRule {
-    fn name(&self) -> &str {
-        "start_node"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        let starts: Vec<_> = graph
-            .all_nodes()
-            .filter(|n| is_start_node(&n.id, &n.shape))
-            .collect();
-        if starts.is_empty() {
-            vec![Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: "Pipeline has no start node (shape=Mdiamond or id start/Start)".into(),
-                node_id: None,
-                edge: None,
-                fix: Some("Add a node with shape=\"Mdiamond\" or id=\"start\"".into()),
-            }]
-        } else if starts.len() > 1 {
-            vec![Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: format!(
-                    "Pipeline has {} start nodes: {}; expected exactly one",
-                    starts.len(),
-                    starts
-                        .iter()
-                        .map(|n| n.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                node_id: None,
-                edge: None,
-                fix: Some("Remove extra start nodes so only one remains".into()),
-            }]
-        } else {
-            vec![]
-        }
-    }
-}
-
-struct TerminalNodeRule;
-impl LintRule for TerminalNodeRule {
-    fn name(&self) -> &str {
-        "terminal_node"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        let has_terminal = graph.all_nodes().any(|n| is_terminal_node(&n.id, &n.shape));
-        if !has_terminal {
-            vec![Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: "Pipeline has no terminal node (shape=Msquare or id exit/end/done)".into(),
-                node_id: None,
-                edge: None,
-                fix: Some("Add a node with shape=\"Msquare\" or id=\"done\"".into()),
-            }]
-        } else {
-            vec![]
-        }
-    }
-}
-
-struct ReachabilityRule;
-impl LintRule for ReachabilityRule {
-    fn name(&self) -> &str {
-        "reachability"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        let start = graph.start_node();
-        let start_id = match start {
-            Some(n) => n.id.clone(),
-            None => return vec![], // StartNodeRule will catch this
-        };
-
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        visited.insert(start_id.clone());
-        queue.push_back(start_id);
-
-        while let Some(current) = queue.pop_front() {
-            for edge in graph.outgoing_edges(&current) {
-                if visited.insert(edge.to.clone()) {
-                    queue.push_back(edge.to.clone());
-                }
-            }
-        }
-
-        let all_ids: HashSet<_> = graph.all_nodes().map(|n| n.id.clone()).collect();
-        let unreachable: Vec<_> = all_ids.difference(&visited).collect();
-
-        unreachable
-            .into_iter()
-            .map(|id| Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: format!("Node '{id}' is not reachable from the start node"),
-                node_id: Some(id.clone()),
-                edge: None,
-                fix: Some(format!("Add an edge leading to '{id}' or remove it")),
-            })
-            .collect()
-    }
-}
 
 struct EdgeTargetExistsRule;
 impl LintRule for EdgeTargetExistsRule {
@@ -217,54 +82,6 @@ impl LintRule for EdgeTargetExistsRule {
                 node_id: None,
                 edge: Some((e.from.clone(), e.to.clone())),
                 fix: Some(format!("Add node '{}' or fix the edge target", e.to)),
-            })
-            .collect()
-    }
-}
-
-struct StartNoIncomingRule;
-impl LintRule for StartNoIncomingRule {
-    fn name(&self) -> &str {
-        "start_no_incoming"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        let start = match graph.start_node() {
-            Some(n) => n.id.clone(),
-            None => return vec![],
-        };
-        let has_incoming = graph.all_edges().iter().any(|e| e.to == start);
-        if has_incoming {
-            vec![Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: format!("Start node '{start}' has incoming edges"),
-                node_id: Some(start),
-                edge: None,
-                fix: Some("Remove edges pointing to the start node".into()),
-            }]
-        } else {
-            vec![]
-        }
-    }
-}
-
-struct ExitNoOutgoingRule;
-impl LintRule for ExitNoOutgoingRule {
-    fn name(&self) -> &str {
-        "exit_no_outgoing"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        graph
-            .all_nodes()
-            .filter(|n| is_terminal_node(&n.id, &n.shape))
-            .filter(|n| !graph.outgoing_edges(&n.id).is_empty())
-            .map(|n| Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: format!("Terminal node '{}' has outgoing edges", n.id),
-                node_id: Some(n.id.clone()),
-                edge: None,
-                fix: Some(format!("Remove outgoing edges from '{}'", n.id)),
             })
             .collect()
     }
@@ -410,120 +227,41 @@ impl LintRule for GoalGateHasRetryRule {
     }
 }
 
-struct ProviderValidRule;
-impl LintRule for ProviderValidRule {
-    fn name(&self) -> &str {
-        "provider_valid"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        const KNOWN: &[&str] = &["claude", "anthropic", "codex", "openai", "gemini", "google"];
-        graph
-            .all_nodes()
-            .filter(|n| is_llm_node(&n.shape))
-            .filter_map(|n| {
-                let provider = n.llm_provider.as_deref()?;
-                if KNOWN.contains(&provider) {
-                    return None;
-                }
-                Some(Diagnostic {
-                    rule: self.name().into(),
-                    severity: Severity::Warning,
-                    message: format!(
-                        "Node '{}' has unknown llm_provider '{}'; known: claude, codex, gemini",
-                        n.id, provider
-                    ),
-                    node_id: Some(n.id.clone()),
-                    edge: None,
-                    fix: Some(
-                        "Use one of: claude, codex, gemini (aliases: anthropic, openai, google)"
-                            .into(),
-                    ),
-                })
-            })
-            .collect()
-    }
-}
-
-/// Blocks execution of any runtime `box`/`diamond` node that has no explicit
-/// `llm_provider`, so such nodes can never silently default to Claude and
-/// spawn a real provider CLI without the pipeline author's knowledge.
-struct ProviderRequiredRule;
-impl LintRule for ProviderRequiredRule {
-    fn name(&self) -> &str {
-        "provider_required"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        graph
-            .all_nodes()
-            .filter(|n| is_provider_required_node(&n.id, &n.shape, n.node_type.as_deref()))
-            .filter(|n| n.llm_provider.is_none())
-            .map(|n| Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Error,
-                message: format!(
-                    "Node '{}' (shape={}) has no llm_provider and would silently default to claude",
-                    n.id, n.shape
-                ),
-                node_id: Some(n.id.clone()),
-                edge: None,
-                fix: Some(format!(
-                    "Add llm_provider=\"claude\" (or \"codex\"/\"gemini\") to node '{}'",
-                    n.id
-                )),
-            })
-            .collect()
-    }
-}
-
-struct PromptOnLlmNodesRule;
-impl LintRule for PromptOnLlmNodesRule {
-    fn name(&self) -> &str {
-        "prompt_on_llm_nodes"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        graph
-            .all_nodes()
-            .filter(|n| is_llm_node(&n.shape))
-            .filter(|n| {
-                // Skip start/terminal nodes — they don't need prompts
-                !is_start_node(&n.id, &n.shape) && !is_terminal_node(&n.id, &n.shape)
-            })
-            .filter(|n| n.prompt.is_none() && n.label == n.id)
-            .map(|n| Diagnostic {
-                rule: self.name().into(),
-                severity: Severity::Warning,
-                message: format!(
-                    "Node '{}' (shape={}) has no prompt and label matches id",
-                    n.id, n.shape
-                ),
-                node_id: Some(n.id.clone()),
-                edge: None,
-                fix: Some("Add a prompt or a descriptive label attribute".into()),
-            })
-            .collect()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /// Run all built-in lint rules and return collected diagnostics.
 pub fn validate(graph: &PipelineGraph) -> Vec<Diagnostic> {
+    match ExecutionPlan::compile(graph.clone()) {
+        Ok(plan) => validate_plan(&plan),
+        Err(error) => {
+            let mut diagnostics = validate_nonsemantic_structure(graph);
+            if let Ok(compilation) =
+                ExecutionPlan::compile_for_generation(graph.clone(), LlmProvider::Claude)
+            {
+                diagnostics.extend(validate_plan_structure(&compilation.plan));
+            }
+            diagnostics.extend(error.diagnostics.into_iter().map(semantic_diagnostic));
+            diagnostics
+        }
+    }
+}
+
+/// Run structural lint rules against an already compiled semantic plan.
+pub fn validate_plan(plan: &ExecutionPlan) -> Vec<Diagnostic> {
+    let mut diagnostics = validate_nonsemantic_structure(plan.graph());
+    diagnostics.extend(validate_plan_structure(plan));
+    diagnostics
+}
+
+fn validate_nonsemantic_structure(graph: &PipelineGraph) -> Vec<Diagnostic> {
     let rules: Vec<Box<dyn LintRule>> = vec![
-        Box::new(StartNodeRule),
-        Box::new(TerminalNodeRule),
-        Box::new(ReachabilityRule),
         Box::new(EdgeTargetExistsRule),
-        Box::new(StartNoIncomingRule),
-        Box::new(ExitNoOutgoingRule),
         Box::new(ConditionSyntaxRule),
         Box::new(FidelityValidRule),
         Box::new(RetryTargetExistsRule),
         Box::new(GoalGateHasRetryRule),
-        Box::new(ProviderValidRule),
-        Box::new(PromptOnLlmNodesRule),
-        Box::new(ProviderRequiredRule),
     ];
 
     let mut diagnostics = Vec::new();
@@ -531,6 +269,116 @@ pub fn validate(graph: &PipelineGraph) -> Vec<Diagnostic> {
         diagnostics.extend(rule.apply(graph));
     }
     diagnostics
+}
+
+fn validate_plan_structure(plan: &ExecutionPlan) -> Vec<Diagnostic> {
+    let graph = plan.graph();
+    let mut diagnostics = Vec::new();
+
+    if graph
+        .all_edges()
+        .iter()
+        .any(|edge| edge.to == plan.start_id())
+    {
+        diagnostics.push(Diagnostic {
+            rule: "start_no_incoming".into(),
+            severity: Severity::Error,
+            message: format!("Start node '{}' has incoming edges", plan.start_id()),
+            node_id: Some(plan.start_id().to_string()),
+            edge: None,
+            fix: Some("Remove edges pointing to the start node".into()),
+        });
+    }
+
+    for exit_id in plan.exit_ids() {
+        if !plan.outgoing_edges(exit_id).is_empty() {
+            diagnostics.push(Diagnostic {
+                rule: "exit_no_outgoing".into(),
+                severity: Severity::Error,
+                message: format!("Terminal node '{exit_id}' has outgoing edges"),
+                node_id: Some(exit_id.clone()),
+                edge: None,
+                fix: Some(format!("Remove outgoing edges from '{exit_id}'")),
+            });
+        }
+    }
+
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::from([plan.start_id().to_string()]);
+    while let Some(current) = queue.pop_front() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        queue.extend(
+            plan.outgoing_edges(&current)
+                .iter()
+                .map(|edge| edge.to.clone()),
+        );
+    }
+    let mut unreachable = plan
+        .all_nodes()
+        .map(|node| node.node_id.as_str())
+        .filter(|node_id| !visited.contains(*node_id))
+        .collect::<Vec<_>>();
+    unreachable.sort_unstable();
+    diagnostics.extend(unreachable.into_iter().map(|node_id| Diagnostic {
+        rule: "reachability".into(),
+        severity: Severity::Error,
+        message: format!("Node '{node_id}' is not reachable from the start node"),
+        node_id: Some(node_id.to_string()),
+        edge: None,
+        fix: Some(format!("Add an edge leading to '{node_id}' or remove it")),
+    }));
+
+    let mut llm_nodes = plan
+        .all_nodes()
+        .filter(|node| node.handler == crate::HandlerIdentity::Codergen)
+        .filter_map(|node| plan.source_node(&node.node_id))
+        .filter(|node| node.prompt.is_none() && node.label == node.id)
+        .collect::<Vec<_>>();
+    llm_nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    diagnostics.extend(llm_nodes.into_iter().map(|node| Diagnostic {
+        rule: "prompt_on_llm_nodes".into(),
+        severity: Severity::Warning,
+        message: format!(
+            "Node '{}' (handler=codergen) has no prompt and label matches id",
+            node.id
+        ),
+        node_id: Some(node.id.clone()),
+        edge: None,
+        fix: Some("Add a prompt or a descriptive label attribute".into()),
+    }));
+
+    diagnostics
+}
+
+fn semantic_diagnostic(diagnostic: SemanticDiagnostic) -> Diagnostic {
+    let rule = match diagnostic.kind {
+        SemanticDiagnosticKind::InvalidAttributeType => "attribute_type",
+        SemanticDiagnosticKind::MissingProvider => "provider_required",
+        SemanticDiagnosticKind::UnknownProvider => "provider_valid",
+        SemanticDiagnosticKind::MissingStart | SemanticDiagnosticKind::MultipleStarts => {
+            "start_node"
+        }
+        SemanticDiagnosticKind::MissingExit | SemanticDiagnosticKind::MultipleExits => {
+            "terminal_node"
+        }
+        SemanticDiagnosticKind::ConflictingRoleSignals => "semantic_conflict",
+        SemanticDiagnosticKind::ConflictingAttributeAliases => "attribute_alias_conflict",
+        SemanticDiagnosticKind::UnknownShape | SemanticDiagnosticKind::UnknownHandler => {
+            "semantic_unknown"
+        }
+        SemanticDiagnosticKind::HandlerCapabilityMismatch => "handler_registry",
+        SemanticDiagnosticKind::TransformError => "transform",
+    };
+    Diagnostic {
+        rule: rule.into(),
+        severity: Severity::Error,
+        message: diagnostic.message,
+        node_id: diagnostic.node_id,
+        edge: None,
+        fix: Some(diagnostic.fix),
+    }
 }
 
 /// Run all lint rules; return `Err` if any `Error`-severity diagnostic found.

@@ -3,62 +3,8 @@ use attractor_quality::ClaudeSettingsMode;
 use attractor_types::{AttractorError, Result};
 use serde::Deserialize;
 
+pub(super) use crate::execution_plan::LlmProvider as LlmCliProvider;
 use crate::graph::{PipelineGraph, PipelineNode};
-
-// ---------------------------------------------------------------------------
-// LlmCliProvider — which CLI tool to invoke for an LLM node
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LlmCliProvider {
-    Claude,
-    Codex,
-    Gemini,
-}
-
-impl std::str::FromStr for LlmCliProvider {
-    type Err = (); // Never fails — defaults to Claude with warning
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "claude" | "anthropic" => Ok(Self::Claude),
-            "codex" | "openai" => Ok(Self::Codex),
-            "gemini" | "google" => Ok(Self::Gemini),
-            other => {
-                tracing::warn!(
-                    provider = other,
-                    "Unknown llm_provider, defaulting to Claude"
-                );
-                Ok(Self::Claude)
-            }
-        }
-    }
-}
-
-impl LlmCliProvider {
-    pub(super) fn from_node(node: &PipelineNode) -> Self {
-        node.llm_provider
-            .as_deref()
-            .map(|s| s.parse().unwrap_or(Self::Claude))
-            .unwrap_or(Self::Claude)
-    }
-
-    pub(super) fn binary_name(&self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Gemini => "gemini",
-        }
-    }
-
-    pub(super) fn display_name(&self) -> &'static str {
-        match self {
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex CLI",
-            Self::Gemini => "Gemini CLI",
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // CLI output structs

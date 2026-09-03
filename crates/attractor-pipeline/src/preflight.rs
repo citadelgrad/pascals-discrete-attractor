@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use attractor_quality::resolution::{resolve, ResolutionError};
 
+use crate::execution_plan::{ExecutionPlan, HandlerIdentity, LlmProvider, ResolvedNodeKind};
 use crate::graph::PipelineGraph;
-use crate::handler::HandlerRegistry;
 use crate::DEFAULT_MAX_BUDGET_USD;
 
 // ---------------------------------------------------------------------------
@@ -57,11 +57,32 @@ pub fn run_with_budget(
     workdir: &Path,
     max_budget_usd: Option<f64>,
 ) -> Vec<PreflightFinding> {
+    match ExecutionPlan::compile(graph.clone()) {
+        Ok(plan) => run_plan_with_budget(&plan, workdir, max_budget_usd),
+        Err(error) => vec![PreflightFinding {
+            severity: Severity::Error,
+            code: "SEMANTIC_COMPILATION_FAILED".into(),
+            message: error.to_string(),
+            suggestion: Some("Fix semantic compilation errors before running preflight".into()),
+            workdir: None,
+        }],
+    }
+}
+
+pub fn run_plan(plan: &ExecutionPlan, workdir: &Path) -> Vec<PreflightFinding> {
+    run_plan_with_budget(plan, workdir, None)
+}
+
+pub fn run_plan_with_budget(
+    plan: &ExecutionPlan,
+    workdir: &Path,
+    max_budget_usd: Option<f64>,
+) -> Vec<PreflightFinding> {
     let mut findings = Vec::new();
 
     // Codergen nodes with no resolved timeout silently fall back to the
     // hardcoded 600s kill timeout in codergen_handler.rs. Warn per node.
-    for node_id in nodes_missing_timeout(graph) {
+    for node_id in nodes_missing_timeout(plan) {
         findings.push(PreflightFinding {
             severity: Severity::Warn,
             code: "CODERGEN_NO_TIMEOUT".into(),
@@ -78,7 +99,7 @@ pub fn run_with_budget(
     // Codex CLI and Gemini CLI JSON output does not report a dollar cost, so
     // these nodes always contribute $0 to the pipeline's cost total and
     // budget check, even though real spend occurred. Warn once per provider.
-    for (provider_name, node_count) in uncosted_provider_counts(graph) {
+    for (provider_name, node_count) in uncosted_provider_counts(plan) {
         let display_name = provider_display_name(&provider_name);
         let node_label = if node_count == 1 { "node" } else { "nodes" };
         let budget_description = match max_budget_usd {
@@ -99,7 +120,7 @@ pub fn run_with_budget(
     }
 
     // Only proceed with quality-manifest checks if the graph has a quality node.
-    if !graph_has_quality_node(graph) {
+    if !graph_has_quality_node(plan) {
         return findings;
     }
 
@@ -147,34 +168,34 @@ pub fn run_with_budget(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the ids of all nodes in `graph` that resolve to the `codergen`
-/// handler type (via the same resolution `HandlerRegistry::resolve_type` uses:
-/// explicit `type=` attribute, else shape-based mapping, else default
-/// `"codergen"`) but have no resolved `timeout` — i.e. they would silently
+/// Returns the ids of all nodes in the compiled plan whose canonical handler is
+/// `codergen` but have no resolved `timeout` — i.e. they would silently
 /// fall back to the hardcoded 600s kill timeout in `codergen_handler.rs`.
 ///
 /// `node.timeout` already reflects graph-/subgraph-level default cascading
 /// (see `graph::node_def_to_pipeline_node`), so a `None` here means there is
 /// truly no timeout override at any level.
-fn nodes_missing_timeout(graph: &PipelineGraph) -> Vec<String> {
-    let registry = HandlerRegistry::new();
-    graph
-        .all_nodes()
-        .filter(|node| registry.resolve_type(node) == "codergen" && node.timeout.is_none())
-        .map(|node| node.id.clone())
+fn nodes_missing_timeout(plan: &ExecutionPlan) -> Vec<String> {
+    plan.all_nodes()
+        .filter(|node| node.handler == HandlerIdentity::Codergen)
+        .filter(|node| {
+            plan.source_node(&node.node_id)
+                .is_some_and(|source| source.timeout.is_none())
+        })
+        .map(|node| node.node_id.clone())
         .collect()
 }
 
 /// Counts nodes by normalized CLI provider when that provider never reports a
 /// per-call dollar cost.
-fn uncosted_provider_counts(graph: &PipelineGraph) -> BTreeMap<String, usize> {
-    graph.all_nodes().fold(BTreeMap::new(), |mut counts, node| {
-        let Some(provider) = node.llm_provider.as_deref() else {
+fn uncosted_provider_counts(plan: &ExecutionPlan) -> BTreeMap<String, usize> {
+    plan.all_nodes().fold(BTreeMap::new(), |mut counts, node| {
+        let Some(provider) = node.provider else {
             return counts;
         };
-        let normalized = match provider.to_ascii_lowercase().as_str() {
-            "codex" | "openai" => "codex",
-            "gemini" | "google" => "gemini",
+        let normalized = match provider {
+            LlmProvider::Codex => "codex",
+            LlmProvider::Gemini => "gemini",
             _ => return counts,
         };
         *counts.entry(normalized.to_string()).or_default() += 1;
@@ -195,22 +216,9 @@ fn provider_display_name(provider: &str) -> &str {
 /// A node is a quality node when:
 /// - its `node_type` (from the DOT `type=` attribute) equals `"quality"`, or
 /// - its `raw_attrs` contains `handler = "quality"`.
-fn graph_has_quality_node(graph: &PipelineGraph) -> bool {
-    use attractor_dot::AttributeValue;
-
-    graph.all_nodes().any(|node| {
-        // Primary: explicit `type="quality"` attribute.
-        if node.node_type.as_deref() == Some("quality") {
-            return true;
-        }
-        // Secondary: `handler="quality"` in raw attributes.
-        if let Some(AttributeValue::String(s)) = node.raw_attrs.get("handler") {
-            if s == "quality" {
-                return true;
-            }
-        }
-        false
-    })
+fn graph_has_quality_node(plan: &ExecutionPlan) -> bool {
+    plan.all_nodes()
+        .any(|node| node.kind == ResolvedNodeKind::Quality)
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +253,7 @@ mod tests {
     fn make_graph_without_quality_node() -> PipelineGraph {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work", timeout="60s"]
+            work [label="Do work", timeout="60s", llm_provider="claude"]
             done [shape="Msquare"]
             start -> work -> done
         }"#;
@@ -319,6 +327,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn raw_graph_preflight_fails_closed_on_missing_provider() {
+        let tmp = TempDir::new().unwrap();
+        let graph = PipelineGraph::from_dot(
+            attractor_dot::parse(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    work [shape="box", prompt="work", timeout=1s]
+                    done [shape="Msquare"]
+                    start -> work -> done
+                }"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let findings = run(&graph, tmp.path());
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].code, "SEMANTIC_COMPILATION_FAILED");
+        assert!(findings[0].message.contains("work"));
+        assert!(findings[0].message.contains("llm_provider"));
+    }
+
     /// Resolve is called exactly once even when the graph has multiple quality nodes.
     /// We verify this indirectly: 10 iterations of `run` on the same no-manifest workdir
     /// all produce exactly 1 finding (one per call, not accumulating), confirming the
@@ -351,14 +384,20 @@ mod tests {
         }"#;
         let parsed = attractor_dot::parse(dot).unwrap();
         let graph = PipelineGraph::from_dot(parsed).unwrap();
-        assert!(graph_has_quality_node(&graph));
+        let plan = ExecutionPlan::compile_for_generation(graph, LlmProvider::Claude)
+            .unwrap()
+            .plan;
+        assert!(graph_has_quality_node(&plan));
     }
 
     /// Verify graph_has_quality_node returns false for a graph with no quality nodes.
     #[test]
     fn no_quality_node_detection() {
         let graph = make_graph_without_quality_node();
-        assert!(!graph_has_quality_node(&graph));
+        let plan = ExecutionPlan::compile_for_generation(graph, LlmProvider::Claude)
+            .unwrap()
+            .plan;
+        assert!(!graph_has_quality_node(&plan));
     }
 
     // ---- CODERGEN_NO_TIMEOUT tests ----
@@ -375,7 +414,7 @@ mod tests {
     fn codergen_node_without_timeout_produces_warning() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work"]
+            work [label="Do work", llm_provider="claude"]
             done [shape="Msquare"]
             start -> work -> done
         }"#;
@@ -398,7 +437,7 @@ mod tests {
     fn codergen_node_with_explicit_timeout_produces_no_warning() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work", timeout="60s"]
+            work [label="Do work", timeout="60s", llm_provider="claude"]
             done [shape="Msquare"]
             start -> work -> done
         }"#;
@@ -414,7 +453,7 @@ mod tests {
     #[test]
     fn codergen_node_with_graph_level_default_timeout_produces_no_warning() {
         let dot = r#"digraph G {
-            node [timeout="300s"]
+            node [timeout="300s", llm_provider="claude"]
             start [shape="Mdiamond"]
             work [label="Do work"]
             done [shape="Msquare"]
@@ -427,14 +466,13 @@ mod tests {
         assert!(findings.is_empty(), "expected no findings: {findings:?}");
     }
 
-    /// A diamond-shaped node with a prompt resolves to "codergen" per
-    /// HandlerRegistry::resolve_type's special case, so a missing timeout is
-    /// still flagged.
+    /// A diamond-shaped node with a prompt canonically resolves to `codergen`,
+    /// so a missing timeout is still flagged.
     #[test]
     fn conditional_node_with_prompt_without_timeout_produces_warning() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            check [shape="diamond", type="conditional", prompt="Decide something"]
+            check [shape="diamond", type="conditional", prompt="Decide something", llm_provider="claude"]
             done [shape="Msquare"]
             start -> check -> done
         }"#;
@@ -490,8 +528,8 @@ mod tests {
     fn multiple_codergen_nodes_missing_timeout_produce_distinct_findings() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            first [label="First"]
-            second [label="Second"]
+            first [label="First", llm_provider="claude"]
+            second [label="Second", llm_provider="claude"]
             done [shape="Msquare"]
             start -> first -> second -> done
         }"#;
@@ -607,13 +645,13 @@ mod tests {
         assert_eq!(findings[0].code, "PROVIDER_COST_UNTRACKED");
     }
 
-    /// A node with no llm_provider attribute (defaults to Claude, which does
-    /// report cost) produces no PROVIDER_COST_UNTRACKED warning.
+    /// An explicit Claude provider reports cost, so it produces no
+    /// PROVIDER_COST_UNTRACKED warning.
     #[test]
-    fn default_claude_provider_produces_no_cost_warning() {
+    fn explicit_claude_provider_produces_no_cost_warning() {
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work", timeout="60s"]
+            work [label="Do work", timeout="60s", llm_provider="claude"]
             done [shape="Msquare"]
             start -> work -> done
         }"#;
@@ -634,7 +672,7 @@ mod tests {
 
         let dot = r#"digraph G {
             start [shape="Mdiamond"]
-            work [label="Do work"]
+            work [label="Do work", llm_provider="claude"]
             quality_check [type="quality"]
             done [shape="Msquare"]
             start -> work -> quality_check -> done

@@ -133,6 +133,112 @@ async fn no_start_node_returns_error() {
     }
 }
 
+#[tokio::test]
+async fn semantic_compile_failure_invokes_no_handler_and_writes_no_checkpoint() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct CountingHandler(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for CountingHandler {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::success("unexpected"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", llm_provider="unknown"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(CountingHandler(Arc::clone(&calls)));
+    let logs = tempfile::tempdir().unwrap();
+
+    let result = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(!logs.path().join("checkpoint.json").exists());
+}
+
+#[tokio::test]
+async fn custom_handler_known_shape_conflict_invokes_no_handler_and_writes_no_checkpoint() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct CountingHandler {
+        name: &'static str,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for CountingHandler {
+        fn handler_type(&self) -> &str {
+            self.name
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::success("unexpected"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            disguised [shape="Msquare", type="custom.review"]
+            done [shape="Msquare"]
+            start -> disguised -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    for name in ["start", "exit", "custom.review"] {
+        registry.register(CountingHandler {
+            name,
+            calls: Arc::clone(&calls),
+        });
+    }
+    let logs = tempfile::tempdir().unwrap();
+
+    let result = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await;
+
+    let error = result.expect_err("known shape must conflict with a custom handler");
+    assert!(
+        matches!(error, AttractorError::ValidationError(ref message) if message.contains("conflicting role signals")),
+        "{error:?}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(!logs.path().join("checkpoint.json").exists());
+}
+
 // Test 4: Context updates from one node visible to next (verify via final_context)
 #[tokio::test]
 async fn context_updates_propagate() {

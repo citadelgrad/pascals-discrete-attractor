@@ -16,8 +16,8 @@ PAS doesn't just run tasks — it verifies them. Six layers of checks ensure tha
   <img src="docs/verification-deep-dive.svg" alt="Verification Deep Dive" width="800"/>
 </p>
 
-1. **Static Validation** — 12 lint rules check pipeline structure before any LLM call. Missing start nodes, unreachable steps, and malformed conditions are caught immediately.
-2. **Handler Dispatch** — The engine resolves each node's handler type (codergen, conditional, tool, etc.) and aborts if the handler isn't registered.
+1. **Static Validation** — Canonical semantic compilation plus nine structural checks run before any LLM call. Missing start nodes, unavailable handlers, unknown providers, unreachable steps, and malformed conditions are caught immediately.
+2. **Handler Dispatch** — The compiler resolves each node's handler type and provider once; the engine dispatches that typed plan and aborts before execution if a required handler isn't registered.
 3. **Outcome Schema** — Rust's type system enforces the response contract at compile time. Every handler must return a status, context updates, and notes — malformed results are structurally impossible.
 4. **Edge Routing** — A 5-step cascade selects the next edge: condition match → preferred label → suggested ID → weight → lexical tiebreak. This enables patterns like "pass → deploy, partial → extended tests, fail → fixup loop."
 5. **Goal Gates** — The "proof of work" layer. Nodes marked `goal_gate=true` are audited at exit. If any gate is unsatisfied, the engine resolves a retry target (node → fallback → graph-level) and loops back. No target found means pipeline abort.
@@ -31,44 +31,47 @@ PAS lets you describe AI workflows as directed graphs using DOT syntax. Each nod
 
 ```dot
 digraph CodeReview {
-    start [shape=Mdiamond]
-    analyze [label="Analyze Code", model="claude-sonnet-4-5-20250929"]
+    node [llm_provider="claude"]
+    start [shape="Mdiamond"]
+    analyze [label="Analyze Code", llm_model="claude-sonnet-4-5-20250929"]
     test [label="Run Tests", type="tool"]
     review [label="Review Results"]
-    done [shape=Msquare]
+    done [shape="Msquare"]
 
     start -> analyze -> test -> review -> done
 }
 ```
 
-## Claude Code Integration
+## Codergen Provider Integration
 
-PAS's default `codergen` handler executes pipeline nodes by shelling out to your local [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installation (`claude` CLI). This means each node in your pipeline gets the full agentic capabilities of Claude Code — file editing, bash execution, multi-turn tool use — powered by your existing Claude subscription with no separate API keys required.
+PAS's `codergen` handler executes pipeline nodes through the explicitly selected local Claude Code, Codex, or Gemini CLI. A Claude-backed node can use your existing Claude subscription with no separate API key.
 
-Under the hood, each `codergen` node runs:
+Each `codergen` node invokes the explicitly selected provider binary. The handler
+normalizes Claude Code, Codex, and Gemini output into one outcome and feeds that
+context forward to downstream nodes. Dollar cost and turn counts are recorded
+when the selected CLI reports them.
 
-```
-claude -p "<prompt>" --output-format json
-```
-
-The handler parses Claude Code's JSON response to extract the result, cost, turn count, and success/failure status, then feeds that context forward to downstream nodes.
-
-### Node attributes for Claude Code nodes
+### Node attributes for codergen nodes
 
 | Attribute | Description |
 |-----------|-------------|
-| `prompt` (required) | The task prompt sent to Claude Code |
+| `prompt` | Optional task prompt sent to the selected provider; validation warns when both it and a descriptive label are absent |
+| `llm_provider` (required) | `"claude"`, `"codex"`, or `"gemini"` for provider-backed nodes |
 | `llm_model` | Model override (e.g. `"sonnet"`, `"haiku"`, `"opus"`) |
 | `allowed_tools` | Comma-separated list of tools Claude Code may use |
 | `max_budget_usd` | Spending cap for this node |
 
-Conditional nodes (`shape=diamond`) automatically instruct Claude Code to select an outgoing edge label, enabling LLM-driven branching.
+Prompted conditional nodes (`shape=diamond`) ask the selected provider to choose
+an outgoing edge label. By default, a diamond without a prompt is a pass-through
+conditional and starts no provider process. Setting `type="codergen"` explicitly
+is the exception: it makes the diamond provider-backed even without a prompt and
+therefore requires `llm_provider`.
 
 For nodes that only need a single LLM completion without tool use, PAS also provides direct API handlers for OpenAI, Anthropic, and Gemini via the `attractor-llm` crate.
 
 ## Features
 
-- **Claude Code as execution engine** -- Pipeline nodes run via your local `claude` CLI, getting full agentic tool use with no extra API keys
+- **Explicit local provider execution** -- Each `codergen` node selects the local Claude Code, Codex, or Gemini CLI it runs
 - **DOT pipeline definitions** -- Standard Graphviz digraph syntax with typed attributes (strings, integers, floats, booleans, durations)
 - **Direct pipeline generation** -- Pass a PRD and/or spec file to generate a self-contained .dot pipeline (no external issue tracker required)
 - **End-to-end launch** -- `pas launch <docs/>` discovers spec+PRD pairs, generates pipelines, validates, and runs them sequentially in one command
@@ -81,9 +84,9 @@ For nodes that only need a single LLM completion without tool use, PAS also prov
 - **Human review gates** -- Pause pipeline execution for human approval at any step
 - **Goal gates** -- Enforce completion criteria before allowing pipeline exit
 - **Checkpoint/resume** -- Save and restore pipeline state mid-execution
-- **Validation** -- 12 built-in lint rules for pipeline correctness
+- **Validation** -- Canonical semantic compilation plus nine structural checks
 - **Stylesheets** -- CSS-like rules for applying attributes to nodes by selector
-- **Variable transforms** -- Expand `${ctx.key}` references in node attributes
+- **Variable transforms** -- Variable transforms expand `${key}` references in node prompts from graph-level attributes
 - **Retry with backoff** -- Configurable retry policies for node execution
 - **Cost tracking** -- Per-node and total USD cost reporting
 
@@ -192,7 +195,11 @@ pas run templates/plan-to-execute.dot -w .
 
 ## Environment Variables
 
-The default `codergen` handler uses your local Claude Code installation and requires no API keys — it runs on your Claude subscription.
+There is no implicit runtime provider. Every node whose resolved handler consumes a provider must
+select `claude`, `codex`, or `gemini` with `llm_provider`. Claude-backed nodes
+use your local Claude Code installation and can run on your Claude subscription
+without a separate API key; Codex- and Gemini-backed nodes use their respective
+local CLI authentication.
 
 For direct API calls via the `attractor-llm` crate (OpenAI, Anthropic, or Gemini handlers), set the relevant keys:
 

@@ -38,9 +38,9 @@ pub async fn cmd_launch(
     let mut validation_failed = false;
     for dot_path in &generated {
         let name = dot_path.file_name().unwrap_or_default().to_string_lossy();
-        match crate::load_pipeline(dot_path) {
-            Ok(graph) => {
-                let diagnostics = attractor_pipeline::validate(&graph);
+        match crate::load_execution_plan(dot_path) {
+            Ok(plan) => {
+                let diagnostics = attractor_pipeline::validate_plan(&plan);
                 let has_error = diagnostics
                     .iter()
                     .any(|d| matches!(d.severity, attractor_pipeline::Severity::Error));

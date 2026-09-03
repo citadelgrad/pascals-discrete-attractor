@@ -81,8 +81,8 @@ pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> an
     }
 
     // Validate the generated pipeline
-    let graph = crate::load_pipeline(&output_path)?;
-    let diagnostics = attractor_pipeline::validate(&graph);
+    let plan = crate::load_execution_plan(&output_path)?;
+    let diagnostics = attractor_pipeline::validate_plan(&plan);
 
     let has_error = diagnostics
         .iter()
@@ -98,7 +98,7 @@ pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> an
     }
 
     // Count nodes
-    let node_count = graph.all_nodes().count();
+    let node_count = plan.all_nodes().count();
 
     println!("✓ Pipeline scaffolded");
     println!("  Output: {}", output_path.display());

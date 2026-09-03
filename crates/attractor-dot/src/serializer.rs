@@ -2,9 +2,9 @@
 //!
 //! This is a *structural* round-trip, not a textual one: comment stripping happens
 //! before parsing, so comments are never present in the AST and cannot be
-//! reproduced here. Map key ordering (graph attrs, node attrs, node ids) is also
-//! not preserved from the source text — instead, keys are sorted so that output
-//! is deterministic across runs.
+//! reproduced here. Map and declaration ordering is also not preserved from the
+//! source text — attributes are sorted, and nodes use a deterministic dependency
+//! order that retains their effective default scopes.
 //!
 //! The output always re-parses to an AST that is structurally equivalent to the
 //! graph that produced it (see the round-trip test below).
@@ -49,11 +49,16 @@ fn write_body(
     subgraphs: &[SubgraphDef],
 ) {
     write_bare_attrs(out, depth, attrs);
-    write_defaults_block(out, depth, "node", node_defaults);
-    write_defaults_block(out, depth, "edge", edge_defaults);
+    // Emit nested scopes before installing this scope's defaults. Parsed subgraphs
+    // already carry their effective inherited defaults, so this keeps later parent
+    // declarations from leaking into an earlier subgraph during re-parse.
+    write_subgraphs(out, depth, subgraphs);
     write_nodes(out, depth, nodes);
     write_edges(out, depth, edges);
-    write_subgraphs(out, depth, subgraphs);
+    // Restore the final defaults maps after all declarations. This preserves the
+    // AST-level defaults without retroactively changing any serialized node/edge.
+    write_defaults_block(out, depth, "node", node_defaults);
+    write_defaults_block(out, depth, "edge", edge_defaults);
 }
 
 /// Write graph/subgraph-level attributes as bare `key=value` declarations, sorted by key.
@@ -89,20 +94,64 @@ fn write_defaults_block(
     out.push_str("]\n");
 }
 
-/// Write all node statements, sorted by node id for deterministic output.
+/// Write nodes in a deterministic order that preserves their effective defaults.
+///
+/// The parser stores effective and directly-authored attributes, but not the
+/// original interleaving of `node [...]` declarations. The difference between
+/// those maps is exactly the set inherited by a node. Nodes missing a key must be
+/// emitted before that key is introduced as a default; otherwise a later default
+/// would leak into them. The ready-set ordering below reconstructs that partial
+/// order, using node id only to break semantic ties.
 fn write_nodes(out: &mut String, depth: usize, nodes: &std::collections::HashMap<String, NodeDef>) {
-    let sorted: BTreeMap<&String, &NodeDef> = nodes.iter().collect();
-    for (id, node) in sorted {
+    let mut remaining: BTreeMap<&String, &NodeDef> = nodes.iter().collect();
+    let mut current_defaults = std::collections::HashMap::new();
+
+    while !remaining.is_empty() {
+        let next_id = remaining
+            .iter()
+            .find_map(|(id, node)| {
+                let inherited = inherited_attrs(node);
+                let has_unwritten_predecessor = remaining.values().any(|candidate| {
+                    candidate.id != node.id
+                        && inherited
+                            .keys()
+                            .any(|key| !candidate.attrs.contains_key(key.as_str()))
+                });
+                (!has_unwritten_predecessor).then(|| (*id).clone())
+            })
+            // Parsed graphs always have an acyclic order because DOT defaults can
+            // be added or replaced but not removed. Keep serialization total for
+            // manually-constructed ASTs by falling back to lexical order.
+            .unwrap_or_else(|| (*remaining.keys().next().expect("remaining is non-empty")).clone());
+        let node = remaining.remove(&next_id).expect("selected node exists");
+        let inherited = inherited_attrs(node);
+        let delta = inherited
+            .into_iter()
+            .filter(|(key, value)| current_defaults.get(*key) != Some(*value))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        if !delta.is_empty() {
+            write_defaults_block(out, depth, "node", &delta);
+            current_defaults.extend(delta);
+        }
+
         push_indent(out, depth);
-        out.push_str(id);
-        if node.attrs.is_empty() {
+        out.push_str(&next_id);
+        if node.authored_attrs.is_empty() {
             out.push_str(";\n");
         } else {
             out.push_str(" [");
-            write_attr_list(out, &node.attrs);
+            write_attr_list(out, &node.authored_attrs);
             out.push_str("]\n");
         }
     }
+}
+
+fn inherited_attrs(node: &NodeDef) -> BTreeMap<&String, &AttributeValue> {
+    node.attrs
+        .iter()
+        .filter(|(key, _)| !node.authored_attrs.contains_key(*key))
+        .collect()
 }
 
 /// Write all edge statements in their original (insertion) order.
@@ -227,6 +276,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing node {id}"));
             assert_eq!(node.id, other.id, "node id {id}");
             assert_eq!(node.attrs, other.attrs, "node attrs for {id}");
+            assert_eq!(
+                node.authored_attrs, other.authored_attrs,
+                "authored node attrs for {id}"
+            );
         }
         assert_eq!(a.edges.len(), b.edges.len(), "edge count");
         for edge in &a.edges {
@@ -297,6 +350,106 @@ mod tests {
             reparsed.nodes.get("A").unwrap().attrs.get("llm_provider"),
             Some(&AttributeValue::String("claude".to_string()))
         );
+    }
+
+    #[test]
+    fn round_trip_keeps_defaulted_attributes_out_of_authored_node_attributes() {
+        let input = r#"digraph G {
+            node [llm_provider="claude"]
+            inherited [shape="box"]
+            explicit [shape="box", llm_provider="gemini"]
+        }"#;
+        let graph = parse(input).unwrap();
+        let reparsed = parse(&to_dot_string(&graph)).unwrap();
+
+        assert!(!reparsed.nodes["inherited"]
+            .authored_attrs
+            .contains_key("llm_provider"));
+        assert_eq!(
+            reparsed.nodes["explicit"]
+                .authored_attrs
+                .get("llm_provider"),
+            Some(&AttributeValue::String("gemini".into()))
+        );
+    }
+
+    #[test]
+    fn round_trip_preserves_nodes_across_sequential_default_changes() {
+        let input = r#"digraph G {
+            node [llm_provider="claude", shape="box", type="codergen"]
+            first [prompt="first"]
+            node [llm_provider="codex", shape="diamond", type="conditional"]
+            second [prompt="second"]
+            subgraph cluster_nested {
+                node [llm_provider="gemini", shape="box", type="codergen"]
+                third [prompt="third"]
+                node [llm_provider="claude", shape="diamond", type="conditional"]
+                fourth [prompt="fourth"]
+            }
+        }"#;
+        let graph = parse(input).unwrap();
+        let serialized = to_dot_string(&graph);
+        let reparsed = parse(&serialized).unwrap_or_else(|error| {
+            panic!("serialized output failed to re-parse: {error}\n---\n{serialized}")
+        });
+
+        assert_structurally_equal(&graph, &reparsed);
+        for (node_id, provider, shape, node_type) in [
+            ("first", "claude", "box", "codergen"),
+            ("second", "codex", "diamond", "conditional"),
+        ] {
+            let node = &reparsed.nodes[node_id];
+            assert_eq!(
+                node.attrs.get("llm_provider"),
+                Some(&AttributeValue::String(provider.into())),
+                "provider for {node_id}"
+            );
+            assert_eq!(
+                node.attrs.get("shape"),
+                Some(&AttributeValue::String(shape.into())),
+                "shape for {node_id}"
+            );
+            assert_eq!(
+                node.attrs.get("type"),
+                Some(&AttributeValue::String(node_type.into())),
+                "type for {node_id}"
+            );
+            assert!(node.authored_attrs.contains_key("prompt"));
+            assert!(!node.authored_attrs.contains_key("llm_provider"));
+            assert!(!node.authored_attrs.contains_key("shape"));
+            assert!(!node.authored_attrs.contains_key("type"));
+        }
+
+        let original_subgraph = &graph.subgraphs[0];
+        let reparsed_subgraph = &reparsed.subgraphs[0];
+        assert_eq!(
+            original_subgraph.node_defaults,
+            reparsed_subgraph.node_defaults
+        );
+        for (node_id, provider, shape, node_type) in [
+            ("third", "gemini", "box", "codergen"),
+            ("fourth", "claude", "diamond", "conditional"),
+        ] {
+            let original = &original_subgraph.nodes[node_id];
+            let node = &reparsed_subgraph.nodes[node_id];
+            assert_eq!(original.attrs, node.attrs, "attrs for {node_id}");
+            assert_eq!(
+                original.authored_attrs, node.authored_attrs,
+                "authored attrs for {node_id}"
+            );
+            assert_eq!(
+                node.attrs.get("llm_provider"),
+                Some(&AttributeValue::String(provider.into()))
+            );
+            assert_eq!(
+                node.attrs.get("shape"),
+                Some(&AttributeValue::String(shape.into()))
+            );
+            assert_eq!(
+                node.attrs.get("type"),
+                Some(&AttributeValue::String(node_type.into()))
+            );
+        }
     }
 
     #[test]

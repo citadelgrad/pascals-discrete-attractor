@@ -2,7 +2,7 @@
 
 ## PAS Pipeline System
 
-This project uses **PAS** (Pascal's Discrete Attractor) — a DOT-based pipeline runner that executes multi-step AI workflows. Each pipeline is a `.dot` file where nodes are Claude Code sessions. Pipelines live in `pipelines/`.
+This project uses **PAS** (Pascal's Discrete Attractor) — a DOT-based pipeline runner that executes multi-step AI workflows. Each pipeline is a `.dot` file whose task nodes explicitly select a Claude Code, Codex, or Gemini CLI provider. Pipelines live in `pipelines/`.
 
 ### Running a pipeline
 
@@ -30,11 +30,12 @@ digraph PipelineName {
     start [shape="Mdiamond", label="Start"]
     done  [shape="Msquare",  label="Done"]
 
-    // Nodes are Claude Code sessions. Each gets the prompt as its task.
+    // Provider-backed nodes send the prompt to the selected local CLI.
     my_node [
         shape="box"
         label="Short Label"
-        prompt="Detailed instructions for what Claude should do in this step."
+        llm_provider="claude"
+        prompt="Detailed instructions for what the selected provider should do in this step."
     ]
 
     start -> my_node -> done
@@ -45,7 +46,8 @@ digraph PipelineName {
 
 | Attribute | Purpose | Example |
 |-----------|---------|---------|
-| `prompt` | The task sent to Claude Code (required for box nodes) | `prompt="Fix the bug in auth.py"` |
+| `prompt` | The task sent to the selected provider CLI | `prompt="Fix the bug in auth.py"` |
+| `llm_provider` | Required for provider-backed nodes: `claude`, `codex`, or `gemini` | `llm_provider="claude"` |
 | `llm_model` | Override model per node | `llm_model="haiku"` |
 | `allowed_tools` | Restrict tools (read-only, git-only, etc.) | `allowed_tools="Read,Grep,Glob"` |
 | `max_budget_usd` | Spending cap for this node | `max_budget_usd="1.00"` |
@@ -58,17 +60,22 @@ digraph PipelineName {
 |-------|---------|
 | `Mdiamond` | Start node (exactly one) |
 | `Msquare` | Exit node (exactly one) |
-| `box` | Standard task — runs Claude Code with the prompt |
-| `diamond` | Conditional — Claude's response picks the outgoing edge |
+| `box` | Standard task — runs the selected provider CLI with the prompt |
+| `diamond` | Conditional; with a prompt or explicit `type="codergen"` it runs the selected provider, otherwise it routes by existing context |
 | `hexagon` | Human gate — pauses for human approval/input |
 | `parallelogram` | Tool node — runs a shell command via `tool_command` |
 
 ### Edge routing (conditional nodes)
 
-For diamond-shaped nodes, give outgoing edges `label` and `condition` attributes. Claude is asked to output one of the labels, which routes the pipeline:
+For prompted diamond-shaped nodes, give outgoing edges `label` and `condition`
+attributes. The selected provider is asked to output one of the labels, which
+routes the pipeline. By default, a diamond without a prompt is pass-through
+routing. Explicit `type="codergen"` is the exception: it runs the selected
+provider even without a prompt and requires `llm_provider`.
 
 ```dot
 verify [shape="diamond", label="Check Quality", node_type="conditional",
+        llm_provider="claude",
         prompt="Review the changes. Respond PASS or FAIL on the last line."]
 
 verify -> next_step [label="PASS", condition="preferred_label=PASS"]
@@ -95,7 +102,7 @@ start → investigate → implement → write_tests → run_tests → verify
 
 ### Key rules for prompts
 
-- **Be specific.** Include file paths, function names, and exact commands. Claude Code in `-p` mode has no prior context.
+- **Be specific.** Include file paths, function names, and exact commands. Provider CLI subprocesses have no prior pipeline-step context beyond the prompt and accumulated PAS context.
 - **One concern per node.** Don't combine investigation and implementation.
 - **Write output files.** If a node generates a report or analysis, tell it to write to `.pas/filename.md`.
 - **Reference the beads issue** in the `goal=` attribute so every node has context.

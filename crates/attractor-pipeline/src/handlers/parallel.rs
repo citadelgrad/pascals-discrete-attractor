@@ -6,9 +6,9 @@ use crate::handler::NodeHandler;
 
 /// Handler for "parallel" type nodes (shape="component").
 ///
-/// Represents a fan-out point where multiple branches could execute. This
-/// handler populates `suggested_next_ids` with all outgoing branch targets so
-/// the engine has visibility into the intended fan-out.
+/// Retained for sequential compatibility and raw-handler API compatibility.
+/// Canonical [`crate::ExecutionPlan`] compilation permits this handler only
+/// when the node has zero or one outgoing edge.
 ///
 /// **Known limitation:** The engine's `select_edge` function follows exactly
 /// one edge per step (sequential execution). When this handler returns multiple
@@ -16,8 +16,8 @@ use crate::handler::NodeHandler;
 /// branch and skip the rest. True parallel fork/join semantics are **not yet
 /// implemented** and would require significant engine changes (work-stealing
 /// queue, join barriers, shared-context merging). Until that work is done,
-/// pipelines using `shape="component"` nodes will silently execute only one
-/// branch. A `tracing::warn!` is emitted at runtime to make this visible.
+/// direct raw-handler callers can still observe this legacy behavior, so a
+/// `tracing::warn!` is emitted when they pass multiple outgoing edges.
 pub struct ParallelHandler;
 
 #[async_trait]
@@ -69,8 +69,9 @@ impl NodeHandler for ParallelHandler {
     }
 }
 
-/// Handler for "parallel.fan_in" type nodes (shape="tripleoctagon").
-/// Collects results from parallel branches.
+/// Legacy raw handler for `parallel.fan_in` nodes (`shape="tripleoctagon"`).
+/// Canonical [`crate::ExecutionPlan`] compilation rejects every fan-in node
+/// because PAS has no branch-result collection or merge state.
 pub struct FanInHandler;
 
 #[async_trait]
@@ -132,7 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parallel_handler_returns_branch_targets() {
+    async fn raw_parallel_handler_retains_legacy_branch_target_contract() {
         let handler = ParallelHandler;
         let dot = r#"digraph G {
             fork [shape="component"]
@@ -155,7 +156,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fan_in_handler_returns_success() {
+    async fn raw_fan_in_handler_retains_legacy_success_contract() {
         let handler = FanInHandler;
         let dot = r#"digraph G { A -> B }"#;
         let parsed = attractor_dot::parse(dot).unwrap();

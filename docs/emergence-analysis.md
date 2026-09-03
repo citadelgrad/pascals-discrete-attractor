@@ -105,7 +105,7 @@ A node's visual shape in the DOT graph directly determines its execution behavio
 | diamond | conditional | Routing decision |
 | parallelogram | tool | Shell command |
 | hexagon | wait.human | Human-in-the-loop |
-| component | parallel | Fan-out |
+| component | parallel | Sequential compatibility only; multi-edge fan-out is rejected |
 | Msquare | exit | Terminal + goal gate check |
 
 The same graph is both the visual documentation and the executable specification.

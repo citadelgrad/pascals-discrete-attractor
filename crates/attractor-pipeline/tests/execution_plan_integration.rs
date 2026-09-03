@@ -511,30 +511,6 @@ async fn supported_matrix_agrees_across_all_semantic_consumers() {
             consumes_provider: false,
         },
         Row {
-            name: "fan-in shape",
-            node: r#"subject [shape="tripleoctagon"]"#,
-            kind: ResolvedNodeKind::FanIn,
-            handler: HandlerIdentity::FanIn,
-            handler_name: "parallel.fan_in",
-            consumes_provider: false,
-        },
-        Row {
-            name: "fan-in alias",
-            node: r#"subject [type="fan_in"]"#,
-            kind: ResolvedNodeKind::FanIn,
-            handler: HandlerIdentity::FanIn,
-            handler_name: "parallel.fan_in",
-            consumes_provider: false,
-        },
-        Row {
-            name: "fan-in type",
-            node: r#"subject [type="parallel.fan_in"]"#,
-            kind: ResolvedNodeKind::FanIn,
-            handler: HandlerIdentity::FanIn,
-            handler_name: "parallel.fan_in",
-            consumes_provider: false,
-        },
-        Row {
             name: "manager shape",
             node: r#"subject [shape="house"]"#,
             kind: ResolvedNodeKind::ManagerLoop,
@@ -644,6 +620,51 @@ async fn supported_matrix_agrees_across_all_semantic_consumers() {
             vec![("subject".into(), row.handler, expected_provider)],
             "dispatch for {}",
             row.name
+        );
+    }
+}
+
+#[test]
+fn fan_in_spellings_are_recognized_but_rejected_by_all_compilers_and_validation() {
+    let rows = [
+        ("shape", r#"shape="tripleoctagon""#),
+        ("type alias", r#"type="fan_in""#),
+        ("canonical type", r#"type="parallel.fan_in""#),
+        ("node_type alias", r#"node_type="fan_in""#),
+        ("handler alias", r#"handler="parallel.fan_in""#),
+    ];
+
+    for (name, attributes) in rows {
+        let source = format!(
+            "digraph G {{ start [shape=\"Mdiamond\"] subject [{attributes}] done [shape=\"Msquare\"] start -> subject -> done }}"
+        );
+        let pipeline = graph(&source);
+
+        for error in [
+            ExecutionPlan::compile(pipeline.clone()).unwrap_err(),
+            ExecutionPlan::compile_for_generation(pipeline.clone(), LlmProvider::Codex)
+                .unwrap_err(),
+        ] {
+            assert!(
+                error.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.kind
+                        == attractor_pipeline::SemanticDiagnosticKind::UnsupportedExecutionTopology
+                        && diagnostic.node_id.as_deref() == Some("subject")
+                        && diagnostic.message.contains("cannot merge branch results")
+                }),
+                "{name}: {error:?}"
+            );
+        }
+
+        assert!(
+            attractor_pipeline::validate(&pipeline)
+                .iter()
+                .any(|diagnostic| {
+                    diagnostic.rule == "unsupported_execution_topology"
+                        && diagnostic.severity == attractor_pipeline::Severity::Error
+                        && diagnostic.node_id.as_deref() == Some("subject")
+                }),
+            "{name}"
         );
     }
 }

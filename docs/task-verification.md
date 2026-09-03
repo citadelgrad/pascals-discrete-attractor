@@ -157,7 +157,7 @@ provider semantics and then applies nine structural checks:
 
 | Rule | Severity | What it checks |
 |------|----------|----------------|
-| Semantic compilation | Error | String-typed semantic attributes; exactly one start and exit; compatible roles and aliases; known handlers/providers; provider present for provider-consuming handlers |
+| Semantic compilation | Error | String-typed semantic attributes; exactly one start and exit; compatible roles and aliases; known handlers/providers; provider present for provider-consuming handlers; supported execution topology |
 | Reachability | Error | All nodes are reachable from start |
 | Edge targets exist | Error | No edges pointing to undefined nodes |
 | Start/exit edge direction | Error | Start has no incoming edges and exit has no outgoing edges |
@@ -169,6 +169,9 @@ provider semantics and then applies nine structural checks:
 
 The load path is parse → **compile semantics** → **validate structure** →
 initialize → execute → finalize. Errors abort before any LLM calls are made.
+The node-scoped `unsupported_execution_topology` semantic rule rejects a
+parallel/component node with multiple outgoing edges and every fan-in node;
+a component with at most one outgoing edge remains sequential compatibility.
 
 **Relevant code:** `crates/attractor-pipeline/src/validation.rs` — `validate()` and `validate_or_raise()`.
 

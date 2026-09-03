@@ -336,6 +336,75 @@ fn invalid_or_reserved_controls_fail_before_provider_or_fresh_checkpoint_side_ef
 }
 
 #[test]
+fn unsupported_topology_fails_before_provider_or_fresh_checkpoint_side_effects() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let cases = [
+        (
+            "parallel.dot",
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                work [shape="box", llm_provider="codex", timeout=1s]
+                fork [shape="component"]
+                left [shape="diamond"]
+                right [shape="diamond"]
+                done [shape="Msquare"]
+                start -> work -> fork
+                fork -> left
+                fork -> right
+                left -> done
+                right -> done
+            }"#,
+            "one successor per step",
+        ),
+        (
+            "fan-in.dot",
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                work [shape="box", llm_provider="codex", timeout=1s]
+                merge [shape="tripleoctagon"]
+                done [shape="Msquare"]
+                start -> work -> merge -> done
+            }"#,
+            "cannot merge branch results",
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let pipeline = write_pipeline(fixture.path(), name, source);
+        let logs = fixture.path().join(format!("{name}-logs"));
+        fs::create_dir_all(&logs).unwrap();
+        let checkpoint = logs.join("checkpoint.json");
+        fs::write(&checkpoint, "sentinel").unwrap();
+
+        let output = run_with_shims(
+            &[
+                "run",
+                pipeline.to_str().unwrap(),
+                "--logs",
+                logs.to_str().unwrap(),
+                "--fresh",
+            ],
+            shims.path(),
+            &marker,
+        );
+
+        assert!(!output.status.success(), "{name} unexpectedly ran");
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(rendered.contains(expected), "{name}: {rendered}");
+        assert!(!rendered.contains("Completed nodes"), "{name}: {rendered}");
+        assert!(!marker.exists(), "{name} started a provider");
+        assert_eq!(fs::read_to_string(&checkpoint).unwrap(), "sentinel");
+    }
+}
+
+#[test]
 fn invalid_graph_quality_limit_fails_before_fresh_checkpoint_side_effects() {
     let fixture = tempfile::tempdir().unwrap();
     let shims = tempfile::tempdir().unwrap();
@@ -620,4 +689,69 @@ fn validate_renders_every_semantic_error_with_rule_node_and_fix() {
         stdout.contains("Fix: Use a supported shape or name a registered handler with type="),
         "{stdout}"
     );
+}
+
+#[test]
+fn validate_renders_unsupported_topology_as_a_blocking_semantic_error() {
+    let fixture = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "parallel.dot",
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                fork [shape="component"]
+                left [shape="diamond"]
+                right [shape="diamond"]
+                done [shape="Msquare"]
+                start -> fork
+                fork -> left
+                fork -> right
+                left -> done
+                right -> done
+            }"#,
+            "fork",
+            "Rewrite this node as a linear sequence",
+        ),
+        (
+            "fan-in.dot",
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                merge [shape="tripleoctagon"]
+                done [shape="Msquare"]
+                start -> merge -> done
+            }"#,
+            "merge",
+            "Remove the fan-in node",
+        ),
+    ];
+
+    for (name, source, node, fix) in cases {
+        let pipeline = write_pipeline(fixture.path(), name, source);
+        let output = Command::new(pas())
+            .args(["validate", pipeline.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success(), "{name} unexpectedly validated");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "[ERROR] unsupported_execution_topology (node: {node}):"
+            )),
+            "{stdout}"
+        );
+        assert!(stdout.contains(&format!("Fix: {fix}")), "{stdout}");
+
+        let info = Command::new(pas())
+            .args(["info", pipeline.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(!info.status.success(), "{name} unexpectedly produced info");
+        let info_rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&info.stdout),
+            String::from_utf8_lossy(&info.stderr)
+        );
+        assert!(info_rendered.contains(node), "{info_rendered}");
+    }
 }

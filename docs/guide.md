@@ -133,6 +133,14 @@ digraph PipelineName {
 | `diamond` | **Conditional node.** With a prompt or explicit `type="codergen"` it uses CodergenHandler; otherwise it is pass-through routing. | ConditionalHandler or CodergenHandler |
 | `hexagon` | **Human gate.** Pauses for human input/approval. | WaitHumanHandler |
 | `parallelogram` | **Tool node.** Runs a shell command. | ToolHandler |
+| `component` | **Sequential compatibility node.** May have at most one outgoing edge. | ParallelHandler |
+| `tripleoctagon` | **Recognized fan-in syntax.** Rejected during semantic compilation. | Not executable |
+
+### Parallel and fan-in compatibility
+
+PAS executes one successor per step; it does not implement fork/join execution or branch-result merging. A `component` node (or `type="parallel"`) therefore compiles only with zero or one outgoing edge, where it acts as sequential pass-through compatibility. A component with multiple outgoing edges fails with `unsupported_execution_topology`, including multiple authored edges that target the same node.
+
+Every `tripleoctagon`, `type="fan_in"`, or `type="parallel.fan_in"` node fails with the same blocking diagnostic, regardless of its incoming or outgoing edge count. Linearize the workflow until branch execution and deterministic merging are supported end to end.
 
 ### Node attributes
 
@@ -140,7 +148,7 @@ digraph PipelineName {
 |-----------|------|---------|-------------|
 | `label` | string | node ID | Display name shown in logs |
 | `prompt` | string | — | Task sent to the selected provider CLI. |
-| `type` | string | auto | Explicit handler type override (`node_type` and `handler` are compatibility aliases) |
+| `type` | string | auto | Explicit handler type override (`node_type` and `handler` are compatibility aliases); recognized parallel/fan-in types remain subject to the execution-topology restrictions above |
 | `llm_model` | string | graph `model` | Model override for this node (`"haiku"`, `"sonnet"`, `"opus"`, or full model ID) |
 | `llm_provider` | string | — | Required whenever the resolved handler consumes a provider: `"claude"`, `"codex"`, or `"gemini"` |
 | `allowed_tools` | string | all | Comma-separated Claude Code tool list (`"Read,Grep,Glob"` for read-only) |

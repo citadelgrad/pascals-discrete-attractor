@@ -186,6 +186,18 @@ The grammar above defines what **parses**. This section defines what the attract
 | `diamond` with explicit `type="codergen"` | **LLM conditional** -- provider output picks the outgoing edge, even when `prompt` is absent | CodergenHandler | `llm_provider`; `prompt` is optional |
 | `hexagon` | **Human gate** -- pauses for human approval | WaitHumanHandler | none |
 | `parallelogram` | **Tool** -- runs a shell command | ToolHandler | `tool_command` |
+| `component` | **Sequential compatibility** -- pass-through with at most one outgoing edge | ParallelHandler | none |
+| `tripleoctagon` | **Recognized fan-in syntax** -- rejected during semantic compilation | Not executable | none |
+
+### Unsupported execution topology
+
+The parser and semantic classifier recognize `component`/`parallel` and `tripleoctagon`/`fan_in` spellings, but recognition does not imply fork/join support. PAS follows exactly one successor per execution step and has no branch-result merge state.
+
+- A resolved parallel node with zero or one outgoing edge compiles as sequential compatibility.
+- A resolved parallel node with more than one outgoing edge fails semantic compilation. Authored edges are counted individually, even when several name the same target.
+- Every resolved fan-in node fails semantic compilation, regardless of edge cardinality.
+
+These failures use the node-scoped `unsupported_execution_topology` rule and occur before handler, provider, or checkpoint activity. Linearize the graph until fork/join execution is supported end to end.
 
 ## Node Attributes
 
@@ -352,7 +364,7 @@ structural checks. The enforced contract is:
 1. Semantic compilation requires exactly one canonical start and one canonical exit.
 2. Shape, type/handler aliases, and magic-ID role signals must be compatible.
 3. Semantic discriminator attributes have their documented string type; malformed typed values fail closed.
-4. Handlers and providers must be known; every provider-consuming handler requires an explicit `llm_provider`.
+4. Handlers and providers must be known; every provider-consuming handler requires an explicit `llm_provider`; unsupported execution topology is rejected.
 5. The start has no incoming edge, and the exit has no outgoing edge.
 6. Every node is reachable from the start, and every edge target exists.
 7. Edge conditions parse correctly.

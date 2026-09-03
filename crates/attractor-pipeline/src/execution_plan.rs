@@ -133,6 +133,7 @@ pub enum SemanticDiagnosticKind {
     HandlerCapabilityMismatch,
     MissingProvider,
     UnknownProvider,
+    UnsupportedExecutionTopology,
     MultipleStarts,
     MissingStart,
     MultipleExits,
@@ -297,6 +298,8 @@ impl ExecutionPlan {
                 Err(mut node_diagnostics) => diagnostics.append(&mut node_diagnostics),
             }
         }
+
+        validate_supported_execution_topology(&graph, &nodes, &mut diagnostics);
 
         starts.sort();
         exits.sort();
@@ -466,6 +469,53 @@ impl ExecutionPlan {
             Ok(())
         } else {
             Err(SemanticError { diagnostics })
+        }
+    }
+}
+
+fn validate_supported_execution_topology(
+    graph: &PipelineGraph,
+    nodes: &HashMap<String, ResolvedNode>,
+    diagnostics: &mut Vec<SemanticDiagnostic>,
+) {
+    let mut node_ids = nodes.keys().collect::<Vec<_>>();
+    node_ids.sort();
+
+    for node_id in node_ids {
+        let node = &nodes[node_id];
+        match node.kind {
+            ResolvedNodeKind::Parallel => {
+                let outgoing = graph.outgoing_edges(node_id);
+                if outgoing.len() <= 1 {
+                    continue;
+                }
+                let mut targets = outgoing
+                    .iter()
+                    .map(|edge| edge.to.as_str())
+                    .collect::<Vec<_>>();
+                targets.sort();
+                diagnostics.push(SemanticDiagnostic {
+                    kind: SemanticDiagnosticKind::UnsupportedExecutionTopology,
+                    node_id: Some(node_id.clone()),
+                    message: format!(
+                        "Node '{node_id}' resolves to parallel but has {} outgoing edges ({}); PAS executes only one successor per step",
+                        outgoing.len(),
+                        targets.join(", ")
+                    ),
+                    fix: "Rewrite this node as a linear sequence until parallel branch execution is supported"
+                        .into(),
+                });
+            }
+            ResolvedNodeKind::FanIn => diagnostics.push(SemanticDiagnostic {
+                kind: SemanticDiagnosticKind::UnsupportedExecutionTopology,
+                node_id: Some(node_id.clone()),
+                message: format!(
+                    "Node '{node_id}' resolves to fan-in, but PAS cannot merge branch results"
+                ),
+                fix: "Remove the fan-in node and use a linear sequence until branch merging is supported"
+                    .into(),
+            }),
+            _ => {}
         }
     }
 }
@@ -970,11 +1020,10 @@ mod tests {
                 human [shape="hexagon"]
                 tool [shape="parallelogram"]
                 parallel [shape="component"]
-                fan_in [shape="tripleoctagon"]
                 manager [shape="house"]
                 quality [shape="box", type="quality"]
                 done [shape="Msquare"]
-                start -> task -> llm_choice -> route -> human -> tool -> parallel -> fan_in -> manager -> quality -> done
+                start -> task -> llm_choice -> route -> human -> tool -> parallel -> manager -> quality -> done
             }"#,
         ))
         .unwrap();
@@ -1018,12 +1067,6 @@ mod tests {
                 None,
             ),
             (
-                "fan_in",
-                ResolvedNodeKind::FanIn,
-                HandlerIdentity::FanIn,
-                None,
-            ),
-            (
                 "manager",
                 ResolvedNodeKind::ManagerLoop,
                 HandlerIdentity::ManagerLoop,
@@ -1044,6 +1087,137 @@ mod tests {
             assert_eq!(node.handler, handler, "handler for {id}");
             assert_eq!(node.provider, provider, "provider for {id}");
         }
+    }
+
+    #[test]
+    fn multi_branch_parallel_topology_is_rejected() {
+        let error = ExecutionPlan::compile(graph(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                fork [shape="component"]
+                left [shape="diamond"]
+                right [shape="diamond"]
+                done [shape="Msquare"]
+                start -> fork
+                fork -> left
+                fork -> right
+                left -> done
+                right -> done
+            }"#,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.diagnostics.len(), 1);
+        assert_eq!(error.diagnostics[0].node_id.as_deref(), Some("fork"));
+        assert!(error.diagnostics[0].message.contains("2 outgoing edges"));
+        assert!(error.diagnostics[0].message.contains("left, right"));
+        assert!(error.diagnostics[0].fix.contains("linear"));
+    }
+
+    #[test]
+    fn fan_in_topology_is_rejected() {
+        let error = ExecutionPlan::compile(graph(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                merge [shape="tripleoctagon"]
+                done [shape="Msquare"]
+                start -> merge -> done
+            }"#,
+        ))
+        .unwrap_err();
+
+        assert_eq!(error.diagnostics.len(), 1);
+        assert_eq!(
+            error.diagnostics[0].kind,
+            SemanticDiagnosticKind::UnsupportedExecutionTopology
+        );
+        assert_eq!(error.diagnostics[0].node_id.as_deref(), Some("merge"));
+        assert!(error.diagnostics[0]
+            .message
+            .contains("cannot merge branch results"));
+        assert!(error.diagnostics[0].fix.contains("Remove"));
+    }
+
+    #[test]
+    fn every_resolved_parallel_spelling_counts_authored_edges() {
+        let cases = [
+            r#"fork [shape="component"]"#,
+            r#"fork [type="parallel"]"#,
+            r#"fork [node_type="parallel"]"#,
+            r#"fork [handler="parallel"]"#,
+        ];
+
+        for declaration in cases {
+            let source = format!(
+                r#"digraph G {{
+                    start [shape="Mdiamond"]
+                    {declaration}
+                    branch [shape="diamond"]
+                    done [shape="Msquare"]
+                    start -> fork
+                    fork -> branch
+                    fork -> branch
+                    branch -> done
+                }}"#
+            );
+            let error = ExecutionPlan::compile_for_generation(graph(&source), LlmProvider::Codex)
+                .unwrap_err();
+            assert!(
+                error.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.kind == SemanticDiagnosticKind::UnsupportedExecutionTopology
+                        && diagnostic.node_id.as_deref() == Some("fork")
+                        && diagnostic
+                            .message
+                            .contains("2 outgoing edges (branch, branch)")
+                }),
+                "{declaration}: {error:?}"
+            );
+        }
+
+        let inherited = ExecutionPlan::compile(graph(
+            r#"digraph G {
+                node [shape="component"]
+                start [shape="Mdiamond"]
+                fork
+                left [shape="diamond"]
+                right [shape="diamond"]
+                done [shape="Msquare"]
+                start -> fork
+                fork -> right
+                fork -> left
+                left -> done
+                right -> done
+            }"#,
+        ))
+        .unwrap_err();
+        assert!(inherited.diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == SemanticDiagnosticKind::UnsupportedExecutionTopology
+                && diagnostic.node_id.as_deref() == Some("fork")
+                && diagnostic.message.contains("left, right")
+        }));
+    }
+
+    #[test]
+    fn unsupported_topology_diagnostics_are_complete_and_deterministic() {
+        let source = r#"digraph G {
+            start [shape="Mdiamond"]
+            z_fork [shape="component"]
+            a_merge [shape="tripleoctagon"]
+            route [shape="diamond"]
+            done [shape="Msquare"]
+            start -> z_fork
+            z_fork -> route
+            z_fork -> a_merge
+            a_merge -> done
+            route -> done
+        }"#;
+
+        let first = ExecutionPlan::compile(graph(source)).unwrap_err();
+        let second = ExecutionPlan::compile(graph(source)).unwrap_err();
+        assert_eq!(first.diagnostics, second.diagnostics);
+        assert_eq!(first.diagnostics.len(), 2);
+        assert_eq!(first.diagnostics[0].node_id.as_deref(), Some("a_merge"));
+        assert_eq!(first.diagnostics[1].node_id.as_deref(), Some("z_fork"));
     }
 
     #[test]

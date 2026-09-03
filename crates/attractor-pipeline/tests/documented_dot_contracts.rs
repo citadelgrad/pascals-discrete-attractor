@@ -501,6 +501,64 @@ fn provider_guide_documents_the_canonical_gemini_cli_package() {
 }
 
 #[test]
+fn unsupported_parallel_topology_is_documented_truthfully() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let required = [
+        (
+            "README.md",
+            "PAS rejects multi-edge `component` fan-out and every fan-in node during semantic compilation.",
+        ),
+        (
+            "README.md",
+            "A `component` node with at most one outgoing edge remains available as sequential compatibility.",
+        ),
+        ("docs/guide.md", "Parallel and fan-in compatibility"),
+        ("docs/dot-dialect.md", "Unsupported execution topology"),
+        (
+            "docs/task-verification.md",
+            "`unsupported_execution_topology`",
+        ),
+        (
+            "docs/emergence-analysis.md",
+            "Sequential compatibility only; multi-edge fan-out is rejected",
+        ),
+        (
+            "CHANGELOG.md",
+            "Fail closed on unsupported execution topology",
+        ),
+    ];
+    for (relative, phrase) in required {
+        let source = std::fs::read_to_string(workspace.join(relative)).unwrap();
+        assert!(
+            source.contains(phrase),
+            "{relative} must contain {phrase:?}"
+        );
+    }
+
+    let forbidden = [
+        ("README.md", "human gate, parallel fan-out"),
+        (
+            "README.md",
+            "condition evaluation, parallel fan-out/fan-in, manager loops",
+        ),
+        (
+            "docs/emergence-analysis.md",
+            "| component | parallel | Fan-out |",
+        ),
+    ];
+    for (relative, phrase) in forbidden {
+        let source = std::fs::read_to_string(workspace.join(relative)).unwrap();
+        assert!(
+            !source.contains(phrase),
+            "{relative} still advertises unsupported behavior: {phrase:?}"
+        );
+    }
+}
+
+#[test]
 fn goal_gate_docs_use_canonical_compiled_exit_membership() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

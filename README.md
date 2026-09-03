@@ -31,7 +31,9 @@ For the full specification including code references and examples, see **[docs/t
 
 ## Overview
 
-PAS lets you describe AI workflows as directed graphs using DOT syntax. Each node is a step (LLM call, tool use, human gate, parallel fan-out) and edges define the flow with optional conditions. The engine handles execution, edge selection, retries, goal enforcement, and cost tracking.
+PAS lets you describe AI workflows as directed graphs using DOT syntax. Each node is a step (LLM call, tool use, or human gate) and edges define the flow with optional conditions. The engine handles execution, edge selection, retries, goal enforcement, and cost tracking.
+
+PAS rejects multi-edge `component` fan-out and every fan-in node during semantic compilation. A `component` node with at most one outgoing edge remains available as sequential compatibility. True fork/join execution is not supported yet.
 
 ```dot
 digraph CodeReview {
@@ -84,7 +86,7 @@ For nodes that only need a single LLM completion without tool use, PAS also prov
 - **Multi-provider LLM support** -- OpenAI, Anthropic, and Gemini adapters with unified request/response types
 - **Built-in tools** -- read_file, write_file, edit_file, shell, grep, glob
 - **Agent loop** -- LLM + tool execution cycle with steering injection, follow-up queues, loop detection, and output truncation
-- **Pipeline engine** -- Graph traversal, edge selection, condition evaluation, parallel fan-out/fan-in, manager loops
+- **Pipeline engine** -- Sequential graph traversal, edge selection, condition evaluation, and manager loops
 - **Human review gates** -- Pause pipeline execution for human approval at any step
 - **Goal gates** -- Enforce completion criteria before allowing pipeline exit
 - **Checkpoint/resume** -- Save and restore pipeline state mid-execution

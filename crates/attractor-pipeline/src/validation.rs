@@ -369,6 +369,7 @@ fn semantic_diagnostic(diagnostic: SemanticDiagnostic) -> Diagnostic {
             "semantic_unknown"
         }
         SemanticDiagnosticKind::HandlerCapabilityMismatch => "handler_registry",
+        SemanticDiagnosticKind::UnsupportedExecutionTopology => "unsupported_execution_topology",
         SemanticDiagnosticKind::TransformError => "transform",
     };
     Diagnostic {

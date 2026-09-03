@@ -182,6 +182,92 @@ async fn semantic_compile_failure_invokes_no_handler_and_writes_no_checkpoint() 
 }
 
 #[tokio::test]
+async fn unsupported_topology_invokes_no_handler_and_writes_no_checkpoint() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct CountingHandler {
+        name: &'static str,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for CountingHandler {
+        fn handler_type(&self) -> &str {
+            self.name
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::success("unexpected"))
+        }
+    }
+
+    let cases = [
+        (
+            r#"digraph G {
+            start [shape="Mdiamond"]
+            fork [shape="component"]
+            left [shape="diamond"]
+            right [shape="diamond"]
+            done [shape="Msquare"]
+            start -> fork
+            fork -> left
+            fork -> right
+            left -> done
+            right -> done
+        }"#,
+            "one successor per step",
+        ),
+        (
+            r#"digraph G {
+            start [shape="Mdiamond"]
+            merge [shape="tripleoctagon"]
+            done [shape="Msquare"]
+            start -> merge -> done
+        }"#,
+            "cannot merge branch results",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let graph = parse_graph(source);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = HandlerRegistry::new();
+        for name in [
+            "start",
+            "exit",
+            "conditional",
+            "parallel",
+            "parallel.fan_in",
+        ] {
+            registry.register(CountingHandler {
+                name,
+                calls: Arc::clone(&calls),
+            });
+        }
+        let logs = tempfile::tempdir().unwrap();
+
+        let error = PipelineExecutor::new(registry)
+            .run_with_checkpoint(&graph, Context::new(), logs.path())
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, AttractorError::ValidationError(ref message) if message.contains(expected)),
+            "{error:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!logs.path().join("checkpoint.json").exists());
+    }
+}
+
+#[tokio::test]
 async fn custom_handler_known_shape_conflict_invokes_no_handler_and_writes_no_checkpoint() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

@@ -6,6 +6,10 @@ All notable changes to PAS are documented here.
 
 ### Fixed
 
+- Fail closed on unsupported execution topology: semantic compilation now
+  rejects parallel/component nodes with multiple outgoing edges and every
+  fan-in node before execution. Components with at most one outgoing edge
+  remain available as sequential compatibility.
 - Pipeline run policy now uses a typed `RunConfiguration` with per-field source
   provenance and caller-over-manifest-over-permitted-graph-over-built-in
   precedence. Workflow graph attributes, handler outputs, and legacy checkpoint

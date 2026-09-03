@@ -1,0 +1,211 @@
+crates/attractor-pipeline/src/stylesheet.rs
+  s_7df601d62a5aff::t_68ef6e9898cba5 300-304
+  s_7df601d62a5aff::t_f4476eb708d0e4 3-6
+crates/attractor-cli/tests/cli_semantics.rs
+  s_0e69d26d4d3e1b::t_693f12259e0b79 330-333
+  s_0e69d26d4d3e1b::t_6ccba73386a4e2 295-299,301,304-305,307-308,313,317-323,329,334-342,344-346
+  s_7df601d62a5aff::t_f13cb5a9552234 258-269
+  s_0e69d26d4d3e1b::t_fb35648e885e82 300,302-303,306,309-311,343
+  s_0e69d26d4d3e1b::t_ffee165f76100d 312
+  s_0e69d26d4d3e1b::t_09c23c65c6d91b 314-316,324-328
+  s_0e69d26d4d3e1b::t_fe316a2dd838f7 294
+docs/dot-dialect.md
+  s_7df601d62a5aff::t_ef6286c1993b6e 212-213
+  s_0e69d26d4d3e1b::t_debf5206702512 367,372-377,379-380
+  s_0e69d26d4d3e1b::t_905602cc2e2937 215-216
+  s_7df601d62a5aff::t_8875c007c55992 209,217-218,236-239
+  s_7df601d62a5aff::t_f4476eb708d0e4 364-366,369-371,378
+crates/attractor-pipeline/src/validation.rs
+  s_0e69d26d4d3e1b::t_4fcfb0426f2fa7 9-10
+  s_7df601d62a5aff::t_ce202d7b44f9ec 343
+  s_7df601d62a5aff::t_756be7ba599df3 359-361
+  s_0e69d26d4d3e1b::t_693f12259e0b79 240,243-244
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 215-239,241-242,245-262
+crates/attractor-pipeline/src/lib.rs
+  s_7df601d62a5aff::t_c7ee6c9cf2a2d5 33-35
+  s_7df601d62a5aff::t_e3900caa7c7e2c 20
+crates/attractor-llm/src/anthropic.rs
+  s_7df601d62a5aff::t_89c9dec963a182 435
+crates/attractor-pipeline/src/handlers/codergen_handler_tests.rs
+  s_7df601d62a5aff::t_c7ee6c9cf2a2d5 439,467
+crates/attractor-pipeline/src/checkpoint.rs
+  s_7df601d62a5aff::t_6496022df884c3 308-310
+  s_7df601d62a5aff::t_9e09b5ab388e10 55-63,87-89,116-118,149-151
+docs/verification-deep-dive.svg
+  s_7df601d62a5aff::t_8875c007c55992 199
+  s_7df601d62a5aff::t_f4476eb708d0e4 51
+docs/task-verification.md
+  s_0e69d26d4d3e1b::t_debf5206702512 167
+  s_7df601d62a5aff::t_8875c007c55992 16,40,83,177
+  s_0e69d26d4d3e1b::t_905602cc2e2937 66-67
+crates/attractor-types/src/types.rs
+  s_7df601d62a5aff::t_f4476eb708d0e4 1
+crates/attractor-pipeline/tests/integration.rs
+  s_7df601d62a5aff::t_b71cbdd284a06a 268
+crates/attractor-tools/src/tool.rs
+  s_7df601d62a5aff::t_3f0dca14b1f6d4 16-20,30-38
+crates/attractor-tools/src/builtin/shell.rs
+  s_7df601d62a5aff::t_3f0dca14b1f6d4 5,40-49,62
+README.md
+  s_7df601d62a5aff::t_ef6286c1993b6e 95,97
+  s_7df601d62a5aff::t_8875c007c55992 31,90
+  s_0e69d26d4d3e1b::t_debf5206702512 19
+  s_0e69d26d4d3e1b::t_905602cc2e2937 24
+crates/attractor-tools/src/lib.rs
+  s_7df601d62a5aff::t_3f0dca14b1f6d4 18
+CHANGELOG.md
+  s_0e69d26d4d3e1b::t_4f556a19ad1800 9
+  s_7df601d62a5aff::t_ef6286c1993b6e 11
+  s_7df601d62a5aff::t_6572ef262a5f99 10
+crates/attractor-agent/src/lib.rs
+  s_7df601d62a5aff::t_72c1e46ade1da9 122,135-137,149,378,384-396
+  s_7df601d62a5aff::t_3f0dca14b1f6d4 16,399-410
+  s_7df601d62a5aff::t_a671fff7cfa9ba 397
+crates/attractor-agent/src/tests.rs
+  s_7df601d62a5aff::t_4c5af92b4d6008 339-357
+  s_7df601d62a5aff::t_b555cf302a498d 69,265-266,294-315,322-324,327-331,333-334,415-416
+  s_7df601d62a5aff::t_a75bf4fff46f7e 267-293,316-321,325-326,332,335,395-414
+  s_7df601d62a5aff::t_c5bfe3f9c5d1ce 2-4,336-338,358-394
+  s_7df601d62a5aff::t_be3994c3a0d88e 6,33-68
+  s_7df601d62a5aff::t_4db76582b7c85e 70
+crates/attractor-agent/src/test_utils.rs
+  s_7df601d62a5aff::t_c5bfe3f9c5d1ce 4,76-151,155
+  s_7df601d62a5aff::t_0182c15671bbca 154,165,172,176-186,202-205
+  s_7df601d62a5aff::t_fe578a3f6ab73a 152-153
+  s_7df601d62a5aff::t_700eb2471ad3b3 156
+crates/attractor-pipeline/src/retry.rs
+  s_7df601d62a5aff::t_b912787e63361c 6-8,21
+  s_7df601d62a5aff::t_e3900caa7c7e2c 1,5,9,17-20
+crates/attractor-agent/src/loop_detection.rs
+  s_7df601d62a5aff::t_a75bf4fff46f7e 183-190
+crates/attractor-llm/src/provider.rs
+  s_7df601d62a5aff::t_e896316b050d20 85,174-181,184
+  s_7df601d62a5aff::t_8e7de4e2ae33d0 110
+  s_7df601d62a5aff::t_3331852b082d2b 182,185-206
+  s_7df601d62a5aff::t_eb1c176e46faa6 183
+crates/attractor-pipeline/src/handlers/mod.rs
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 6
+crates/attractor-pipeline/src/engine_tests.rs
+  s_7df601d62a5aff::t_276431334a1117 795,963,966-1027
+  s_7df601d62a5aff::t_c178ed11af849f 137
+  s_7df601d62a5aff::t_6b08fc16c4ecc3 964-965
+  s_7df601d62a5aff::t_0c5dd68c85a302 571-572,574-578,587-588,590-735
+  s_0e69d26d4d3e1b::t_6ccba73386a4e2 915-922,924-961
+  s_7df601d62a5aff::t_6cfbea0a0ab59b 1028,1059-1113
+  s_7df601d62a5aff::t_f0ae70fd4f021c 738-794
+  s_7df601d62a5aff::t_2a36ecf2893b77 174-175,178,185
+  s_7df601d62a5aff::t_4528c8b101de4d 1030-1046,1056-1058
+  s_7df601d62a5aff::t_e02fd20bca75cb 531-534,589
+  s_7df601d62a5aff::t_62bde1dc1e58a2 1029,1047-1055
+  s_7df601d62a5aff::t_b21f7e656bff71 903-906,908-911
+  s_7df601d62a5aff::t_8e914e5f15927a 503-524,539,551-570,573,579-581,736-737
+  s_7df601d62a5aff::t_937a92a4e53426 525-530,535-538,540-550,582-586
+  s_7df601d62a5aff::t_1917d90b14036f 163
+  s_7df601d62a5aff::t_1c8048a5943138 796-902,907,912-914,962
+  s_0e69d26d4d3e1b::t_09c23c65c6d91b 923
+crates/attractor-llm/src/anthropic_tests.rs
+  s_7df601d62a5aff::t_4b35ba7e910333 131
+crates/attractor-pipeline/src/engine.rs
+  s_7df601d62a5aff::t_986f9cf2e951bd 523-524,865-885
+  s_7df601d62a5aff::t_9b831f3f280bfb 338-339,351-379,390,406-412,414,458
+  s_7df601d62a5aff::t_e3900caa7c7e2c 461
+  s_7df601d62a5aff::t_decea9dab7b460 413,593-611
+  s_7df601d62a5aff::t_93b52c7881957a 8,14,63,86-90,210-215,381-386,421-422,424-430,438-439,441-457
+  s_7df601d62a5aff::t_f110389036325a 34,218-221,228,232-235
+  s_7df601d62a5aff::t_b21f7e656bff71 19,342-349
+  s_7df601d62a5aff::t_d9e61ed8fb2df7 415-420,423,431-437,440
+  s_7df601d62a5aff::t_9c88f3ae25b364 517-522,640,645-652,727,771-778,801-805,832
+  s_7df601d62a5aff::t_22564f54c661cc 546,563-567,582-583,586
+  s_7df601d62a5aff::t_410438ac8fb964 627,630-639,641,655-656,714,717-726,728,758,762-763,820-821,824-831,834-835,847-848,863
+  s_7df601d62a5aff::t_434a226044aeb2 46-62,64-85,91-94
+  s_7df601d62a5aff::t_504682a2337976 236,333-337,340-341,350,380,387-389,391-405,459-460,462-469,626,713
+  s_7df601d62a5aff::t_f9594bd29d70df 237
+docs/execution-capabilities.md
+  s_7df601d62a5aff::t_e18f0e69e25597 1-6,9,11,14-17,22-25
+  s_0e69d26d4d3e1b::t_905602cc2e2937 7-8,26
+  s_7df601d62a5aff::t_62bde1dc1e58a2 10
+  s_7df601d62a5aff::t_6afe21d40da5e7 12-13,19
+  s_7df601d62a5aff::t_4c5af92b4d6008 18
+  s_7df601d62a5aff::t_f4b92c6609e84c 20
+  s_7df601d62a5aff::t_40678c05399472 21
+docs/guide.md
+  s_0e69d26d4d3e1b::t_905602cc2e2937 327,1000
+  s_7df601d62a5aff::t_8875c007c55992 160,363,1001-1004
+  s_0e69d26d4d3e1b::t_debf5206702512 445
+  s_7df601d62a5aff::t_ef6286c1993b6e 154-155,159
+crates/attractor-pipeline/src/graph.rs
+  s_7df601d62a5aff::t_44e3063ba827ff 365-368
+  s_7df601d62a5aff::t_68ef6e9898cba5 44,141
+  s_7df601d62a5aff::t_12b8aee23fe606 371
+crates/attractor-pipeline/src/handlers/tool_handler.rs
+  s_7df601d62a5aff::t_96d4df04c77a57 131
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 11-12,132,145,151,156-157,160
+  s_0e69d26d4d3e1b::t_905602cc2e2937 150,152-155,158-159
+crates/attractor-pipeline/src/handlers/quality_handler.rs
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 14-15,198,206,209-212
+crates/attractor-pipeline/tests/documented_dot_contracts.rs
+  s_7df601d62a5aff::t_e02fd20bca75cb 670-675,682-685
+  s_7df601d62a5aff::t_451b1689e9e6fb 562-573,578-590,592,595,597-611,624-635,640,653-658,701-704
+  s_0e69d26d4d3e1b::t_905602cc2e2937 574-577,612-623
+  s_7df601d62a5aff::t_f4b92c6609e84c 561,593-594,596,641-652,659-669,676-681,686-700
+  s_7df601d62a5aff::t_e0dffbf56b45a1 591,636-639
+crates/attractor-pipeline/src/execution_plan.rs
+  s_7df601d62a5aff::t_fc2541e363fae1 1203
+  s_7df601d62a5aff::t_68ef6e9898cba5 614-615
+  s_7df601d62a5aff::t_74234c9bf62336 564-566,572,574-579,581
+  s_7df601d62a5aff::t_8fa773dab1577e 1313-1331
+  s_7df601d62a5aff::t_1eb2c095bbde14 1351-1375
+  s_7df601d62a5aff::t_de37f54ab5fdad 291,583-607
+  s_7df601d62a5aff::t_76c56e4e2175c4 1444-1463
+  s_7df601d62a5aff::t_011800440dc16d 638,1310,1312,1464-1508
+  s_7df601d62a5aff::t_c7ee6c9cf2a2d5 5-6,126-141
+  s_7df601d62a5aff::t_8774088a3a870c 1332-1350
+  s_7df601d62a5aff::t_ce202d7b44f9ec 147,639,893-894,961,967-971,974-977,979-984,1005-1007,1009-1022
+  s_7df601d62a5aff::t_756be7ba599df3 156,324,545-563,567-571,573,582,608-613,616-631,633-635,637
+  s_7df601d62a5aff::t_e02fd20bca75cb 580
+  s_7df601d62a5aff::t_b21f7e656bff71 632,636,972-973,978,1378-1397,1399-1406,1416-1419,1434-1437
+  s_7df601d62a5aff::t_cab1635912e793 985-1004,1008
+  s_7df601d62a5aff::t_d5d0f4b37832cf 1376-1377,1398,1407-1415,1420-1433,1438-1443
+  s_7df601d62a5aff::t_f1d57c35ce9990 640
+  s_7df601d62a5aff::t_34b3504576e0ff 1023
+  s_7df601d62a5aff::t_0323c852112995 1311
+crates/attractor-pipeline/src/handlers/codergen_handler.rs
+  s_7df601d62a5aff::t_96d4df04c77a57 212
+  s_0e69d26d4d3e1b::t_905602cc2e2937 236,238-241,244-245
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 16-17,213,233,237,242-243,246,248-253
+  s_0e69d26d4d3e1b::t_4f556a19ad1800 231-232
+  s_7df601d62a5aff::t_c7ee6c9cf2a2d5 83
+crates/attractor-pipeline/src/handlers/process_group.rs
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 1,3-8,11-13,16-21,25-29,32-36,38,40-49
+crates/attractor-types/src/lib.rs
+  s_7df601d62a5aff::t_1a55e16bf65198 15
+crates/attractor-pipeline/src/validation_tests.rs
+  s_7df601d62a5aff::t_b21f7e656bff71 194-197
+  s_0e69d26d4d3e1b::t_b9a5b88e720bfa 297-339
+  s_7df601d62a5aff::t_b71cbdd284a06a 183
+  s_0e69d26d4d3e1b::t_8eed452babd234 296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "fd0e71004b8ef0d7f9f5e5ff1682272df4d5e5b5",
+  "prompts": {},
+  "sessions": {
+    "s_0e69d26d4d3e1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0695f-1706-7701-b571-1ada7159b8c8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    },
+    "s_7df601d62a5aff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a06931-2ce4-7f02-9ac4-3be7e0407215",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

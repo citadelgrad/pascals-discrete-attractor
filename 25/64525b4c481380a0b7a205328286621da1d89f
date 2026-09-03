@@ -1,0 +1,22 @@
+crates/attractor-pipeline/tests/documented_dot_contracts.rs
+  s_dd781f8d498a0f::t_7cf80de084cc41 486-502
+  s_dd781f8d498a0f::t_3afceb96183550 485
+docs/guide.md
+  s_dd781f8d498a0f::t_b2b722ab92f819 923
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "2564525b4c481380a0b7a205328286621da1d89f",
+  "prompts": {},
+  "sessions": {
+    "s_dd781f8d498a0f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a06902-56e0-7663-b521-99bd9edb072f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

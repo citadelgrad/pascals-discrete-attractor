@@ -17,7 +17,7 @@ pub mod handlers;
 pub mod interviewer;
 pub mod preflight;
 pub mod provider_defaults;
-pub mod retry;
+mod retry;
 pub mod run_configuration;
 pub mod stylesheet;
 pub mod transforms;
@@ -30,8 +30,9 @@ pub use edge_selection::select_edge;
 pub use engine::{PipelineExecutor, PipelineResult, DEFAULT_MAX_BUDGET_USD};
 pub use events::{EventEmitter, PipelineEvent};
 pub use execution_plan::{
-    ExecutionPlan, HandlerIdentity, LlmProvider, MissingProviderPolicy, PlanCompilation,
-    ResolvedNode, ResolvedNodeKind, SemanticDiagnostic, SemanticDiagnosticKind, SemanticError,
+    ExecutionPlan, HandlerIdentity, LlmProvider, MissingProviderPolicy, NodeInvocationPolicy,
+    PlanCompilation, ResolvedNode, ResolvedNodeKind, SemanticDiagnostic, SemanticDiagnosticKind,
+    SemanticError,
 };
 pub use goal_gate::{check_goal_gates, enforce_goal_gates, GoalGateResult};
 pub use graph::{PipelineEdge, PipelineGraph, PipelineNode};
@@ -53,7 +54,6 @@ pub use preflight::{
     run_with_budget as preflight_run_with_budget, PreflightFinding, Severity as PreflightSeverity,
 };
 pub use provider_defaults::fill_missing_llm_providers;
-pub use retry::{execute_with_retry, BackoffPolicy};
 pub use run_configuration::{
     ClaudeExecutionOptions, ConfigurationError, ConfigurationSource, ExecutionOptions,
     ResolvedClaudeConfig, ResolvedConfig, ResolvedValue, RunConfiguration,

@@ -6,6 +6,8 @@
 
 use std::collections::{HashSet, VecDeque};
 
+use attractor_dot::AttributeValue;
+
 use crate::graph::PipelineGraph;
 use crate::parse_condition;
 use crate::{ExecutionPlan, LlmProvider, SemanticDiagnostic, SemanticDiagnosticKind};
@@ -38,24 +40,6 @@ pub enum Severity {
 pub trait LintRule: Send + Sync {
     fn name(&self) -> &str;
     fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic>;
-}
-
-const VALID_FIDELITY_PREFIXES: &[&str] = &["full", "truncate", "compact", "summary"];
-
-fn is_valid_fidelity(val: &str) -> bool {
-    let val = val.trim();
-    if val.is_empty() {
-        return false;
-    }
-    // "summary:low", "summary:medium", "truncate:5" etc. or bare prefix
-    if let Some((prefix, _suffix)) = val.split_once(':') {
-        VALID_FIDELITY_PREFIXES.contains(&prefix)
-    } else if let Some((prefix, _suffix)) = val.split_once('(') {
-        // Also accept "truncate(5)" parenthesized syntax
-        VALID_FIDELITY_PREFIXES.contains(&prefix)
-    } else {
-        VALID_FIDELITY_PREFIXES.contains(&val)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,52 +98,6 @@ impl LintRule for ConditionSyntaxRule {
                 }
             })
             .collect()
-    }
-}
-
-struct FidelityValidRule;
-impl LintRule for FidelityValidRule {
-    fn name(&self) -> &str {
-        "fidelity_valid"
-    }
-    fn apply(&self, graph: &PipelineGraph) -> Vec<Diagnostic> {
-        let mut diags = Vec::new();
-        for node in graph.all_nodes() {
-            if let Some(ref f) = node.fidelity {
-                if !is_valid_fidelity(f) {
-                    diags.push(Diagnostic {
-                        rule: self.name().into(),
-                        severity: Severity::Warning,
-                        message: format!("Node '{}' has invalid fidelity value '{f}'", node.id),
-                        node_id: Some(node.id.clone()),
-                        edge: None,
-                        fix: Some(
-                            "Use one of: full, truncate, compact, summary, summary:<level>".into(),
-                        ),
-                    });
-                }
-            }
-        }
-        for edge in graph.all_edges() {
-            if let Some(ref f) = edge.fidelity {
-                if !is_valid_fidelity(f) {
-                    diags.push(Diagnostic {
-                        rule: self.name().into(),
-                        severity: Severity::Warning,
-                        message: format!(
-                            "Edge {} -> {} has invalid fidelity value '{f}'",
-                            edge.from, edge.to
-                        ),
-                        node_id: None,
-                        edge: Some((edge.from.clone(), edge.to.clone())),
-                        fix: Some(
-                            "Use one of: full, truncate, compact, summary, summary:<level>".into(),
-                        ),
-                    });
-                }
-            }
-        }
-        diags
     }
 }
 
@@ -259,7 +197,6 @@ fn validate_nonsemantic_structure(graph: &PipelineGraph) -> Vec<Diagnostic> {
     let rules: Vec<Box<dyn LintRule>> = vec![
         Box::new(EdgeTargetExistsRule),
         Box::new(ConditionSyntaxRule),
-        Box::new(FidelityValidRule),
         Box::new(RetryTargetExistsRule),
         Box::new(GoalGateHasRetryRule),
     ];
@@ -274,6 +211,54 @@ fn validate_nonsemantic_structure(graph: &PipelineGraph) -> Vec<Diagnostic> {
 fn validate_plan_structure(plan: &ExecutionPlan) -> Vec<Diagnostic> {
     let graph = plan.graph();
     let mut diagnostics = Vec::new();
+
+    let mut retry_targets = graph
+        .all_nodes()
+        .flat_map(|node| {
+            [
+                ("retry_target", node.retry_target.as_deref()),
+                (
+                    "fallback_retry_target",
+                    node.fallback_retry_target.as_deref(),
+                ),
+            ]
+            .into_iter()
+            .filter_map(move |(attribute, target)| {
+                target.map(|target| {
+                    (
+                        node.id.clone(),
+                        Some(node.id.clone()),
+                        attribute,
+                        target.to_string(),
+                    )
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    for attribute in ["retry_target", "fallback_retry_target"] {
+        if let Some(AttributeValue::String(target)) = graph.attrs.get(attribute) {
+            retry_targets.push(("graph".to_string(), None, attribute, target.clone()));
+        }
+    }
+    retry_targets
+        .sort_by(|left, right| (&left.0, left.2, &left.3).cmp(&(&right.0, right.2, &right.3)));
+    diagnostics.extend(
+        retry_targets
+            .into_iter()
+            .filter(|(_, _, _, target)| plan.is_exit(target))
+            .map(|(owner, node_id, attribute, target)| Diagnostic {
+                rule: "retry_target_not_terminal".into(),
+                severity: Severity::Error,
+                message: format!(
+                    "{owner} {attribute} '{target}' resolves to a terminal node and cannot change an unsatisfied goal gate"
+                ),
+                node_id,
+                edge: None,
+                fix: Some(format!(
+                    "Point {attribute} at a non-terminal node that can change the goal-gate outcome"
+                )),
+            }),
+    );
 
     if graph
         .all_edges()
@@ -355,6 +340,7 @@ fn validate_plan_structure(plan: &ExecutionPlan) -> Vec<Diagnostic> {
 fn semantic_diagnostic(diagnostic: SemanticDiagnostic) -> Diagnostic {
     let rule = match diagnostic.kind {
         SemanticDiagnosticKind::InvalidAttributeType => "attribute_type",
+        SemanticDiagnosticKind::InvalidAttributeValue => "attribute_value",
         SemanticDiagnosticKind::MissingProvider => "provider_required",
         SemanticDiagnosticKind::UnknownProvider => "provider_valid",
         SemanticDiagnosticKind::MissingStart | SemanticDiagnosticKind::MultipleStarts => {
@@ -370,6 +356,9 @@ fn semantic_diagnostic(diagnostic: SemanticDiagnostic) -> Diagnostic {
         }
         SemanticDiagnosticKind::HandlerCapabilityMismatch => "handler_registry",
         SemanticDiagnosticKind::UnsupportedExecutionTopology => "unsupported_execution_topology",
+        SemanticDiagnosticKind::UnsupportedExecutionCapability => {
+            "unsupported_execution_capability"
+        }
         SemanticDiagnosticKind::TransformError => "transform",
     };
     Diagnostic {

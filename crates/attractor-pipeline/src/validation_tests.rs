@@ -180,7 +180,7 @@ fn validate_or_raise_errors_for_invalid_graph() {
 }
 
 #[test]
-fn fidelity_valid_rule() {
+fn fidelity_is_rejected_as_unsupported() {
     let pg = parse_and_build(
         r#"digraph G {
         start [shape="Mdiamond"]
@@ -191,26 +191,11 @@ fn fidelity_valid_rule() {
     );
     let diags = validate(&pg);
     assert!(
-        diags
-            .iter()
-            .any(|d| d.rule == "fidelity_valid" && d.severity == Severity::Warning),
-        "Expected fidelity_valid warning, got: {diags:?}"
+        diags.iter().any(|d| {
+            d.rule == "unsupported_execution_capability" && d.severity == Severity::Error
+        }),
+        "Expected unsupported capability error, got: {diags:?}"
     );
-}
-
-#[test]
-fn valid_fidelity_values_accepted() {
-    assert!(is_valid_fidelity("full"));
-    assert!(is_valid_fidelity("truncate"));
-    assert!(is_valid_fidelity("compact"));
-    assert!(is_valid_fidelity("summary"));
-    assert!(is_valid_fidelity("summary:low"));
-    assert!(is_valid_fidelity("summary:medium"));
-    assert!(is_valid_fidelity("truncate(5)"));
-    assert!(is_valid_fidelity("truncate(10)"));
-    assert!(!is_valid_fidelity("bogus"));
-    assert!(!is_valid_fidelity("bogus(5)"));
-    assert!(!is_valid_fidelity(""));
 }
 
 #[test]
@@ -306,6 +291,50 @@ fn retry_target_nonexistent_warning() {
             .any(|d| d.rule == "retry_target_exists" && d.severity == Severity::Warning),
         "Expected retry_target_exists warning, got: {diags:?}"
     );
+}
+
+#[test]
+fn terminal_retry_targets_are_blocking_errors() {
+    let cases = [
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            gate [shape="parallelogram", tool_command="false", goal_gate=true, retry_target="done"]
+            done [shape="Msquare"]
+            start -> gate -> done
+        }"#,
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            gate [shape="parallelogram", tool_command="false", goal_gate=true, fallback_retry_target="done"]
+            done [shape="Msquare"]
+            start -> gate -> done
+        }"#,
+        r#"digraph G {
+            retry_target="done"
+            start [shape="Mdiamond"]
+            gate [shape="parallelogram", tool_command="false", goal_gate=true]
+            done [shape="Msquare"]
+            start -> gate -> done
+        }"#,
+        r#"digraph G {
+            fallback_retry_target="done"
+            start [shape="Mdiamond"]
+            gate [shape="parallelogram", tool_command="false", goal_gate=true]
+            done [shape="Msquare"]
+            start -> gate -> done
+        }"#,
+    ];
+
+    for source in cases {
+        let diagnostics = validate(&parse_and_build(source));
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.rule == "retry_target_not_terminal"
+                    && diagnostic.severity == Severity::Error
+                    && diagnostic.message.contains("terminal")
+            }),
+            "terminal retry target was not rejected: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

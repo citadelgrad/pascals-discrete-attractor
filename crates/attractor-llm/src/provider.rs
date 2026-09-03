@@ -82,6 +82,7 @@ mod tests {
     use super::*;
     use crate::{FinishReason, Message, Usage};
     use std::collections::HashMap;
+    use tokio_stream::StreamExt;
 
     struct MockProvider;
 
@@ -106,7 +107,7 @@ mod tests {
             &self,
             _request: &Request,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-            Box::pin(tokio_stream::empty::<StreamEvent>())
+            Box::pin(tokio_stream::once(StreamEvent::ContentStart))
         }
 
         fn name(&self) -> &str {
@@ -168,6 +169,39 @@ mod tests {
         assert!(provider.supports_streaming());
         assert!(!provider.supports_reasoning());
         assert_eq!(provider.context_window_size(), 128_000);
+    }
+
+    #[tokio::test]
+    async fn streaming_capability_fixture_yields_a_real_event() {
+        let provider = DynProvider::new(MockProvider);
+        assert!(provider.supports_streaming());
+
+        let request = make_test_request();
+        let event = provider.stream(&request).next().await;
+        assert!(matches!(event, Some(StreamEvent::ContentStart)));
+    }
+
+    #[tokio::test]
+    async fn builtin_provider_streaming_claims_match_their_empty_streams() {
+        let providers = [
+            DynProvider::new(crate::AnthropicAdapter::new("test-key".into())),
+            DynProvider::new(crate::OpenAiAdapter::new("test-key".into())),
+            DynProvider::new(crate::GeminiAdapter::new("test-key".into())),
+        ];
+        let request = make_test_request();
+
+        for provider in providers {
+            assert!(
+                !provider.supports_streaming(),
+                "{} must not claim unsupported streaming",
+                provider.name()
+            );
+            assert!(
+                provider.stream(&request).next().await.is_none(),
+                "{} unexpectedly emitted a streaming event",
+                provider.name()
+            );
+        }
     }
 
     #[tokio::test]

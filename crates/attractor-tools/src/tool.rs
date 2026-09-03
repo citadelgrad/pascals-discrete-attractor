@@ -13,6 +13,11 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToolExecutionOptions {
+    pub default_command_timeout_ms: Option<u64>,
+}
+
 /// Trait for tools that can be invoked by an agent.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -22,6 +27,15 @@ pub trait Tool: Send + Sync {
         arguments: serde_json::Value,
         env: &dyn ExecutionEnvironment,
     ) -> attractor_types::Result<String>;
+
+    async fn execute_with_options(
+        &self,
+        arguments: serde_json::Value,
+        env: &dyn ExecutionEnvironment,
+        _options: ToolExecutionOptions,
+    ) -> attractor_types::Result<String> {
+        self.execute(arguments, env).await
+    }
 }
 
 /// Registry that holds named tools and provides lookup.

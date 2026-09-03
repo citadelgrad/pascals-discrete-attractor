@@ -6,6 +6,9 @@ All notable changes to PAS are documented here.
 
 ### Fixed
 
+- Reject goal-gate retry targets that resolve to an exit node, preventing a no-await traversal loop that could evade `max_steps`. Subprocess-backed handlers now use cancellation-safe process-group guards so an outer node deadline cannot leave descendants running.
+- Wired node retries, handler deadlines, attempt accounting/checkpointing, and lifecycle events through one canonical `ExecutionPlan`/`PipelineExecutor` invocation policy. The disconnected public `execute_with_retry`/`BackoffPolicy` path and redundant `PipelineNode.max_retries` projection were removed so retry semantics cannot drift. Agent sessions now honor loop detection and default shell timeouts; built-in provider streaming flags are truthful.
+- Canonical compilation now rejects unsupported fidelity, reasoning-effort, auto-status, partial-success, thread, and manager-loop semantics, and rejects Claude-only `allowed_tools`/node `max_budget_usd` controls outside Claude-backed codergen nodes. Removed the disconnected fidelity and subagent library APIs. See [the execution capability contract](docs/execution-capabilities.md).
 - Fail closed on unsupported execution topology: semantic compilation now
   rejects parallel/component nodes with multiple outgoing edges and every
   fan-in node before execution. Components with at most one outgoing edge

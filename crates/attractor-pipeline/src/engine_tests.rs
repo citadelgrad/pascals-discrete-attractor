@@ -134,7 +134,7 @@ async fn no_start_node_returns_error() {
 }
 
 #[tokio::test]
-async fn semantic_compile_failure_invokes_no_handler_and_writes_no_checkpoint() {
+async fn unsupported_capability_invokes_no_handler_event_or_checkpoint() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -160,7 +160,7 @@ async fn semantic_compile_failure_invokes_no_handler_and_writes_no_checkpoint() 
     let graph = parse_graph(
         r#"digraph G {
             start [shape="Mdiamond"]
-            work [shape="box", prompt="work", llm_provider="unknown"]
+            work [shape="box", prompt="work", llm_provider="claude", fidelity="compact"]
             done [shape="Msquare"]
             start -> work -> done
         }"#,
@@ -171,14 +171,18 @@ async fn semantic_compile_failure_invokes_no_handler_and_writes_no_checkpoint() 
     registry.register(ExitHandler);
     registry.register(CountingHandler(Arc::clone(&calls)));
     let logs = tempfile::tempdir().unwrap();
+    let emitter = EventEmitter::new(16);
+    let mut receiver = emitter.subscribe();
 
     let result = PipelineExecutor::new(registry)
+        .with_event_emitter(emitter)
         .run_with_checkpoint(&graph, Context::new(), logs.path())
         .await;
 
     assert!(result.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(!logs.path().join("checkpoint.json").exists());
+    assert!(receiver.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -494,6 +498,617 @@ async fn goal_gate_failure_with_retry_target_retries() {
     assert!(result.completed_nodes.contains(&"done".to_string()));
     // The handler was called twice (once fail, once success)
     assert_eq!(call_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn node_max_retries_reinvokes_handler_until_success() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct RetryThenSuccess {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for RetryThenSuccess {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(Outcome {
+                    status: StageStatus::Retry,
+                    preferred_label: None,
+                    suggested_next_ids: vec![],
+                    context_updates: HashMap::from([
+                        ("work.cost_usd".into(), serde_json::json!(1.0)),
+                        (
+                            "intermediate.must_not_commit".into(),
+                            serde_json::json!(true),
+                        ),
+                    ]),
+                    notes: "retry".into(),
+                    failure_reason: None,
+                })
+            } else {
+                Ok(Outcome {
+                    status: StageStatus::Success,
+                    preferred_label: None,
+                    suggested_next_ids: vec![],
+                    context_updates: HashMap::from([
+                        ("work.cost_usd".into(), serde_json::json!(2.0)),
+                        ("final.committed".into(), serde_json::json!(true)),
+                    ]),
+                    notes: "recovered".into(),
+                    failure_reason: None,
+                })
+            }
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=1]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(RetryThenSuccess {
+        calls: Arc::clone(&calls),
+    });
+    let emitter = EventEmitter::new(64);
+    let mut receiver = emitter.subscribe();
+
+    let result = PipelineExecutor::new(registry)
+        .with_event_emitter(emitter)
+        .run(&graph)
+        .await
+        .unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(result.node_outcomes["work"].status, StageStatus::Success);
+    assert_eq!(result.total_cost, 3.0);
+    assert!(!result
+        .final_context
+        .contains_key("intermediate.must_not_commit"));
+    assert_eq!(result.final_context["final.committed"], true);
+    let mut retry_attempts = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        if let PipelineEvent::StageRetrying { node_id, attempt } = event {
+            if node_id == "work" {
+                retry_attempts.push(attempt);
+            }
+        }
+    }
+    assert_eq!(retry_attempts, vec![2]);
+}
+
+#[tokio::test]
+async fn fail_outcomes_are_not_retried() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct FailOnce(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for FailOnce {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::fail("terminal stage result"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=3]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(FailOnce(Arc::clone(&calls)));
+
+    let result = PipelineExecutor::new(registry).run(&graph).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(result.node_outcomes["work"].status, StageStatus::Fail);
+}
+
+#[tokio::test]
+async fn exit_handlers_use_the_same_retry_boundary() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct RetryThenExit(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for RetryThenExit {
+        fn handler_type(&self) -> &str {
+            "exit"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(Outcome::with_label(StageStatus::Retry, "retry"))
+            } else {
+                Ok(Outcome::success("exited"))
+            }
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            done [shape="Msquare", max_retries=1]
+            start -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(RetryThenExit(Arc::clone(&calls)));
+
+    let result = PipelineExecutor::new(registry).run(&graph).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(result.node_outcomes["done"].status, StageStatus::Success);
+}
+
+#[tokio::test]
+async fn retry_attempts_consume_the_global_step_limit() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct AlwaysRetry(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for AlwaysRetry {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::with_label(StageStatus::Retry, "retry"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=3]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(AlwaysRetry(Arc::clone(&calls)));
+    let context = Context::new();
+    context.set("max_steps", serde_json::json!(2)).await;
+
+    let error = PipelineExecutor::new(registry)
+        .run_with_context(&graph, context)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("maximum step count (2)"));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn retry_attempts_are_checkpointed_before_handler_invocation() {
+    struct AlwaysRateLimited;
+
+    #[async_trait]
+    impl NodeHandler for AlwaysRateLimited {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            Err(AttractorError::RateLimited {
+                provider: "test".into(),
+                retry_after_ms: 0,
+            })
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=1]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(AlwaysRateLimited);
+    let logs = tempfile::tempdir().unwrap();
+
+    let error = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AttractorError::RateLimited { .. }));
+
+    let checkpoint: serde_json::Value = serde_json::from_str(
+        &tokio::fs::read_to_string(logs.path().join("checkpoint.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(checkpoint["current_node_id"], "work");
+    assert_eq!(checkpoint["step_count"], 3);
+    assert_eq!(checkpoint["total_handler_attempts"], 3);
+    assert_eq!(checkpoint["active_node_id"], "work");
+    assert_eq!(checkpoint["active_node_attempts"], 2);
+}
+
+#[tokio::test]
+async fn resumed_node_does_not_regain_consumed_retry_attempts() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct AlwaysRateLimited(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for AlwaysRateLimited {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(AttractorError::RateLimited {
+                provider: "test".into(),
+                retry_after_ms: 0,
+            })
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=1]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+    let mut checkpoint = PipelineCheckpoint::new(
+        "work".into(),
+        vec!["start".into()],
+        HashMap::new(),
+        HashMap::new(),
+    );
+    checkpoint.step_count = 2;
+    checkpoint.total_handler_attempts = 2;
+    checkpoint.active_node_id = Some("work".into());
+    checkpoint.active_node_attempts = 1;
+    save_checkpoint(&checkpoint, logs.path()).await.unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(AlwaysRateLimited(Arc::clone(&calls)));
+
+    let error = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AttractorError::RateLimited { .. }));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let restored = load_checkpoint(logs.path()).await.unwrap().unwrap();
+    assert_eq!(restored.active_node_attempts, 2);
+    assert_eq!(restored.total_handler_attempts, 3);
+    assert_eq!(restored.step_count, 3);
+}
+
+#[tokio::test]
+async fn node_timeout_applies_to_custom_handlers_and_is_retryable() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct SlowHandler(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for SlowHandler {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            Ok(Outcome::success("too late"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", max_retries=1, timeout=1ms]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(SlowHandler(Arc::clone(&calls)));
+
+    let error = PipelineExecutor::new(registry)
+        .run(&graph)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AttractorError::CommandTimeout { timeout_ms: 1 }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn canonical_tool_timeout_terminates_descendant_processes() {
+    use std::time::Duration;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let pid_file = fixture.path().join("descendant.pid");
+    let command = format!(
+        "sleep 30 & child=$!; printf %s $child > {}; wait",
+        pid_file.display()
+    );
+    let graph = parse_graph(&format!(
+        r#"digraph G {{
+            start [shape="Mdiamond"]
+            work [shape="parallelogram", tool_command="{command}", timeout=100ms]
+            done [shape="Msquare"]
+            start -> work -> done
+        }}"#
+    ));
+
+    let error = PipelineExecutor::with_default_registry()
+        .run(&graph)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AttractorError::CommandTimeout { timeout_ms: 100 }
+    ));
+
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .parse::<libc::pid_t>()
+        .unwrap();
+    let mut alive = true;
+    for _ in 0..100 {
+        alive = unsafe { libc::kill(pid, 0) == 0 };
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    if alive {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(!alive, "descendant process {pid} survived the node timeout");
+}
+
+#[tokio::test]
+async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
+    use crate::PipelineEvent;
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let emitter = EventEmitter::new(64);
+    let mut receiver = emitter.subscribe();
+
+    test_executor()
+        .with_event_emitter(emitter)
+        .run(&graph)
+        .await
+        .unwrap();
+
+    let mut event_kinds = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        event_kinds.push(match event {
+            PipelineEvent::PipelineStarted { .. } => "pipeline_started",
+            PipelineEvent::PipelineCompleted { .. } => "pipeline_completed",
+            PipelineEvent::PipelineFailed { .. } => "pipeline_failed",
+            PipelineEvent::StageStarted { .. } => "stage_started",
+            PipelineEvent::StageCompleted { .. } => "stage_completed",
+            PipelineEvent::StageFailed { .. } => "stage_failed",
+            PipelineEvent::StageRetrying { .. } => "stage_retrying",
+            PipelineEvent::EdgeSelected { .. } => "edge_selected",
+            PipelineEvent::GoalGateChecked { .. } => "goal_gate_checked",
+            PipelineEvent::CheckpointSaved { .. } => "checkpoint_saved",
+            PipelineEvent::ContextUpdated { .. } => "context_updated",
+        });
+    }
+
+    assert_eq!(event_kinds.first(), Some(&"pipeline_started"));
+    assert_eq!(event_kinds.last(), Some(&"pipeline_completed"));
+    assert_eq!(
+        event_kinds
+            .iter()
+            .filter(|kind| **kind == "stage_started")
+            .count(),
+        3
+    );
+    assert_eq!(
+        event_kinds
+            .iter()
+            .filter(|kind| **kind == "stage_completed")
+            .count(),
+        3
+    );
+    assert!(event_kinds.contains(&"context_updated"));
+    assert_eq!(
+        event_kinds
+            .iter()
+            .filter(|kind| **kind == "edge_selected")
+            .count(),
+        2
+    );
+    assert!(!event_kinds.contains(&"pipeline_failed"));
+}
+
+#[tokio::test]
+async fn absent_or_lagging_event_subscribers_cannot_change_execution() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+
+    let result = test_executor()
+        .with_event_emitter(EventEmitter::new(1))
+        .run(&graph)
+        .await
+        .unwrap();
+
+    assert_eq!(result.completed_nodes, vec!["start", "work", "done"]);
+
+    let lagging_emitter = EventEmitter::new(1);
+    let _lagging_receiver = lagging_emitter.subscribe();
+    let lagged_result = test_executor()
+        .with_event_emitter(lagging_emitter)
+        .run(&graph)
+        .await
+        .unwrap();
+    assert_eq!(lagged_result.completed_nodes, result.completed_nodes);
+}
+
+#[tokio::test]
+async fn executor_emits_exactly_one_pipeline_failure_for_runtime_errors() {
+    use crate::PipelineEvent;
+
+    struct BrokenHandler;
+
+    #[async_trait]
+    impl NodeHandler for BrokenHandler {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            Err(AttractorError::AuthError {
+                provider: "test".into(),
+            })
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(BrokenHandler);
+    let emitter = EventEmitter::new(64);
+    let mut receiver = emitter.subscribe();
+
+    PipelineExecutor::new(registry)
+        .with_event_emitter(emitter)
+        .run(&graph)
+        .await
+        .unwrap_err();
+
+    let mut failures = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        if let PipelineEvent::PipelineFailed { error, .. } = event {
+            failures.push(error);
+        }
+    }
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].contains("Authentication failed"));
 }
 
 // Test 8a: Context-based edge conditions are resolved from pipeline context

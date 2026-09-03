@@ -16,18 +16,19 @@ PAS doesn't just run tasks — it verifies them. Six layers of checks ensure tha
   <img src="docs/verification-deep-dive.svg" alt="Verification Deep Dive" width="800"/>
 </p>
 
-1. **Static Validation** — Canonical semantic compilation plus nine structural checks run before any LLM call. Missing start nodes, unavailable handlers, unknown providers, unreachable steps, and malformed conditions are caught immediately.
+1. **Static Validation** — Canonical semantic compilation plus nine structural checks run before any LLM call. Missing start nodes, unavailable handlers, unknown providers, unreachable steps, malformed conditions, and terminal retry targets are caught immediately.
 2. **Handler Dispatch** — The compiler resolves each node's handler type and provider once; the engine dispatches that typed plan and aborts before execution if a required handler isn't registered.
 3. **Outcome Schema** — Rust's type system enforces the response contract at compile time. Every handler must return a status, context updates, and notes — malformed results are structurally impossible.
 4. **Edge Routing** — A 5-step cascade selects the next edge: condition match → preferred label → suggested ID → weight → lexical tiebreak. This enables patterns like "pass → deploy, partial → extended tests, fail → fixup loop."
 5. **Goal Gates** — The "proof of work" layer. Nodes marked `goal_gate=true` are audited at exit. If any gate is unsatisfied, the engine resolves a retry target (node → fallback → graph-level) and loops back. No target found means pipeline abort.
-6. **Budget & Step Guards** — `max_steps`, `max_budget_usd`, and `max_retries` are enforced continuously. Runaway loops are impossible.
+6. **Budget & Step Guards** — Every handler attempt consumes `max_steps`; `max_budget_usd` is checked throughout execution; and node `max_retries=N` permits at most N + 1 attempts per visit. Graph back-edges and goal-gate loops remain bounded by `max_steps`; terminal goal-gate retry targets are rejected before execution.
 
 Run controls are immutable typed configuration, separate from workflow `Context` data.
 DOT attributes, handler outputs, and resumed checkpoints cannot replace caller
 limits, dry-run mode, the working directory, or Claude isolation settings.
 
 For the full specification including code references and examples, see **[docs/task-verification.md](docs/task-verification.md)**.
+The maintained support matrix is **[docs/execution-capabilities.md](docs/execution-capabilities.md)**.
 
 ## Overview
 
@@ -86,14 +87,14 @@ For nodes that only need a single LLM completion without tool use, PAS also prov
 - **Multi-provider LLM support** -- OpenAI, Anthropic, and Gemini adapters with unified request/response types
 - **Built-in tools** -- read_file, write_file, edit_file, shell, grep, glob
 - **Agent loop** -- LLM + tool execution cycle with steering injection, follow-up queues, loop detection, and output truncation
-- **Pipeline engine** -- Sequential graph traversal, edge selection, condition evaluation, and manager loops
+- **Pipeline engine** -- Sequential graph traversal, edge selection, condition evaluation, typed retry/timeout policy, and observable lifecycle events
 - **Human review gates** -- Pause pipeline execution for human approval at any step
 - **Goal gates** -- Enforce completion criteria before allowing pipeline exit
 - **Checkpoint/resume** -- Save and restore pipeline state mid-execution
 - **Validation** -- Canonical semantic compilation plus nine structural checks
-- **Stylesheets** -- CSS-like rules for applying attributes to nodes by selector
+- **Stylesheets** -- CSS-like rules for applying model/provider settings to nodes by selector
 - **Variable transforms** -- Variable transforms expand `${key}` references in node prompts from graph-level attributes
-- **Retry with backoff** -- Configurable retry policies for node execution
+- **Node retries** -- Compiled per-node retry budgets with bounded exponential backoff
 - **Cost tracking** -- Per-node and total USD cost reporting
 
 ## Installation

@@ -23,19 +23,13 @@ pub struct PipelineNode {
     pub shape: String,
     pub node_type: Option<String>,
     pub prompt: Option<String>,
-    pub max_retries: usize,
     pub goal_gate: bool,
     pub retry_target: Option<String>,
     pub fallback_retry_target: Option<String>,
-    pub fidelity: Option<String>,
-    pub thread_id: Option<String>,
     pub classes: Vec<String>,
     pub timeout: Option<Duration>,
     pub llm_model: Option<String>,
     pub llm_provider: Option<String>,
-    pub reasoning_effort: Option<String>,
-    pub auto_status: bool,
-    pub allow_partial: bool,
     pub raw_attrs: HashMap<String, AttributeValue>,
 }
 
@@ -46,9 +40,8 @@ pub struct PipelineEdge {
     pub label: Option<String>,
     pub condition: Option<String>,
     pub weight: i32,
-    pub fidelity: Option<String>,
-    pub thread_id: Option<String>,
     pub loop_restart: bool,
+    pub(crate) raw_attrs: HashMap<String, AttributeValue>,
 }
 
 // --- Attribute extraction helpers ---
@@ -102,23 +95,15 @@ fn node_def_to_pipeline_node(
     let label = get_string_attr(&attrs, "label").unwrap_or_else(|| id.to_string());
     let node_type = get_string_attr(&attrs, "type");
     let prompt = get_string_attr(&attrs, "prompt");
-    let max_retries = get_int_attr(&attrs, "max_retries")
-        .map(|v| v as usize)
-        .unwrap_or(0);
     let goal_gate = get_bool_attr(&attrs, "goal_gate").unwrap_or(false);
     let retry_target = get_string_attr(&attrs, "retry_target");
     let fallback_retry_target = get_string_attr(&attrs, "fallback_retry_target");
-    let fidelity = get_string_attr(&attrs, "fidelity");
-    let thread_id = get_string_attr(&attrs, "thread_id");
     let classes = get_string_attr(&attrs, "class")
         .map(|s| s.split_whitespace().map(String::from).collect())
         .unwrap_or_default();
     let timeout = get_duration_attr(&attrs, "timeout");
     let llm_model = get_string_attr(&attrs, "llm_model");
     let llm_provider = get_string_attr(&attrs, "llm_provider");
-    let reasoning_effort = get_string_attr(&attrs, "reasoning_effort");
-    let auto_status = get_bool_attr(&attrs, "auto_status").unwrap_or(true);
-    let allow_partial = get_bool_attr(&attrs, "allow_partial").unwrap_or(false);
 
     PipelineNode {
         id: id.to_string(),
@@ -126,19 +111,13 @@ fn node_def_to_pipeline_node(
         shape,
         node_type,
         prompt,
-        max_retries,
         goal_gate,
         retry_target,
         fallback_retry_target,
-        fidelity,
-        thread_id,
         classes,
         timeout,
         llm_model,
         llm_provider,
-        reasoning_effort,
-        auto_status,
-        allow_partial,
         raw_attrs: attrs,
     }
 }
@@ -158,9 +137,8 @@ fn edge_def_to_pipeline_edge(
         weight: get_int_attr(&attrs, "weight")
             .map(|v| v as i32)
             .unwrap_or(0),
-        fidelity: get_string_attr(&attrs, "fidelity"),
-        thread_id: get_string_attr(&attrs, "thread_id"),
         loop_restart: get_bool_attr(&attrs, "loop_restart").unwrap_or(false),
+        raw_attrs: attrs,
     }
 }
 
@@ -384,11 +362,13 @@ mod tests {
         );
 
         let node = pg.node("step").unwrap();
-        assert_eq!(node.max_retries, 3);
+        assert!(matches!(
+            node.raw_attrs.get("max_retries"),
+            Some(AttributeValue::Integer(3))
+        ));
         assert!(node.goal_gate);
         assert_eq!(node.timeout, Some(Duration::from_secs(30)));
-        assert!(!node.allow_partial);
-        assert!(node.auto_status); // default true
+        assert!(node.raw_attrs.contains_key("allow_partial"));
     }
 
     #[test]

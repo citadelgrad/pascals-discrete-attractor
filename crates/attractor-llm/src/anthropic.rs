@@ -432,7 +432,7 @@ impl ProviderAdapter for AnthropicAdapter {
     }
 
     fn supports_streaming(&self) -> bool {
-        true
+        false
     }
 
     fn supports_reasoning(&self) -> bool {

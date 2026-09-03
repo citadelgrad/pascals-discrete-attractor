@@ -15,7 +15,7 @@ pub use builtin::{EditFileTool, GlobTool, GrepTool, ReadFileTool, ShellTool, Wri
 pub use environment::{DirEntry, ExecResult, ExecutionEnvironment, GrepOptions};
 pub use local_env::LocalExecutionEnvironment;
 pub use profiles::ToolProfile;
-pub use tool::{Tool, ToolDefinition, ToolRegistry};
+pub use tool::{Tool, ToolDefinition, ToolExecutionOptions, ToolRegistry};
 
 #[cfg(test)]
 mod tests {

@@ -3,21 +3,17 @@
 //! Provides `AgentSession` with the core agentic loop: build request -> call LLM ->
 //! extract tool calls -> execute tools -> append results -> repeat.
 
-pub mod fidelity;
 pub mod loop_detection;
 pub mod prompt_builder;
-pub mod subagent;
 #[cfg(test)]
 mod test_utils;
-pub use fidelity::{apply_fidelity, FidelityMode};
 pub use loop_detection::{LoopDetector, SteeringInjector};
 pub use prompt_builder::{discover_project_docs, ProjectDoc, SystemPromptBuilder};
-pub use subagent::{SubagentConfig, SubagentManager, SubagentStatus};
 
 use std::collections::VecDeque;
 
 use attractor_llm::{ContentPart, Message, Request, ToolCallResult};
-use attractor_tools::{ExecutionEnvironment, ToolRegistry};
+use attractor_tools::{ExecutionEnvironment, ToolExecutionOptions, ToolRegistry};
 use attractor_types::AttractorError;
 
 // ---------------------------------------------------------------------------
@@ -123,6 +119,7 @@ pub struct AgentSession {
     followup_queue: VecDeque<String>,
     /// Running count of user turns (for max_turns enforcement).
     user_turn_count: usize,
+    loop_detector: Option<LoopDetector>,
 }
 
 impl AgentSession {
@@ -135,6 +132,9 @@ impl AgentSession {
     ) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         tracing::info!(session_id = %id, model = %config.model, "Agent session created");
+        let loop_detector = config
+            .enable_loop_detection
+            .then(|| LoopDetector::new(config.loop_detection_window));
         Self {
             id,
             llm_client,
@@ -146,6 +146,7 @@ impl AgentSession {
             steering_queue: Vec::new(),
             followup_queue: VecDeque::new(),
             user_turn_count: 0,
+            loop_detector,
         }
     }
 
@@ -374,14 +375,39 @@ impl AgentSession {
     }
 
     /// Execute a batch of tool calls and return the results.
-    async fn execute_tool_calls(&self, tool_calls: &[ToolCallResult]) -> Vec<ToolResultEntry> {
+    async fn execute_tool_calls(&mut self, tool_calls: &[ToolCallResult]) -> Vec<ToolResultEntry> {
         let mut results = Vec::with_capacity(tool_calls.len());
 
         for tc in tool_calls {
             tracing::debug!(tool = %tc.name, id = %tc.id, "Executing tool call");
 
+            let loop_detected = self
+                .loop_detector
+                .as_mut()
+                .is_some_and(|detector| detector.record_and_check(&tc.name, &tc.arguments));
+            if loop_detected {
+                if let Some(detector) = self.loop_detector.as_mut() {
+                    detector.reset();
+                }
+                self.steer(SteeringInjector::loop_detected_message(
+                    &tc.name,
+                    self.config.loop_detection_window,
+                ));
+            }
+
             let (content, is_error) = match self.tool_registry.get(&tc.name) {
-                Some(tool) => match tool.execute(tc.arguments.clone(), self.env.as_ref()).await {
+                Some(tool) => match tool
+                    .execute_with_options(
+                        tc.arguments.clone(),
+                        self.env.as_ref(),
+                        ToolExecutionOptions {
+                            default_command_timeout_ms: Some(
+                                self.config.default_command_timeout_ms,
+                            ),
+                        },
+                    )
+                    .await
+                {
                     Ok(output) => {
                         let truncated = if output.len() > MAX_TOOL_OUTPUT_LEN {
                             let mut t = output[..MAX_TOOL_OUTPUT_LEN].to_string();

@@ -255,6 +255,18 @@ fn invalid_semantics_start_zero_provider_processes() {
             "duration-provider.dot",
             r#"digraph G { start [shape="Mdiamond", llm_provider=1s] done [shape="Msquare"] start -> done }"#,
         ),
+        (
+            "unsupported-fidelity.dot",
+            r#"digraph G { start [shape="Mdiamond"] work [shape="box", llm_provider="claude", fidelity="compact"] done [shape="Msquare"] start -> work -> done }"#,
+        ),
+        (
+            "unsupported-manager.dot",
+            r#"digraph G { start [shape="Mdiamond"] work [shape="house"] done [shape="Msquare"] start -> work -> done }"#,
+        ),
+        (
+            "codex-claude-controls.dot",
+            r#"digraph G { start [shape="Mdiamond"] work [shape="box", llm_provider="codex", allowed_tools="Read"] done [shape="Msquare"] start -> work -> done }"#,
+        ),
     ];
 
     for (name, source) in cases {
@@ -277,6 +289,59 @@ fn invalid_semantics_start_zero_provider_processes() {
             "{name} wrote a checkpoint"
         );
     }
+}
+
+#[test]
+fn exit_goal_gate_retry_target_fails_before_execution() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let tool_marker = fixture.path().join("tool-started");
+    let logs = fixture.path().join("logs");
+    let source = format!(
+        r#"digraph G {{
+            start [shape="Mdiamond"]
+            gate [shape="parallelogram", goal_gate=true,
+                  retry_target="done", tool_command="printf ran > {}; false"]
+            done [shape="Msquare"]
+            start -> gate -> done
+        }}"#,
+        tool_marker.display()
+    );
+    let pipeline = write_pipeline(fixture.path(), "exit-retry-target.dot", &source);
+
+    let path = format!("{}:/bin:/usr/bin", shims.path().display());
+    let output = Command::new(pas())
+        .args([
+            "run",
+            pipeline.to_str().unwrap(),
+            "--logs",
+            logs.to_str().unwrap(),
+            "--fresh",
+            "--max-steps",
+            "3",
+        ])
+        .env("PATH", path)
+        .env("PAS_TEST_PROVIDER_MARKER", &marker)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "exit retry target unexpectedly ran"
+    );
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(rendered.contains("retry_target"), "{rendered}");
+    assert!(rendered.contains("terminal"), "{rendered}");
+    assert!(!rendered.contains("Completed nodes"), "{rendered}");
+    assert!(!marker.exists(), "provider process unexpectedly started");
+    assert!(!tool_marker.exists(), "tool command unexpectedly started");
+    assert!(!logs.join("checkpoint.json").exists());
 }
 
 #[test]

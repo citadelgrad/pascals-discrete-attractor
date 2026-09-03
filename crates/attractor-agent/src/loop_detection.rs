@@ -180,4 +180,12 @@ mod tests {
         // Continue with the same call -- window now has [read, write, read], no loop
         assert!(!detector.record_and_check("read_file", &args));
     }
+
+    #[test]
+    fn zero_window_never_triggers() {
+        let mut detector = LoopDetector::new(0);
+        for _ in 0..100 {
+            assert!(!detector.record_and_check("read_file", &json!({"path": "/same.rs"})));
+        }
+    }
 }

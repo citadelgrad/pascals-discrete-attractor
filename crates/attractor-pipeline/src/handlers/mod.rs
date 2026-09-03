@@ -3,6 +3,7 @@
 pub mod codergen_handler;
 pub mod manager;
 pub mod parallel;
+mod process_group;
 pub mod quality_handler;
 pub mod tool_handler;
 pub mod wait_human;
@@ -40,19 +41,13 @@ pub(crate) mod tests {
             shape: shape.to_string(),
             node_type: None,
             prompt: prompt.map(String::from),
-            max_retries: 0,
             goal_gate: false,
             retry_target: None,
             fallback_retry_target: None,
-            fidelity: None,
-            thread_id: None,
             classes: Vec::new(),
             timeout: None,
             llm_model: None,
             llm_provider: None,
-            reasoning_effort: None,
-            auto_status: true,
-            allow_partial: false,
             raw_attrs: attrs,
         }
     }

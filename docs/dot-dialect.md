@@ -206,21 +206,18 @@ These failures use the node-scoped `unsupported_execution_topology` rule and occ
 | `label` | string | node ID | Display name in logs |
 | `prompt` | string | -- | Task sent to the selected provider CLI. Its presence makes a conditional LLM-backed; explicit `type="codergen"` does so even without a prompt. |
 | `shape` | string | -- | Node shape (see table above) |
-| `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"manager"`, `"quality"`, `"wait.human"` |
+| `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"quality"`, `"wait.human"`; fan-in and manager roles are recognized but rejected |
 | `llm_model` | string | graph `model` | Model override: `"haiku"`, `"sonnet"`, `"opus"`, or full model ID |
 | `llm_provider` | string | -- | Required whenever the resolved handler consumes a provider. Values: `"claude"`, `"codex"`, `"gemini"`; aliases: `anthropic`, `openai`, `google` (case-insensitive). |
-| `allowed_tools` | string | all | Comma-separated tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"` |
-| `max_budget_usd` | string | unlimited | Spend cap for this node's session |
+| `allowed_tools` | string | all | Claude-only tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"`; rejected outside Claude-backed codergen nodes |
+| `max_budget_usd` | string | unlimited | Claude-only spend cap for this node's session; rejected outside Claude-backed codergen nodes |
 | `goal_gate` | boolean | false | Must succeed for pipeline completion |
-| `retry_target` | string | -- | Node to loop back to on goal gate failure |
-| `fallback_retry_target` | string | -- | Second-level retry target |
-| `max_retries` | integer | 0 | Max retry attempts |
-| `timeout` | duration | -- | Max execution time: `120s`, `600s`, `15m`, `1h` |
+| `retry_target` | string | -- | Non-terminal node to loop back to on goal gate failure |
+| `fallback_retry_target` | string | -- | Second-level non-terminal retry target |
+| `max_retries` | integer | 0 | Additional retryable handler attempts per visit; `N` allows `N + 1` attempts |
+| `timeout` | duration | -- | Deadline around each handler attempt: `120s`, `600s`, `15m`, `1h` |
 | `tool_command` | string | -- | Shell command for `parallelogram` nodes |
-| `fidelity` | string | -- | Context mode: `"full"`, `"truncate"`, `"compact"`, `"summary"` |
 | `class` | string | -- | Space-separated class list for stylesheet matching |
-| `auto_status` | boolean | true | Auto-set status from outcome |
-| `allow_partial` | boolean | false | Allow partial success |
 
 ### Reserved graph attributes
 
@@ -235,6 +232,10 @@ remain available to prompt transforms and workflow Context.
 
 The node attribute `max_budget_usd` is still allowed as a per-session Claude
 cap; it is distinct from the reserved top-level global budget control.
+
+### Unsupported execution capabilities
+
+Node attributes `fidelity`, `reasoning_effort`, `auto_status`, `allow_partial`, and `thread_id`, plus edge attributes `fidelity` and `thread_id`, are recognized only so canonical compilation can reject them with `unsupported_execution_capability`. They have no runtime semantics. Manager-loop shapes/types are likewise rejected. See [Execution capability contract](execution-capabilities.md).
 
 Compatibility aliases are accepted at the semantic compilation boundary: `node_type` or
 `handler` for `type`, `stylesheet` for `model_stylesheet`, and `classes` for `class`.
@@ -270,7 +271,6 @@ for exit. Combining a magic ID with incompatible shape/type signals is an error.
 | `condition` | string | -- | Condition expression, e.g. `"preferred_label=PASS"`, `"outcome=success"` |
 | `weight` | integer | 0 | Higher = preferred when multiple edges match |
 | `loop_restart` | boolean | false | Clear completed nodes/outcomes (for back-edges in loops) |
-| `fidelity` | string | -- | Override fidelity when traversing this edge |
 
 ## Graph Attributes
 
@@ -361,19 +361,23 @@ commit_changes [
 `pas validate <file>` first compiles canonical semantics, then applies nine
 structural checks. The enforced contract is:
 
-1. Semantic compilation requires exactly one canonical start and one canonical exit.
-2. Shape, type/handler aliases, and magic-ID role signals must be compatible.
-3. Semantic discriminator attributes have their documented string type; malformed typed values fail closed.
-4. Handlers and providers must be known; every provider-consuming handler requires an explicit `llm_provider`; unsupported execution topology is rejected.
-5. The start has no incoming edge, and the exit has no outgoing edge.
-6. Every node is reachable from the start, and every edge target exists.
-7. Edge conditions parse correctly.
-8. Fidelity values use a supported prefix (`full`, `truncate`, `compact`, or `summary`).
-8. Retry targets name existing nodes, and goal gates name a retry target.
-9. A `codergen` node should have a prompt or a descriptive label.
+Canonical compilation requires one start and exit; compatible role signals and
+aliases; valid typed execution attributes; known handlers/providers; explicit
+providers for provider-consuming handlers; and supported capabilities/topology.
+Compilation failures are errors. The nine structural checks then enforce:
 
-The first six items are errors when violated. Fidelity, retry-target, goal-gate,
-and prompt findings are warnings. Missing timeouts and provider cost limitations
+1. Every edge target exists.
+2. Every edge condition parses.
+3. Retry and fallback targets name existing nodes.
+4. Retry and fallback targets do not resolve to terminal nodes.
+5. Goal gates name a retry target.
+6. The start has no incoming edge.
+7. Exits have no outgoing edge.
+8. Every node is reachable from the start.
+9. A `codergen` node has a prompt or a descriptive label.
+
+Edge, condition, direction, reachability, and terminal retry-target findings are errors.
+Missing retry targets, goal-gate retry declarations, and prompt findings are warnings. Missing timeouts and provider cost limitations
 are runtime preflight warnings, not static validation errors. The validator does
 not currently enforce tool-command cardinality, conditional fan-out cardinality,
 exit reachability from every node, or `loop_restart` guidance.

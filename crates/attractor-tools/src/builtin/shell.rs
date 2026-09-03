@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::environment::ExecutionEnvironment;
-use crate::tool::{Tool, ToolDefinition};
+use crate::tool::{Tool, ToolDefinition, ToolExecutionOptions};
 use crate::truncation::{truncate_output, TruncationMode};
 
 const MAX_OUTPUT_CHARS: usize = 30_000;
@@ -38,6 +38,16 @@ impl Tool for ShellTool {
         arguments: serde_json::Value,
         env: &dyn ExecutionEnvironment,
     ) -> attractor_types::Result<String> {
+        self.execute_with_options(arguments, env, ToolExecutionOptions::default())
+            .await
+    }
+
+    async fn execute_with_options(
+        &self,
+        arguments: serde_json::Value,
+        env: &dyn ExecutionEnvironment,
+        options: ToolExecutionOptions,
+    ) -> attractor_types::Result<String> {
         let command = arguments
             .get("command")
             .and_then(|v| v.as_str())
@@ -49,6 +59,7 @@ impl Tool for ShellTool {
         let timeout_ms = arguments
             .get("timeout_ms")
             .and_then(|v| v.as_u64())
+            .or(options.default_command_timeout_ms)
             .unwrap_or(10_000);
 
         let result = env.exec_command(command, timeout_ms, None, None).await?;

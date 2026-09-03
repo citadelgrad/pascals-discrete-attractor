@@ -12,4 +12,4 @@ pub mod types;
 
 pub use context::Context;
 pub use error::{AttractorError, Result};
-pub use types::{Checkpoint, FidelityMode, Outcome, StageStatus};
+pub use types::{Checkpoint, Outcome, StageStatus};

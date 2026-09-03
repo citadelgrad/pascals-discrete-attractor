@@ -265,7 +265,7 @@ async fn stylesheet_applies_model_to_nodes() {
     let css = r#"
         * { llm_model: default-model; llm_provider: anthropic; }
         .fast { llm_model: fast-model; }
-        #summarize { llm_model: summarize-model; reasoning_effort: high; }
+        #summarize { llm_model: summarize-model; }
     "#;
     let stylesheet = parse_stylesheet(css).expect("stylesheet parse should succeed");
     apply_stylesheet(&mut graph, &stylesheet);
@@ -298,12 +298,6 @@ async fn stylesheet_applies_model_to_nodes() {
         Some("summarize-model"),
         "summarize should get ID-specific model"
     );
-    assert_eq!(
-        summarize_node.reasoning_effort.as_deref(),
-        Some("high"),
-        "summarize should get reasoning_effort from ID selector"
-    );
-
     // The graph should still be valid and executable after stylesheet application
     let result = executor()
         .run(&graph)

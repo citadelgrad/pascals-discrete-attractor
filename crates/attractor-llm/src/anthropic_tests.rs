@@ -128,7 +128,7 @@ fn dyn_provider_wrapping_works() {
     assert_eq!(provider.name(), "anthropic");
     assert_eq!(provider.default_model(), "claude-sonnet-4-5-20250929");
     assert!(provider.supports_tools());
-    assert!(provider.supports_streaming());
+    assert!(!provider.supports_streaming());
     assert!(provider.supports_reasoning());
     assert_eq!(provider.context_window_size(), 200_000);
 }

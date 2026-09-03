@@ -11,7 +11,6 @@ attractor-dot = { path = "../attractor-dot" }
 attractor-quality = { path = "../attractor-quality" }
 attractor-llm = { path = "../attractor-llm" }
 attractor-tools = { path = "../attractor-tools" }
-attractor-agent = { path = "../attractor-agent" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

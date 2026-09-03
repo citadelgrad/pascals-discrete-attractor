@@ -13,7 +13,7 @@ bound handler, it expects a well-formed `Outcome` response.
 - **Plan Binding:** Before execution, PAS verifies that every handler required by the compiled plan is registered and still declares the provider capability used at compilation. An unavailable handler or changed provider capability is a `ValidationError` before any handler runs.
 - **Handler Execution:** After successful plan binding, a handler execution failure is a `HandlerError`; handler identity is not re-derived from node attributes during dispatch.
 - **Typed Provider Handlers:** A provider-consuming custom handler exposes a `ProviderNodeHandler` through `NodeHandler::provider_handler`. Provider capability is derived from that typed executor, whose required method receives the normalized `ResolvedNode`; it cannot opt in to provider use while inheriting raw-node dispatch.
-- **Timeout / Budget Guards:** The engine enforces `max_steps` and `max_budget_usd` limits. If a node hangs or the pipeline enters a runaway loop, it aborts with a clear error rather than running forever.
+- **Timeout / Budget Guards:** The engine enforces a compiled timeout around every handler attempt. Each attempt consumes `max_steps`, and `max_budget_usd` is checked throughout execution.
 - **Failure on No Response:** If a handler returns `StageStatus::Fail` and there is no outgoing edge to handle the failure, the pipeline terminates with a `HandlerError`.
 
 **Relevant code:** `crates/attractor-pipeline/src/execution_plan.rs` —
@@ -37,7 +37,7 @@ Every handler must return an `Outcome` struct. The type system enforces the cont
 
 - **Structure enforcement:** Rust's type system guarantees every handler returns all required fields. There is no "malformed result" at runtime — the compiler catches it.
 - **Data integrity:** Context updates use `serde_json::Value`, so type mismatches (e.g., string where a number is expected) surface when downstream nodes consume them via typed accessors.
-- **Status propagation:** The engine writes `outcome` to the pipeline context after each node, making the result available to edge conditions.
+- **Status propagation:** The engine keeps the current typed outcome outside workflow context and exposes it directly to edge-condition resolution.
 
 **Relevant code:** `crates/attractor-types/src/lib.rs` — `Outcome` and `StageStatus` definitions.
 
@@ -63,6 +63,8 @@ When a goal gate fails, the engine looks for a retry target in this order:
 4. **Graph `fallback_retry_target`** — graph-level fallback
 5. **No target found** → `GoalGateUnsatisfied` error (pipeline aborts)
 
+Every retry target must resolve to a non-terminal node. PAS rejects an exit-node target before execution because returning directly to the exit cannot change an unsatisfied gate.
+
 ### Example
 
 ```dot
@@ -78,7 +80,7 @@ digraph CodeReview {
 }
 ```
 
-If `test` fails, the pipeline loops back to `implement`. On the next pass, `implement` gets the failure context and can fix the code. The cycle continues until tests pass or `max_retries` / `max_steps` is hit.
+If `test` fails, the pipeline loops back to `implement`. On the next pass, `implement` gets the failure context and can fix the code. The cycle continues until tests pass or `max_steps` is hit. Node `max_retries` applies only to retryable handler attempts within one visit.
 
 **Relevant code:** `crates/attractor-pipeline/src/goal_gate.rs` — `enforce_goal_gates()`.
 
@@ -162,16 +164,17 @@ provider semantics and then applies nine structural checks:
 | Edge targets exist | Error | No edges pointing to undefined nodes |
 | Start/exit edge direction | Error | Start has no incoming edges and exit has no outgoing edges |
 | Condition syntax | Error | Edge conditions are well-formed |
+| Retry targets are non-terminal | Error | Named retry and fallback targets do not resolve to exit nodes |
 | Goal gate has retry | Warning | Goal gate nodes have a retry target defined |
 | Retry targets exist | Warning | Named retry and fallback targets exist |
 | Prompt presence | Warning | `codergen` nodes have a prompt or descriptive label |
-| Fidelity values | Warning | Context fidelity attributes use valid prefixes |
 
 The load path is parse → **compile semantics** → **validate structure** →
 initialize → execute → finalize. Errors abort before any LLM calls are made.
 The node-scoped `unsupported_execution_topology` semantic rule rejects a
 parallel/component node with multiple outgoing edges and every fan-in node;
 a component with at most one outgoing edge remains sequential compatibility.
+The separate `unsupported_execution_capability` rule rejects recognized no-op attributes and manager-loop roles before execution. The authoritative inventory is [Execution capability contract](execution-capabilities.md).
 
 **Relevant code:** `crates/attractor-pipeline/src/validation.rs` — `validate()` and `validate_or_raise()`.
 

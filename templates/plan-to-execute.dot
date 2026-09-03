@@ -109,7 +109,6 @@ Parse the Implementation Phases section and create beads tasks:
     scaffold [
         shape="parallelogram"
         label="Scaffold Pipeline"
-        allowed_tools="Read,Write,Bash(sed:*)"
         prompt="Read the epic ID from .pas/epic_id.txt
 
 Use sed to replace EPIC_ID in the epic-runner template:
@@ -122,7 +121,6 @@ This creates a ready-to-run pipeline that executes all beads tasks."
     validate_pipeline [
         shape="parallelogram"
         label="Validate Pipeline"
-        allowed_tools="Bash(pas:*)"
         prompt="Run: pas validate .pas/pipeline.dot
 
 Check for errors:
@@ -138,7 +136,6 @@ If valid, proceed to execution. If invalid, fix the pipeline or respond with FAI
     execute_pipeline [
         shape="parallelogram"
         label="Execute Pipeline"
-        allowed_tools="Bash(pas:*),Bash(bd:*)"
         prompt="Run: pas run .pas/pipeline.dot -w .
 
 This executes the full pipeline:

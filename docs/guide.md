@@ -151,18 +151,15 @@ Every `tripleoctagon`, `type="fan_in"`, or `type="parallel.fan_in"` node fails w
 | `type` | string | auto | Explicit handler type override (`node_type` and `handler` are compatibility aliases); recognized parallel/fan-in types remain subject to the execution-topology restrictions above |
 | `llm_model` | string | graph `model` | Model override for this node (`"haiku"`, `"sonnet"`, `"opus"`, or full model ID) |
 | `llm_provider` | string | — | Required whenever the resolved handler consumes a provider: `"claude"`, `"codex"`, or `"gemini"` |
-| `allowed_tools` | string | all | Comma-separated Claude Code tool list (`"Read,Grep,Glob"` for read-only) |
-| `max_budget_usd` | string | unlimited | Maximum spend for this node's Claude Code session |
+| `allowed_tools` | string | all | Comma-separated Claude Code tool list (`"Read,Grep,Glob"` for read-only); rejected outside Claude-backed codergen nodes |
+| `max_budget_usd` | string | unlimited | Maximum spend for this node's Claude Code session; rejected outside Claude-backed codergen nodes |
 | `goal_gate` | boolean | false | If true, this node must succeed for the pipeline to complete |
 | `retry_target` | string | — | Node ID to loop back to if this goal gate fails |
 | `fallback_retry_target` | string | — | Second-level retry target |
-| `max_retries` | integer | 0 | Maximum retry attempts for this node |
-| `timeout` | duration | — | Max execution time (e.g. `"5m"`, `"1h30m"`) |
-| `fidelity` | string | — | Context fidelity mode: `"full"`, `"truncate"`, `"compact"`, `"summary"` |
+| `max_retries` | integer | 0 | Additional retryable handler attempts per node visit; `N` allows at most `N + 1` total attempts |
+| `timeout` | duration | — | Deadline enforced around every handler attempt (e.g. `"5m"`, `"1h30m"`) |
 | `class` | string | — | Space-separated class list for stylesheet matching (`classes` is a compatibility alias) |
 | `tool_command` | string | — | Shell command for `parallelogram` (tool) nodes |
-| `auto_status` | boolean | true | Automatically set status from outcome |
-| `allow_partial` | boolean | false | Allow partial success |
 
 ### Claude settings isolation for codergen
 
@@ -229,7 +226,6 @@ nodeA -> nodeB [weight=10]               // Weighted (higher = preferred)
 | `condition` | string | — | Condition expression that must be true for this edge |
 | `weight` | integer | 0 | Higher weight = preferred when multiple edges match |
 | `loop_restart` | boolean | false | If true, clears completed nodes and outcomes (for loops) |
-| `fidelity` | string | — | Override fidelity when traversing this edge |
 
 ### Chained edges
 
@@ -328,6 +324,7 @@ When a goal gate fails, the retry target is resolved in this order:
 4. **Graph `fallback_retry_target`** — the graph-level fallback
 
 If no retry target is found at any level, the pipeline returns a `GoalGateUnsatisfied` error.
+Retry targets must resolve to non-terminal nodes; targeting an exit node is a validation error because it cannot change the failed gate's outcome.
 
 ### Multiple goal gates
 
@@ -363,7 +360,7 @@ digraph Pipeline {
     model_stylesheet="
         * { llm_model: haiku; }
         .critical { llm_model: opus; }
-        #final_review { llm_model: opus; reasoning_effort: high; }
+        #final_review { llm_model: opus; }
     "
     start [shape="Mdiamond"]
     work [shape="box", llm_provider="claude"]
@@ -388,7 +385,6 @@ Higher specificity wins. Explicit node attributes always override stylesheet val
 |----------|---------|
 | `llm_model` | `llm_model` node attribute |
 | `llm_provider` | `llm_provider` node attribute |
-| `reasoning_effort` | `reasoning_effort` node attribute |
 
 ### Example with classes
 
@@ -446,7 +442,7 @@ Run `pas validate pipeline.dot` to compile canonical semantics and run structura
 | StartNoIncomingRule | Error | Start node has no incoming edges |
 | ExitNoOutgoingRule | Error | Exit node has no outgoing edges |
 | ConditionSyntaxRule | Error | All condition expressions parse correctly |
-| FidelityValidRule | Warning | Fidelity values are one of: full, truncate, compact, summary |
+| RetryTargetNotTerminalRule | Error | Retry targets do not resolve to exit nodes |
 | RetryTargetExistsRule | Warning | Retry targets reference existing nodes |
 | GoalGateHasRetryRule | Warning | Goal gate nodes have a retry target defined |
 | PromptOnLlmNodesRule | Warning | Resolved `codergen` nodes have a prompt or descriptive label |
@@ -1001,7 +997,11 @@ The engine follows one edge at a time. If a node has multiple outgoing edges wit
 
 ### Goal gate loops forever
 
-If a goal gate node keeps failing and retrying, the pipeline will loop indefinitely. Add `max_retries` to cap attempts, or make the retry target different from the original path so the second attempt has better chances.
+If a goal gate node keeps failing, its retry edge can revisit the graph. Node `max_retries` does not cap graph traversal; it only controls retryable handler attempts within one visit. Use `max_steps` to bound goal-gate and back-edge loops, and choose a non-terminal retry target that can change the outcome. PAS rejects retry targets that resolve to an exit node.
+
+### Unsupported execution attributes
+
+Canonical non-web compilation rejects `fidelity`, `reasoning_effort`, `auto_status`, `allow_partial`, and node/edge `thread_id` with `unsupported_execution_capability`. Manager-loop roles are rejected for the same reason. Remove these attributes or express the workflow as explicit sequential nodes. See [Execution capability contract](execution-capabilities.md).
 
 ### Intermediate results are lost
 

@@ -13,6 +13,8 @@ use crate::execution_plan::{HandlerIdentity, LlmProvider, ResolvedNode, Resolved
 use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
 
+use super::process_group::{self, ProcessGroupGuard};
+
 #[path = "codergen_provider.rs"]
 mod provider;
 use provider::{build_cli_command, parse_cli_output, ClaudeCliConfig, CliRunConfig};
@@ -78,6 +80,7 @@ impl NodeHandler for CodergenHandler {
             },
             handler: HandlerIdentity::Codergen,
             provider: Some(provider),
+            invocation: Default::default(),
         };
         ProviderNodeHandler::execute_resolved(self, node, &resolved, context, graph).await
     }
@@ -206,6 +209,8 @@ impl CodergenHandler {
             graph,
             claude: controls.claude,
         });
+        cmd.kill_on_drop(true);
+        process_group::configure(&mut cmd);
 
         // Spawn the CLI process — detect missing binary
         let child = cmd.spawn().map_err(|e| {
@@ -223,34 +228,29 @@ impl CodergenHandler {
         })?;
 
         // Apply timeout (default 10 minutes, configurable via node.timeout).
-        // IMPORTANT: We capture the PID before wait_with_output() consumes the
-        // Child. On timeout, we kill the process tree — tokio::time::timeout
-        // only drops the future, it does NOT kill the child process.
-        let child_pid = child.id();
+        // The guard owns process-tree cleanup even if the executor's outer
+        // deadline drops this handler future before its local timeout fires.
+        let mut process_group = ProcessGroupGuard::new(child.id());
         let timeout_dur = node.timeout.unwrap_or(std::time::Duration::from_secs(600));
         let output = match tokio::time::timeout(timeout_dur, child.wait_with_output()).await {
-            Ok(result) => result.map_err(|e| AttractorError::HandlerError {
-                handler: "codergen".into(),
-                node: node.id.clone(),
-                message: format!("{} execution failed: {}", provider.display_name(), e),
-            })?,
+            Ok(Ok(output)) => {
+                process_group.disarm();
+                output
+            }
+            Ok(Err(error)) => {
+                return Err(AttractorError::HandlerError {
+                    handler: "codergen".into(),
+                    node: node.id.clone(),
+                    message: format!("{} execution failed: {error}", provider.display_name()),
+                });
+            }
             Err(_elapsed) => {
-                // Timeout fired — kill the child process and its descendants
-                if let Some(pid) = child_pid {
-                    tracing::warn!(
-                        node = %node.id,
-                        pid = pid,
-                        timeout_secs = timeout_dur.as_secs(),
-                        "Killing timed-out {} process",
-                        provider.display_name()
-                    );
-                    // SIGKILL the child process — its MCP server children will
-                    // get SIGHUP when their parent exits.
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(pid as i32, libc::SIGKILL);
-                    }
-                }
+                tracing::warn!(
+                    node = %node.id,
+                    timeout_secs = timeout_dur.as_secs(),
+                    "Killing timed-out {} process group",
+                    provider.display_name()
+                );
                 return Err(AttractorError::CommandTimeout {
                     timeout_ms: timeout_dur.as_millis() as u64,
                 });

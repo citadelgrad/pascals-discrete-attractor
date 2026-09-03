@@ -48,7 +48,7 @@
 
   <rect x="75" y="105" width="520" height="68" rx="8" fill="#312e81" stroke="#6366f1" stroke-width="1.5" filter="url(#shadow)"/>
   <text x="90" y="128" fill="#c4b5fd" font-size="10" font-weight="600">PRE-EXECUTION</text>
-  <text x="90" y="148" fill="#e0e7ff" font-size="14" font-weight="600">Static Validation — 12 Lint Rules</text>
+  <text x="90" y="148" fill="#e0e7ff" font-size="14" font-weight="600">Canonical Semantics + 8 Structural Checks</text>
   <text x="90" y="165" fill="#a5b4fc" font-size="11">Start/exit nodes exist? All nodes reachable? Edge targets valid? Conditions parse?</text>
 
   <!-- Failure box -->
@@ -196,7 +196,7 @@
   <rect x="75" y="682" width="520" height="68" rx="8" fill="#4c0519" stroke="#e11d48" stroke-width="1.5" filter="url(#shadow)"/>
   <text x="90" y="705" fill="#fda4af" font-size="10" font-weight="600">RESOURCE GUARDRAILS — Checked Continuously</text>
   <text x="90" y="725" fill="#ffe4e6" font-size="14" font-weight="600">Budget + Step Limits</text>
-  <text x="90" y="742" fill="#fda4af" font-size="11">max_steps, max_budget_usd, max_retries — abort if exceeded at any point</text>
+  <text x="90" y="742" fill="#fda4af" font-size="11">Every handler attempt consumes max_steps; node retries and timeouts share one policy</text>
 
   <!-- Failure box -->
   <rect x="630" y="692" width="240" height="48" rx="6" fill="#450a0a" stroke="#dc2626" stroke-width="1"/>

@@ -8,6 +8,8 @@ use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{HandlerExecutionContext, NodeHandler, ResolvedNodeHandler};
 
+use super::process_group::{self, ProcessGroupGuard};
+
 // ---------------------------------------------------------------------------
 // ToolHandler — executes a shell command (parallelogram shape)
 // ---------------------------------------------------------------------------
@@ -126,6 +128,8 @@ impl ToolHandler {
         cmd.arg("-c").arg(&command);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
+        process_group::configure(&mut cmd);
 
         // Set working directory from context
         if let Some(dir) = workdir {
@@ -138,25 +142,23 @@ impl ToolHandler {
             message: format!("Failed to spawn command: {}", e),
         })?;
 
-        // Capture the PID before waiting so we can kill on timeout
-        let child_pid = child.id();
+        let mut process_group = ProcessGroupGuard::new(child.id());
 
         // Apply timeout if configured on the node, default 5 minutes
         let timeout_dur = node.timeout.unwrap_or(std::time::Duration::from_secs(300));
         let output = match tokio::time::timeout(timeout_dur, child.wait_with_output()).await {
-            Ok(result) => result.map_err(|e| AttractorError::HandlerError {
-                handler: "tool".into(),
-                node: node.id.clone(),
-                message: format!("Command execution failed: {}", e),
-            })?,
+            Ok(Ok(output)) => {
+                process_group.disarm();
+                output
+            }
+            Ok(Err(error)) => {
+                return Err(AttractorError::HandlerError {
+                    handler: "tool".into(),
+                    node: node.id.clone(),
+                    message: format!("Command execution failed: {error}"),
+                });
+            }
             Err(_) => {
-                // Kill the child process group on timeout to avoid leaking processes
-                if let Some(pid) = child_pid {
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
                 return Err(AttractorError::CommandTimeout {
                     timeout_ms: timeout_dur.as_millis() as u64,
                 });

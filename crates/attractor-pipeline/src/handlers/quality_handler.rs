@@ -11,6 +11,8 @@ use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{HandlerExecutionContext, NodeHandler, ResolvedNodeHandler};
 
+use super::process_group::{self, ProcessGroupGuard};
+
 // Environment variables passed through to quality stage processes.
 const ENV_ALLOWLIST: &[&str] = &[
     "PATH",
@@ -193,8 +195,7 @@ impl QualityHandler {
                 }
             }
 
-            #[cfg(unix)]
-            cmd.process_group(0);
+            process_group::configure(&mut cmd);
 
             let child = cmd.spawn().map_err(|e| AttractorError::HandlerError {
                 handler: "quality".into(),
@@ -202,12 +203,13 @@ impl QualityHandler {
                 message: format!("failed to spawn stage '{}': {e}", stage.name),
             })?;
 
-            // Capture PID before wait_with_output() consumes child.
-            #[cfg(unix)]
-            let child_pid = child.id();
+            let mut process_group = ProcessGroupGuard::new(child.id());
 
             let output = match tokio::time::timeout(stage_timeout, child.wait_with_output()).await {
-                Ok(Ok(o)) => o,
+                Ok(Ok(o)) => {
+                    process_group.disarm();
+                    o
+                }
                 Ok(Err(e)) => {
                     return Err(AttractorError::HandlerError {
                         handler: "quality".into(),
@@ -216,11 +218,6 @@ impl QualityHandler {
                     })
                 }
                 Err(_) => {
-                    // Kill the process group, then let kill_on_drop clean up the child.
-                    #[cfg(unix)]
-                    if let Some(pid) = child_pid {
-                        unsafe { libc::killpg(pid as libc::pid_t, libc::SIGKILL) };
-                    }
                     return Err(AttractorError::CommandTimeout {
                         timeout_ms: stage_timeout.as_millis() as u64,
                     });

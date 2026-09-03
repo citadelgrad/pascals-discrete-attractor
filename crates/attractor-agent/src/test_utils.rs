@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use attractor_llm::{FinishReason, ProviderAdapter, Request, Response, StreamEvent, Usage};
@@ -73,6 +73,87 @@ impl ExecutionEnvironment for MockEnv {
     }
 }
 
+pub struct RecordingTimeoutEnv {
+    timeouts: Arc<Mutex<Vec<u64>>>,
+}
+
+impl RecordingTimeoutEnv {
+    pub fn new() -> (Self, Arc<Mutex<Vec<u64>>>) {
+        let timeouts = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                timeouts: Arc::clone(&timeouts),
+            },
+            timeouts,
+        )
+    }
+}
+
+#[async_trait]
+impl ExecutionEnvironment for RecordingTimeoutEnv {
+    async fn read_file(&self, _path: &Path) -> attractor_types::Result<String> {
+        unreachable!()
+    }
+
+    async fn write_file(&self, _path: &Path, _content: &str) -> attractor_types::Result<()> {
+        unreachable!()
+    }
+
+    async fn file_exists(&self, _path: &Path) -> attractor_types::Result<bool> {
+        unreachable!()
+    }
+
+    async fn list_directory(
+        &self,
+        _path: &Path,
+        _depth: usize,
+    ) -> attractor_types::Result<Vec<DirEntry>> {
+        unreachable!()
+    }
+
+    async fn exec_command(
+        &self,
+        _command: &str,
+        timeout_ms: u64,
+        _cwd: Option<&Path>,
+        _env_vars: Option<&HashMap<String, String>>,
+    ) -> attractor_types::Result<ExecResult> {
+        self.timeouts.lock().unwrap().push(timeout_ms);
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+            timed_out: false,
+            duration_ms: 0,
+        })
+    }
+
+    async fn grep(
+        &self,
+        _pattern: &str,
+        _path: &Path,
+        _options: &GrepOptions,
+    ) -> attractor_types::Result<String> {
+        unreachable!()
+    }
+
+    async fn glob_files(
+        &self,
+        _pattern: &str,
+        _base: &Path,
+    ) -> attractor_types::Result<Vec<PathBuf>> {
+        unreachable!()
+    }
+
+    fn working_directory(&self) -> &Path {
+        Path::new("/tmp")
+    }
+
+    fn platform(&self) -> &str {
+        "test"
+    }
+}
+
 // -----------------------------------------------------------------------
 // Mock LLM Provider
 // -----------------------------------------------------------------------
@@ -81,13 +162,26 @@ impl ExecutionEnvironment for MockEnv {
 /// Each call to `complete` pops the next response from the queue.
 pub struct SequenceMockProvider {
     responses: Mutex<VecDeque<Response>>,
+    requests: Option<Arc<Mutex<Vec<Request>>>>,
 }
 
 impl SequenceMockProvider {
     pub fn new(responses: Vec<Response>) -> Self {
         Self {
             responses: Mutex::new(VecDeque::from(responses)),
+            requests: None,
         }
+    }
+
+    pub fn recording(responses: Vec<Response>) -> (Self, Arc<Mutex<Vec<Request>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                responses: Mutex::new(VecDeque::from(responses)),
+                requests: Some(Arc::clone(&requests)),
+            },
+            requests,
+        )
     }
 
     pub fn single_text(text: &str) -> Self {
@@ -105,7 +199,10 @@ impl SequenceMockProvider {
 
 #[async_trait]
 impl ProviderAdapter for SequenceMockProvider {
-    async fn complete(&self, _request: &Request) -> Result<Response, AttractorError> {
+    async fn complete(&self, request: &Request) -> Result<Response, AttractorError> {
+        if let Some(requests) = &self.requests {
+            requests.lock().unwrap().push(request.clone());
+        }
         let mut queue = self.responses.lock().unwrap();
         match queue.pop_front() {
             Some(resp) => Ok(resp),

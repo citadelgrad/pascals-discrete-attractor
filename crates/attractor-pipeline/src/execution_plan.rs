@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::time::Duration;
 
 use attractor_dot::AttributeValue;
 
@@ -121,11 +123,28 @@ pub struct ResolvedNode {
     pub kind: ResolvedNodeKind,
     pub handler: HandlerIdentity,
     pub provider: Option<LlmProvider>,
+    pub invocation: NodeInvocationPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeInvocationPolicy {
+    pub max_attempts: NonZeroUsize,
+    pub timeout: Option<Duration>,
+}
+
+impl Default for NodeInvocationPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: NonZeroUsize::MIN,
+            timeout: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SemanticDiagnosticKind {
     InvalidAttributeType,
+    InvalidAttributeValue,
     ConflictingRoleSignals,
     ConflictingAttributeAliases,
     UnknownShape,
@@ -134,6 +153,7 @@ pub enum SemanticDiagnosticKind {
     MissingProvider,
     UnknownProvider,
     UnsupportedExecutionTopology,
+    UnsupportedExecutionCapability,
     MultipleStarts,
     MissingStart,
     MultipleExits,
@@ -268,6 +288,7 @@ impl ExecutionPlan {
                 });
             }
         }
+        validate_unsupported_attributes(&graph, &mut diagnostics);
 
         let mut node_ids = graph
             .all_nodes()
@@ -300,6 +321,7 @@ impl ExecutionPlan {
         }
 
         validate_supported_execution_topology(&graph, &nodes, &mut diagnostics);
+        validate_supported_execution_capabilities(&graph, &nodes, &mut diagnostics);
 
         starts.sort();
         exits.sort();
@@ -517,6 +539,102 @@ fn validate_supported_execution_topology(
             }),
             _ => {}
         }
+    }
+}
+
+fn validate_supported_execution_capabilities(
+    graph: &PipelineGraph,
+    nodes: &HashMap<String, ResolvedNode>,
+    diagnostics: &mut Vec<SemanticDiagnostic>,
+) {
+    let mut node_ids = nodes.keys().collect::<Vec<_>>();
+    node_ids.sort();
+    for node_id in node_ids {
+        let resolved = &nodes[node_id];
+        let source = graph.node(node_id).expect("resolved node must have source");
+
+        if matches!(resolved.kind, ResolvedNodeKind::ManagerLoop) {
+            diagnostics.push(unsupported_node_capability(
+                node_id,
+                "manager-loop execution",
+                "Replace the manager node with an explicit linear sequence",
+            ));
+        }
+
+        let supports_claude_controls = resolved.handler == HandlerIdentity::Codergen
+            && resolved.provider == Some(LlmProvider::Claude);
+        if !supports_claude_controls {
+            for attribute in ["allowed_tools", "max_budget_usd"] {
+                if source.raw_attrs.contains_key(attribute) {
+                    diagnostics.push(unsupported_node_capability(
+                        node_id,
+                        attribute,
+                        &format!("Remove '{attribute}' or use it on a Claude-backed codergen node"),
+                    ));
+                }
+            }
+        } else {
+            for attribute in ["allowed_tools", "max_budget_usd"] {
+                if let Some(value) = source.raw_attrs.get(attribute) {
+                    if !matches!(value, AttributeValue::String(_)) {
+                        diagnostics.push(invalid_attribute_type(Some(node_id), attribute, value));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_unsupported_attributes(
+    graph: &PipelineGraph,
+    diagnostics: &mut Vec<SemanticDiagnostic>,
+) {
+    let mut nodes = graph.all_nodes().collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    for node in nodes {
+        for attribute in [
+            "fidelity",
+            "reasoning_effort",
+            "auto_status",
+            "allow_partial",
+            "thread_id",
+        ] {
+            if node.raw_attrs.contains_key(attribute) {
+                diagnostics.push(unsupported_node_capability(
+                    &node.id,
+                    attribute,
+                    &format!("Remove the '{attribute}' attribute or stylesheet declaration"),
+                ));
+            }
+        }
+    }
+
+    for edge in graph.all_edges() {
+        for (attribute, present) in [
+            ("fidelity", edge.raw_attrs.contains_key("fidelity")),
+            ("thread_id", edge.raw_attrs.contains_key("thread_id")),
+        ] {
+            if present {
+                diagnostics.push(SemanticDiagnostic {
+                    kind: SemanticDiagnosticKind::UnsupportedExecutionCapability,
+                    node_id: None,
+                    message: format!(
+                        "Edge '{} -> {}' uses unsupported execution capability '{attribute}'",
+                        edge.from, edge.to
+                    ),
+                    fix: format!("Remove the '{attribute}' edge attribute"),
+                });
+            }
+        }
+    }
+}
+
+fn unsupported_node_capability(node_id: &str, capability: &str, fix: &str) -> SemanticDiagnostic {
+    SemanticDiagnostic {
+        kind: SemanticDiagnosticKind::UnsupportedExecutionCapability,
+        node_id: Some(node_id.to_string()),
+        message: format!("Node '{node_id}' uses unsupported execution capability '{capability}'"),
+        fix: fix.to_string(),
     }
 }
 
@@ -772,6 +890,8 @@ fn resolve_node(
         return Err(diagnostics);
     }
 
+    let invocation = resolve_invocation_policy(node).map_err(|diagnostic| vec![diagnostic])?;
+
     let explicit_codergen = type_name == Some("codergen");
     let llm_conditional = role == Role::Conditional && (node.prompt.is_some() || explicit_codergen);
     let (kind, handler) = match role {
@@ -838,9 +958,67 @@ fn resolve_node(
             kind,
             handler,
             provider,
+            invocation,
         },
         defaulted,
     ))
+}
+
+fn resolve_invocation_policy(
+    node: &PipelineNode,
+) -> Result<NodeInvocationPolicy, SemanticDiagnostic> {
+    let max_retries = match node.raw_attrs.get("max_retries") {
+        None => 0,
+        Some(AttributeValue::Integer(value)) if *value >= 0 => usize::try_from(*value)
+            .map_err(|_| invalid_retry_budget(node, *value, "does not fit this platform"))?,
+        Some(AttributeValue::Integer(value)) => {
+            return Err(invalid_retry_budget(node, *value, "must be non-negative"));
+        }
+        Some(value) => {
+            return Err(invalid_attribute_type(Some(&node.id), "max_retries", value));
+        }
+    };
+    let max_attempts = max_retries
+        .checked_add(1)
+        .and_then(NonZeroUsize::new)
+        .ok_or_else(|| invalid_retry_budget(node, i64::MAX, "is too large"))?;
+    let timeout = match node.raw_attrs.get("timeout") {
+        None => None,
+        Some(AttributeValue::Duration(value)) => Some(*value),
+        Some(AttributeValue::String(value)) => Some(
+            attractor_dot::duration_serde::parse_duration_str(value).map_err(|_| {
+                SemanticDiagnostic {
+                    kind: SemanticDiagnosticKind::InvalidAttributeValue,
+                    node_id: Some(node.id.clone()),
+                    message: format!(
+                        "Node '{}' execution attribute 'timeout' must be a valid duration, found '{value}'",
+                        node.id
+                    ),
+                    fix: "Use a duration such as timeout=120s or timeout=5m".into(),
+                }
+            })?,
+        ),
+        Some(value) => {
+            return Err(invalid_attribute_type(Some(&node.id), "timeout", value));
+        }
+    };
+
+    Ok(NodeInvocationPolicy {
+        max_attempts,
+        timeout,
+    })
+}
+
+fn invalid_retry_budget(node: &PipelineNode, value: i64, reason: &str) -> SemanticDiagnostic {
+    SemanticDiagnostic {
+        kind: SemanticDiagnosticKind::InvalidAttributeValue,
+        node_id: Some(node.id.clone()),
+        message: format!(
+            "Node '{}' execution attribute 'max_retries' {reason}, found {value}",
+            node.id
+        ),
+        fix: "Use a non-negative integer retry count small enough for this platform".into(),
+    }
 }
 
 fn magic_role(id: &str) -> Option<Role> {
@@ -1020,10 +1198,9 @@ mod tests {
                 human [shape="hexagon"]
                 tool [shape="parallelogram"]
                 parallel [shape="component"]
-                manager [shape="house"]
                 quality [shape="box", type="quality"]
                 done [shape="Msquare"]
-                start -> task -> llm_choice -> route -> human -> tool -> parallel -> manager -> quality -> done
+                start -> task -> llm_choice -> route -> human -> tool -> parallel -> quality -> done
             }"#,
         ))
         .unwrap();
@@ -1064,12 +1241,6 @@ mod tests {
                 "parallel",
                 ResolvedNodeKind::Parallel,
                 HandlerIdentity::Parallel,
-                None,
-            ),
-            (
-                "manager",
-                ResolvedNodeKind::ManagerLoop,
-                HandlerIdentity::ManagerLoop,
                 None,
             ),
             (
@@ -1136,6 +1307,205 @@ mod tests {
             .message
             .contains("cannot merge branch results"));
         assert!(error.diagnostics[0].fix.contains("Remove"));
+    }
+
+    #[test]
+    fn negative_max_retries_is_rejected_before_execution() {
+        let result = ExecutionPlan::compile(graph(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                work [shape="box", prompt="work", llm_provider="claude", max_retries=-1]
+                done [shape="Msquare"]
+                start -> work -> done
+            }"#,
+        ));
+
+        let error = result.expect_err("negative retry budgets must fail closed");
+        assert!(error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("max_retries")
+                && diagnostic.message.contains("non-negative")));
+    }
+
+    #[test]
+    fn malformed_timeout_is_rejected_instead_of_becoming_unbounded() {
+        let result = ExecutionPlan::compile(graph(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                work [shape="box", prompt="work", llm_provider="claude", timeout="eventually"]
+                done [shape="Msquare"]
+                start -> work -> done
+            }"#,
+        ));
+
+        let error = result.expect_err("invalid timeout must fail closed");
+        assert!(error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("timeout")
+                && diagnostic.message.contains("valid duration")));
+    }
+
+    #[test]
+    fn invocation_policy_rejects_wrong_attribute_types() {
+        for (declaration, attribute) in [
+            (r#"max_retries="two""#, "max_retries"),
+            ("max_retries=1.5", "max_retries"),
+            ("timeout=true", "timeout"),
+        ] {
+            let source = format!(
+                r#"digraph G {{
+                    start [shape="Mdiamond"]
+                    work [shape="box", prompt="work", llm_provider="claude", {declaration}]
+                    done [shape="Msquare"]
+                    start -> work -> done
+                }}"#
+            );
+
+            let error = ExecutionPlan::compile(graph(&source))
+                .expect_err("malformed invocation policy must fail closed");
+            assert!(error.diagnostics.iter().any(|diagnostic| {
+                diagnostic.kind == SemanticDiagnosticKind::InvalidAttributeType
+                    && diagnostic.message.contains(attribute)
+            }));
+        }
+    }
+
+    #[test]
+    fn recognized_unsupported_execution_capabilities_fail_closed() {
+        let cases = [
+            (
+                r#"work [shape="box", prompt="work", llm_provider="claude", fidelity="compact"]"#,
+                "fidelity",
+            ),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="claude", reasoning_effort="high"]"#,
+                "reasoning_effort",
+            ),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="claude", auto_status=true]"#,
+                "auto_status",
+            ),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="claude", allow_partial=true]"#,
+                "allow_partial",
+            ),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="claude", thread_id="thread"]"#,
+                "thread_id",
+            ),
+            (r#"work [shape="house"]"#, "manager-loop"),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="codex", allowed_tools="Read"]"#,
+                "allowed_tools",
+            ),
+            (
+                r#"work [shape="box", prompt="work", llm_provider="gemini", max_budget_usd=1.0]"#,
+                "max_budget_usd",
+            ),
+        ];
+
+        for (node, capability) in cases {
+            let source = format!(
+                "digraph G {{ start [shape=\"Mdiamond\"] {node} done [shape=\"Msquare\"] start -> work -> done }}"
+            );
+            let error = ExecutionPlan::compile(graph(&source))
+                .expect_err("recognized no-op capability must be rejected");
+            assert!(
+                error
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(capability)),
+                "missing {capability} diagnostic: {error:?}"
+            );
+        }
+
+        for (edge, capability) in [
+            (r#"start -> work [fidelity="compact"]"#, "fidelity"),
+            (r#"start -> work [thread_id="thread"]"#, "thread_id"),
+        ] {
+            let source = format!(
+                "digraph G {{ start [shape=\"Mdiamond\"] work [shape=\"diamond\"] done [shape=\"Msquare\"] {edge} work -> done }}"
+            );
+            let error = ExecutionPlan::compile(graph(&source))
+                .expect_err("unsupported edge capability must be rejected");
+            assert!(
+                error
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(capability)),
+                "missing edge {capability} diagnostic: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stylesheet_reasoning_effort_is_rejected_instead_of_ignored() {
+        let error = ExecutionPlan::compile(graph(
+            r##"digraph G {
+                model_stylesheet="#work { reasoning_effort: high; }"
+                start [shape="Mdiamond"]
+                work [shape="box", prompt="work", llm_provider="claude"]
+                done [shape="Msquare"]
+                start -> work -> done
+            }"##,
+        ))
+        .expect_err("unsupported stylesheet declarations must fail closed");
+
+        assert!(error.diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == SemanticDiagnosticKind::UnsupportedExecutionCapability
+                && diagnostic.node_id.as_deref() == Some("work")
+                && diagnostic.message.contains("reasoning_effort")
+        }));
+    }
+
+    #[test]
+    fn claude_execution_controls_require_string_values() {
+        for (attribute, declaration) in [
+            ("allowed_tools", "allowed_tools=true"),
+            ("max_budget_usd", "max_budget_usd=1.0"),
+        ] {
+            let source = format!(
+                r#"digraph G {{
+                    start [shape="Mdiamond"]
+                    work [shape="box", prompt="work", llm_provider="claude", {declaration}]
+                    done [shape="Msquare"]
+                    start -> work -> done
+                }}"#
+            );
+
+            let error = ExecutionPlan::compile(graph(&source))
+                .expect_err("malformed Claude controls must fail closed");
+            assert!(error.diagnostics.iter().any(|diagnostic| {
+                diagnostic.kind == SemanticDiagnosticKind::InvalidAttributeType
+                    && diagnostic.message.contains(attribute)
+            }));
+        }
+    }
+
+    #[test]
+    fn claude_controls_are_rejected_for_non_codergen_handlers() {
+        let mut catalog = builtin_handler_catalog();
+        catalog.insert("custom.llm".into(), true);
+        let error = ExecutionPlan::compile_with_policy(
+            graph(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    work [type="custom.llm", llm_provider="claude", allowed_tools="Read"]
+                    done [shape="Msquare"]
+                    start -> work -> done
+                }"#,
+            ),
+            &catalog,
+            MissingProviderPolicy::Reject,
+        )
+        .expect_err("Claude controls are implemented only by the codergen handler");
+
+        assert!(error.diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == SemanticDiagnosticKind::UnsupportedExecutionCapability
+                && diagnostic.message.contains("allowed_tools")
+        }));
     }
 
     #[test]

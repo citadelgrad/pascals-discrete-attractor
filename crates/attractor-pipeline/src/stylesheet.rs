@@ -1,8 +1,9 @@
 //! CSS-like model configuration system for pipeline graphs.
 //!
-//! Parses stylesheet rules with selectors (`*`, `#id`, `.class`) and declarations
-//! (`llm_model`, `llm_provider`, `reasoning_effort`), then applies them to pipeline
-//! graph nodes respecting specificity ordering.
+//! Parses stylesheet rules with selectors (`*`, `#id`, `.class`) and applies
+//! supported model/provider declarations to pipeline graph nodes respecting
+//! specificity ordering. Recognized unsupported declarations are retained for
+//! canonical compilation to reject rather than silently ignore.
 
 use crate::graph::{PipelineGraph, PipelineNode};
 use attractor_types::AttractorError;
@@ -274,7 +275,6 @@ pub fn apply_stylesheet(graph: &mut PipelineGraph, stylesheet: &Stylesheet) {
         let authored = authored_attrs.get(&node.id);
         let had_llm_model = authored.is_some_and(|attrs| attrs.contains("llm_model"));
         let had_llm_provider = authored.is_some_and(|attrs| attrs.contains("llm_provider"));
-        let had_reasoning_effort = authored.is_some_and(|attrs| attrs.contains("reasoning_effort"));
 
         // Collect matching rules, sorted by specificity ascending so that
         // higher-specificity rules overwrite lower-specificity ones.
@@ -297,8 +297,11 @@ pub fn apply_stylesheet(graph: &mut PipelineGraph, stylesheet: &Stylesheet) {
                     "llm_provider" if !had_llm_provider => {
                         node.llm_provider = Some(decl.value.clone());
                     }
-                    "reasoning_effort" if !had_reasoning_effort => {
-                        node.reasoning_effort = Some(decl.value.clone());
+                    "reasoning_effort" => {
+                        node.raw_attrs.insert(
+                            "reasoning_effort".into(),
+                            attractor_dot::AttributeValue::String(decl.value.clone()),
+                        );
                     }
                     _ => {}
                 }

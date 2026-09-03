@@ -1,7 +1,9 @@
 use super::*;
-use crate::test_utils::{make_client, EchoTool, MockEnv, SequenceMockProvider};
+use crate::test_utils::{
+    make_client, EchoTool, MockEnv, RecordingTimeoutEnv, SequenceMockProvider,
+};
 use async_trait::async_trait;
-use attractor_llm::{FinishReason, Response, Usage};
+use attractor_llm::{ContentPart, FinishReason, Response, Role, Usage};
 use attractor_tools::{Tool, ToolDefinition as ToolsToolDef};
 
 // -----------------------------------------------------------------------
@@ -26,6 +28,44 @@ fn session_creation_with_config() {
     assert!(!session.id().is_empty());
     assert_eq!(*session.state(), SessionState::Idle);
     assert!(session.history().is_empty());
+}
+
+#[tokio::test]
+async fn session_model_and_system_prompt_reach_the_provider_request() {
+    let (provider, requests) = SequenceMockProvider::recording(vec![Response {
+        id: "response".into(),
+        text: "done".into(),
+        tool_calls: vec![],
+        reasoning: None,
+        usage: Usage::default(),
+        model: "configured-model".into(),
+        finish_reason: FinishReason::EndTurn,
+    }]);
+    let config = SessionConfig {
+        model: "configured-model".into(),
+        system_prompt: "Configured system prompt".into(),
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(
+        make_client(provider),
+        ToolRegistry::new(),
+        Box::new(MockEnv),
+        config,
+    );
+
+    session.process_input("hello").await.unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].model, "configured-model");
+    assert!(matches!(
+        requests[0].messages.first(),
+        Some(attractor_llm::Message {
+            role: Role::System,
+            content,
+            ..
+        }) if matches!(content.as_slice(), [ContentPart::Text { text }] if text == "Configured system prompt")
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -220,6 +260,158 @@ async fn max_tool_rounds_stops_loop() {
         .filter(|t| matches!(t, Turn::Assistant { .. }))
         .count();
     assert_eq!(assistant_count, 3);
+}
+
+#[tokio::test]
+async fn repeated_tool_calls_inject_one_loop_steering_turn() {
+    let responses = repeated_tool_responses(3);
+    let client = make_client(SequenceMockProvider::new(responses));
+    let mut registry = ToolRegistry::new();
+    registry.register(EchoTool);
+    let config = SessionConfig {
+        loop_detection_window: 3,
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(client, registry, Box::new(MockEnv), config);
+
+    assert_eq!(session.process_input("Repeat").await.unwrap(), "Done");
+
+    let warnings = session
+        .history()
+        .iter()
+        .filter_map(|turn| match turn {
+            Turn::Steering { content } if content.contains("called the 'echo' tool 3 times") => {
+                Some(content)
+            }
+            _ => None,
+        })
+        .count();
+    assert_eq!(warnings, 1);
+}
+
+fn repeated_tool_responses(count: usize) -> Vec<Response> {
+    (0..count)
+        .map(|i| Response {
+            id: format!("resp-{i}"),
+            text: String::new(),
+            tool_calls: vec![ToolCallResult {
+                id: format!("tc-{i}"),
+                name: "echo".into(),
+                arguments: serde_json::json!({"text": "same"}),
+            }],
+            reasoning: None,
+            usage: Usage::default(),
+            model: "mock-model".into(),
+            finish_reason: FinishReason::ToolUse,
+        })
+        .chain(std::iter::once(Response {
+            id: "resp-final".into(),
+            text: "Done".into(),
+            tool_calls: vec![],
+            reasoning: None,
+            usage: Usage::default(),
+            model: "mock-model".into(),
+            finish_reason: FinishReason::EndTurn,
+        }))
+        .collect()
+}
+
+#[tokio::test]
+async fn disabled_loop_detection_never_injects_steering() {
+    let client = make_client(SequenceMockProvider::new(repeated_tool_responses(3)));
+    let mut registry = ToolRegistry::new();
+    registry.register(EchoTool);
+    let config = SessionConfig {
+        enable_loop_detection: false,
+        loop_detection_window: 2,
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(client, registry, Box::new(MockEnv), config);
+
+    assert_eq!(session.process_input("Repeat").await.unwrap(), "Done");
+    assert!(!session
+        .history()
+        .iter()
+        .any(|turn| matches!(turn, Turn::Steering { .. })));
+}
+
+#[tokio::test]
+async fn zero_loop_detection_window_is_safe_and_never_injects_steering() {
+    let client = make_client(SequenceMockProvider::new(repeated_tool_responses(3)));
+    let mut registry = ToolRegistry::new();
+    registry.register(EchoTool);
+    let config = SessionConfig {
+        enable_loop_detection: true,
+        loop_detection_window: 0,
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(client, registry, Box::new(MockEnv), config);
+
+    assert_eq!(session.process_input("Repeat").await.unwrap(), "Done");
+    assert!(!session
+        .history()
+        .iter()
+        .any(|turn| matches!(turn, Turn::Steering { .. })));
+}
+
+#[tokio::test]
+async fn shell_tool_uses_session_default_command_timeout() {
+    let responses = vec![
+        Response {
+            id: "resp-tool".into(),
+            text: String::new(),
+            tool_calls: vec![ToolCallResult {
+                id: "tc-shell".into(),
+                name: "shell".into(),
+                arguments: serde_json::json!({"command": "true"}),
+            }],
+            reasoning: None,
+            usage: Usage::default(),
+            model: "mock-model".into(),
+            finish_reason: FinishReason::ToolUse,
+        },
+        Response {
+            id: "resp-final".into(),
+            text: "Done".into(),
+            tool_calls: vec![],
+            reasoning: None,
+            usage: Usage::default(),
+            model: "mock-model".into(),
+            finish_reason: FinishReason::EndTurn,
+        },
+    ];
+    let client = make_client(SequenceMockProvider::new(responses));
+    let mut registry = ToolRegistry::new();
+    registry.register(attractor_tools::ShellTool);
+    let (env, observed_timeouts) = RecordingTimeoutEnv::new();
+    let config = SessionConfig {
+        default_command_timeout_ms: 321,
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(client, registry, Box::new(env), config);
+
+    assert_eq!(session.process_input("Run it").await.unwrap(), "Done");
+    assert_eq!(*observed_timeouts.lock().unwrap(), vec![321]);
+}
+
+#[tokio::test]
+async fn shell_tool_explicit_timeout_overrides_session_default() {
+    let mut responses = repeated_tool_responses(1);
+    responses[0].tool_calls[0].name = "shell".into();
+    responses[0].tool_calls[0].arguments =
+        serde_json::json!({"command": "true", "timeout_ms": 654});
+    let client = make_client(SequenceMockProvider::new(responses));
+    let mut registry = ToolRegistry::new();
+    registry.register(attractor_tools::ShellTool);
+    let (env, observed_timeouts) = RecordingTimeoutEnv::new();
+    let config = SessionConfig {
+        default_command_timeout_ms: 321,
+        ..Default::default()
+    };
+    let mut session = AgentSession::new(client, registry, Box::new(env), config);
+
+    assert_eq!(session.process_input("Run it").await.unwrap(), "Done");
+    assert_eq!(*observed_timeouts.lock().unwrap(), vec![654]);
 }
 
 // -----------------------------------------------------------------------

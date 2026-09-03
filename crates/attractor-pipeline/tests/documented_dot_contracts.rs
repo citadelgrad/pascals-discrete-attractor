@@ -559,6 +559,150 @@ fn unsupported_parallel_topology_is_documented_truthfully() {
 }
 
 #[test]
+fn execution_capability_manifest_names_real_consumers_and_contracts() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let manifest = std::fs::read_to_string(workspace.join("docs/execution-capabilities.md"))
+        .expect("execution capability manifest must exist");
+
+    for required in [
+        "`max_retries` / node `timeout`",
+        "`PipelineExecutor::invoke_node`",
+        "`node_max_retries_reinvokes_handler_until_success`",
+        "`canonical_tool_timeout_terminates_descendant_processes`",
+        "Goal-gate retry targets",
+        "`terminal_retry_targets_are_blocking_errors`",
+        "`exit_goal_gate_retry_target_fails_before_execution`",
+        "`EventEmitter` / `PipelineEvent`",
+        "`executor_emits_pipeline_stage_context_and_edge_lifecycle`",
+        "DOT prompt/model transforms",
+        "`aliases_styles_and_prompt_transforms_precede_compilation`",
+        "`SessionConfig.model`",
+        "`SessionConfig.system_prompt`",
+        "`SessionConfig.max_turns`",
+        "`SessionConfig.max_tool_rounds`",
+        "`SessionConfig.default_command_timeout_ms`",
+        "`SessionConfig.enable_loop_detection`",
+        "`SessionConfig.loop_detection_window`",
+        "`shell_tool_uses_session_default_command_timeout`",
+        "`repeated_tool_calls_inject_one_loop_steering_turn`",
+        "`zero_loop_detection_window_is_safe_and_never_injects_steering`",
+        "Provider `supports_streaming`",
+        "`builtin_provider_streaming_claims_match_their_empty_streams`",
+        "`streaming_capability_fixture_yields_a_real_event`",
+        "`allowed_tools` / node `max_budget_usd`",
+        "Claude-backed codergen nodes",
+        "`fidelity`, `reasoning_effort`, `auto_status`, `allow_partial`, `thread_id`",
+        "Removed: agent/types fidelity APIs and subagent bookkeeping",
+        "Rejected: manager-loop roles",
+        "`unsupported_execution_capability`",
+    ] {
+        assert!(
+            manifest.contains(required),
+            "execution capability manifest is missing {required:?}"
+        );
+    }
+
+    for (path, symbol) in [
+        (
+            "crates/attractor-pipeline/src/engine_tests.rs",
+            "node_max_retries_reinvokes_handler_until_success",
+        ),
+        (
+            "crates/attractor-pipeline/src/engine_tests.rs",
+            "canonical_tool_timeout_terminates_descendant_processes",
+        ),
+        (
+            "crates/attractor-pipeline/src/validation_tests.rs",
+            "terminal_retry_targets_are_blocking_errors",
+        ),
+        (
+            "crates/attractor-cli/tests/cli_semantics.rs",
+            "exit_goal_gate_retry_target_fails_before_execution",
+        ),
+        (
+            "crates/attractor-pipeline/src/engine_tests.rs",
+            "executor_emits_pipeline_stage_context_and_edge_lifecycle",
+        ),
+        (
+            "crates/attractor-agent/src/tests.rs",
+            "shell_tool_uses_session_default_command_timeout",
+        ),
+        (
+            "crates/attractor-agent/src/tests.rs",
+            "repeated_tool_calls_inject_one_loop_steering_turn",
+        ),
+        (
+            "crates/attractor-agent/src/tests.rs",
+            "zero_loop_detection_window_is_safe_and_never_injects_steering",
+        ),
+        (
+            "crates/attractor-agent/src/tests.rs",
+            "session_model_and_system_prompt_reach_the_provider_request",
+        ),
+        (
+            "crates/attractor-llm/src/provider.rs",
+            "builtin_provider_streaming_claims_match_their_empty_streams",
+        ),
+        (
+            "crates/attractor-llm/src/provider.rs",
+            "streaming_capability_fixture_yields_a_real_event",
+        ),
+    ] {
+        assert!(
+            std::fs::read_to_string(workspace.join(path))
+                .unwrap()
+                .contains(symbol),
+            "manifest names missing contract {symbol}"
+        );
+    }
+}
+
+#[test]
+fn removed_fidelity_and_subagent_apis_are_not_shipped_or_advertised() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+
+    assert!(!workspace
+        .join("crates/attractor-agent/src/fidelity.rs")
+        .exists());
+    assert!(!workspace
+        .join("crates/attractor-agent/src/subagent.rs")
+        .exists());
+    for relative in [
+        "crates/attractor-agent/src/lib.rs",
+        "crates/attractor-types/src/lib.rs",
+        "crates/attractor-types/src/types.rs",
+    ] {
+        let source = std::fs::read_to_string(workspace.join(relative)).unwrap();
+        assert!(
+            !source.contains("FidelityMode"),
+            "{relative} exports fidelity"
+        );
+        assert!(
+            !source.contains("SubagentManager"),
+            "{relative} exports subagent bookkeeping"
+        );
+    }
+
+    for relative in ["README.md", "docs/guide.md", "docs/dot-dialect.md"] {
+        let source = std::fs::read_to_string(workspace.join(relative)).unwrap();
+        assert!(
+            !source.contains("FidelityValidRule"),
+            "{relative} advertises removed fidelity validation"
+        );
+        assert!(
+            !source.contains("manager supervision"),
+            "{relative} advertises manager supervision"
+        );
+    }
+}
+
+#[test]
 fn goal_gate_docs_use_canonical_compiled_exit_membership() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

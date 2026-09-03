@@ -436,6 +436,7 @@ async fn codergen_dry_run_includes_provider() {
         kind: ResolvedNodeKind::Task,
         handler: crate::HandlerIdentity::Codergen,
         provider: Some(LlmCliProvider::Gemini),
+        invocation: Default::default(),
     };
 
     let outcome = handler
@@ -463,6 +464,7 @@ async fn codergen_rejects_missing_provider_even_in_dry_run() {
         kind: ResolvedNodeKind::Task,
         handler: crate::HandlerIdentity::Codergen,
         provider: None,
+        invocation: Default::default(),
     };
 
     let error = handler

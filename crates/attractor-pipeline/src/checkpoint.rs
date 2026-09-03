@@ -52,6 +52,15 @@ pub struct PipelineCheckpoint {
     /// resume, even after `loop_restart` clears completed node history.
     #[serde(default)]
     pub previous_node_id: Option<String>,
+    /// Total handler attempts begun across the pipeline, including retries.
+    #[serde(default)]
+    pub total_handler_attempts: u64,
+    /// Node whose current visit has begun attempts but has not completed.
+    #[serde(default)]
+    pub active_node_id: Option<String>,
+    /// Attempts already begun during the active node visit.
+    #[serde(default)]
+    pub active_node_attempts: usize,
 }
 
 impl PipelineCheckpoint {
@@ -75,6 +84,9 @@ impl PipelineCheckpoint {
             quality_loop_counters: HashMap::new(),
             quality_last_footprint: HashMap::new(),
             previous_node_id: None,
+            total_handler_attempts: 0,
+            active_node_id: None,
+            active_node_attempts: 0,
         }
     }
 
@@ -101,6 +113,9 @@ impl PipelineCheckpoint {
             quality_loop_counters: HashMap::new(),
             quality_last_footprint: HashMap::new(),
             previous_node_id: None,
+            total_handler_attempts: 0,
+            active_node_id: None,
+            active_node_attempts: 0,
         }
     }
 
@@ -131,6 +146,9 @@ impl PipelineCheckpoint {
             quality_loop_counters,
             quality_last_footprint,
             previous_node_id,
+            total_handler_attempts: 0,
+            active_node_id: None,
+            active_node_attempts: 0,
         }
     }
 }
@@ -287,5 +305,8 @@ mod tests {
 
         let restored: PipelineCheckpoint = serde_json::from_str(json).unwrap();
         assert_eq!(restored.session_id, None);
+        assert_eq!(restored.total_handler_attempts, 0);
+        assert_eq!(restored.active_node_id, None);
+        assert_eq!(restored.active_node_attempts, 0);
     }
 }

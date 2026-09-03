@@ -1,4 +1,4 @@
-//! Pipeline outcome, status, checkpoint, and fidelity types.
+//! Pipeline outcome, status, and checkpoint types.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -103,21 +103,6 @@ impl Checkpoint {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FidelityMode
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FidelityMode {
-    Full,
-    Truncate,
-    Compact,
-    SummaryLow,
-    SummaryMedium,
-    SummaryHigh,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,39 +196,5 @@ mod tests {
             Some(&serde_json::json!("val"))
         );
         assert_eq!(loaded.logs, vec!["started".to_string()]);
-    }
-
-    #[test]
-    fn fidelity_mode_serialization() {
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::Full).unwrap(),
-            "\"full\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::Truncate).unwrap(),
-            "\"truncate\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::Compact).unwrap(),
-            "\"compact\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::SummaryLow).unwrap(),
-            "\"summary_low\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::SummaryMedium).unwrap(),
-            "\"summary_medium\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FidelityMode::SummaryHigh).unwrap(),
-            "\"summary_high\""
-        );
-    }
-
-    #[test]
-    fn fidelity_mode_deserialization() {
-        let mode: FidelityMode = serde_json::from_str("\"summary_high\"").unwrap();
-        assert_eq!(mode, FidelityMode::SummaryHigh);
     }
 }

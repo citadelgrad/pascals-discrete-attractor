@@ -1,8 +1,8 @@
 //! Tool trait, built-in tools, and execution environment for Attractor agents.
 //!
 //! Provides `Tool` trait, `ToolRegistry`, `ExecutionEnvironment` trait,
-//! `LocalEnvironment` implementation, and built-in tools (read_file, write_file,
-//! edit_file, shell, grep, glob).
+//! explicit host and root-confined implementations, and built-in tools
+//! (read_file, write_file, edit_file, shell, grep, glob).
 
 pub mod builtin;
 pub mod environment;
@@ -13,7 +13,7 @@ pub mod truncation;
 
 pub use builtin::{EditFileTool, GlobTool, GrepTool, ReadFileTool, ShellTool, WriteFileTool};
 pub use environment::{DirEntry, ExecResult, ExecutionEnvironment, GrepOptions};
-pub use local_env::LocalExecutionEnvironment;
+pub use local_env::{CommandRunner, HostExecutionEnvironment, RootConfinedExecutionEnvironment};
 pub use profiles::ToolProfile;
 pub use tool::{Tool, ToolDefinition, ToolExecutionOptions, ToolRegistry};
 

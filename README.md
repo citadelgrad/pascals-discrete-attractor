@@ -30,6 +30,13 @@ limits, dry-run mode, the working directory, or Claude isolation settings.
 For the full specification including code references and examples, see **[docs/task-verification.md](docs/task-verification.md)**.
 The maintained support matrix is **[docs/execution-capabilities.md](docs/execution-capabilities.md)**.
 
+Agent tools expose two explicit local execution policies. `RootConfinedExecutionEnvironment`
+canonicalizes file-tool paths and rejects traversal, outside absolute paths, and symlink escapes;
+`HostExecutionEnvironment` deliberately permits unrestricted host filesystem access. Both clear
+child environments and pass only a small platform allowlist. Root confinement applies to the
+file-tool API, not arbitrary shell syscalls; callers needing command sandboxing must inject an
+OS-confined `CommandRunner`.
+
 ## Overview
 
 PAS lets you describe AI workflows as directed graphs using DOT syntax. Each node is a step (LLM call, tool use, or human gate) and edges define the flow with optional conditions. The engine handles execution, edge selection, retries, goal enforcement, and cost tracking.

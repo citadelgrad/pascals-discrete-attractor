@@ -589,6 +589,10 @@ fn execution_capability_manifest_names_real_consumers_and_contracts() {
         "`shell_tool_uses_session_default_command_timeout`",
         "`repeated_tool_calls_inject_one_loop_steering_turn`",
         "`zero_loop_detection_window_is_safe_and_never_injects_steering`",
+        "Agent filesystem execution policy",
+        "`HostExecutionEnvironment`",
+        "`RootConfinedExecutionEnvironment`",
+        "`commands_receive_only_allowlisted_environment_variables`",
         "Provider `supports_streaming`",
         "`builtin_provider_streaming_claims_match_their_empty_streams`",
         "`streaming_capability_fixture_yields_a_real_event`",
@@ -641,6 +645,22 @@ fn execution_capability_manifest_names_real_consumers_and_contracts() {
         (
             "crates/attractor-agent/src/tests.rs",
             "session_model_and_system_prompt_reach_the_provider_request",
+        ),
+        (
+            "crates/attractor-tools/src/local_env.rs",
+            "confined_environment_rejects_parent_traversal_for_every_filesystem_method",
+        ),
+        (
+            "crates/attractor-tools/src/local_env.rs",
+            "confined_environment_rejects_symlink_escapes_for_every_filesystem_method",
+        ),
+        (
+            "crates/attractor-tools/src/local_env.rs",
+            "commands_receive_only_allowlisted_environment_variables",
+        ),
+        (
+            "crates/attractor-tools/src/local_env.rs",
+            "host_environment_explicitly_allows_absolute_outside_access",
         ),
         (
             "crates/attractor-llm/src/provider.rs",

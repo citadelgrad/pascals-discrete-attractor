@@ -8,7 +8,7 @@ pub async fn cmd_launch(
     workdir: Option<&std::path::Path>,
     dry_run: bool,
     max_budget_usd: Option<f64>,
-    max_steps: u64,
+    max_steps: Option<u64>,
     fresh: bool,
     verbose: bool,
     codergen_claude: &super::CodergenClaudeCliOpts,

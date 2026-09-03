@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
@@ -12,7 +13,10 @@ use crate::edge_selection::select_edge;
 use crate::execution_plan::{ExecutionPlan, HandlerIdentity};
 use crate::goal_gate::enforce_goal_gates;
 use crate::graph::PipelineGraph;
-use crate::handler::{default_registry, HandlerRegistry};
+use crate::handler::{default_registry, HandlerExecutionContext, HandlerRegistry};
+use crate::run_configuration::{
+    is_reserved_key, ClaudeExecutionOptions, ExecutionOptions, RunConfiguration,
+};
 use crate::validation::validate_plan;
 
 pub const DEFAULT_MAX_BUDGET_USD: f64 = 200.0;
@@ -39,17 +43,6 @@ pub struct PipelineResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Convert an `attractor_dot::AttributeValue` to a `serde_json::Value`.
-fn attr_to_json(val: &attractor_dot::AttributeValue) -> serde_json::Value {
-    match val {
-        attractor_dot::AttributeValue::String(s) => serde_json::Value::String(s.clone()),
-        attractor_dot::AttributeValue::Integer(i) => serde_json::json!(*i),
-        attractor_dot::AttributeValue::Float(f) => serde_json::json!(*f),
-        attractor_dot::AttributeValue::Boolean(b) => serde_json::Value::Bool(*b),
-        attractor_dot::AttributeValue::Duration(d) => serde_json::json!(d.as_millis() as u64),
-    }
-}
-
 /// Map a `StageStatus` to the lowercase string used in edge conditions.
 fn status_to_string(status: StageStatus) -> String {
     match status {
@@ -61,17 +54,99 @@ fn status_to_string(status: StageStatus) -> String {
     }
 }
 
-async fn manifest_max_fix_iterations(context: &Context) -> Option<u32> {
-    let workdir = context
-        .get("workdir")
-        .await
-        .and_then(|v| v.as_str().map(PathBuf::from))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+fn prepare(plan: &ExecutionPlan, options: ExecutionOptions) -> Result<RunConfiguration> {
+    RunConfiguration::prepare(plan.clone(), options)
+        .map_err(|error| AttractorError::ValidationError(error.to_string()))
+}
 
-    attractor_quality::resolve(&workdir)
-        .ok()
-        .and_then(|resolved| resolved.manifest.quality)
-        .and_then(|quality| quality.max_fix_iterations)
+async fn apply_handler_updates(context: &Context, node_id: &str, outcome: &Outcome) -> Result<()> {
+    let mut reserved_updates = outcome
+        .context_updates
+        .keys()
+        .filter(|key| is_reserved_key(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    reserved_updates.sort();
+    if !reserved_updates.is_empty() {
+        return Err(AttractorError::ValidationError(format!(
+            "handler '{node_id}' attempted to write reserved context key(s): {}",
+            reserved_updates.join(", ")
+        )));
+    }
+    context.apply_updates(outcome.context_updates.clone()).await;
+    Ok(())
+}
+
+async fn legacy_options(context: Context) -> Result<(ExecutionOptions, Context)> {
+    let snapshot = context.snapshot().await;
+    let setting_sources = snapshot
+        .get("codergen.claude.setting_sources")
+        .and_then(|value| value.as_str())
+        .map(|sources| {
+            sources
+                .split(',')
+                .map(str::trim)
+                .filter(|source| !source.is_empty())
+                .map(attractor_quality::ClaudeSettingSource::from_str)
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(AttractorError::ValidationError)?;
+    let settings_mode = snapshot
+        .get("codergen.claude.settings_mode")
+        .and_then(|value| value.as_str())
+        .map(attractor_quality::ClaudeSettingsMode::from_str)
+        .transpose()
+        .map_err(AttractorError::ValidationError)?;
+    let plugin_dirs = snapshot
+        .get("codergen.claude.plugin_dirs")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(PathBuf::from))
+                .collect()
+        });
+    let string = |key: &str| {
+        snapshot
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+    };
+    let options = ExecutionOptions {
+        dry_run: snapshot.get("dry_run").and_then(|value| value.as_bool()),
+        max_steps: snapshot.get("max_steps").and_then(|value| value.as_u64()),
+        max_budget_usd: snapshot
+            .get("max_budget_usd")
+            .and_then(|value| value.as_f64()),
+        workdir: string("workdir").map(PathBuf::from),
+        quality_disabled: snapshot
+            .get("quality_disabled")
+            .and_then(|value| value.as_bool()),
+        quality_max_fix_iterations: snapshot
+            .get("quality_max_fix_iterations")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u32::try_from(value).ok()),
+        claude: ClaudeExecutionOptions {
+            settings_mode,
+            setting_sources,
+            settings: string("codergen.claude.settings"),
+            tools: string("codergen.claude.tools"),
+            agents: string("codergen.claude.agents"),
+            plugin_dirs,
+            mcp_config: string("codergen.claude.mcp_config"),
+        },
+    };
+    let workflow = Context::new();
+    workflow
+        .apply_updates(
+            snapshot
+                .into_iter()
+                .filter(|(key, _)| !is_reserved_key(key))
+                .collect(),
+        )
+        .await;
+    Ok((options, workflow))
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +199,8 @@ impl PipelineExecutor {
     }
 
     pub async fn run_plan(&self, plan: &ExecutionPlan) -> Result<PipelineResult> {
-        self.run_plan_with_context(plan, Context::new()).await
+        let configured = prepare(plan, ExecutionOptions::default())?;
+        self.run_configuration(&configured).await
     }
 
     pub async fn run_plan_with_context(
@@ -132,7 +208,10 @@ impl PipelineExecutor {
         plan: &ExecutionPlan,
         context: Context,
     ) -> Result<PipelineResult> {
-        self.run_inner(plan, context, None).await
+        let (options, workflow) = legacy_options(context).await?;
+        let configured = prepare(plan, options)?;
+        self.run_configuration_with_context(&configured, workflow)
+            .await
     }
 
     pub async fn run_plan_with_checkpoint(
@@ -141,7 +220,32 @@ impl PipelineExecutor {
         context: Context,
         logs_root: &Path,
     ) -> Result<PipelineResult> {
-        self.run_inner(plan, context, Some(logs_root)).await
+        let (options, workflow) = legacy_options(context).await?;
+        let configured = prepare(plan, options)?;
+        self.run_configuration_with_checkpoint(&configured, workflow, logs_root)
+            .await
+    }
+
+    pub async fn run_configuration(&self, configured: &RunConfiguration) -> Result<PipelineResult> {
+        self.run_configuration_with_context(configured, Context::new())
+            .await
+    }
+
+    pub async fn run_configuration_with_context(
+        &self,
+        configured: &RunConfiguration,
+        context: Context,
+    ) -> Result<PipelineResult> {
+        self.run_inner(configured, context, None).await
+    }
+
+    pub async fn run_configuration_with_checkpoint(
+        &self,
+        configured: &RunConfiguration,
+        context: Context,
+        logs_root: &Path,
+    ) -> Result<PipelineResult> {
+        self.run_inner(configured, context, Some(logs_root)).await
     }
 
     fn compile(&self, graph: &PipelineGraph) -> Result<ExecutionPlan> {
@@ -161,10 +265,11 @@ impl PipelineExecutor {
     /// saved after each node and an existing checkpoint triggers resume.
     async fn run_inner(
         &self,
-        plan: &ExecutionPlan,
+        configured: &RunConfiguration,
         context: Context,
         logs_root: Option<&Path>,
     ) -> Result<PipelineResult> {
+        let plan = configured.plan();
         plan.ensure_registry_compatible(&self.registry)
             .map_err(|error| {
                 AttractorError::ValidationError(
@@ -189,9 +294,23 @@ impl PipelineExecutor {
             return Err(AttractorError::ValidationError(errors.join("; ")));
         }
 
+        let mut reserved_input = context
+            .snapshot()
+            .await
+            .into_keys()
+            .filter(|key| is_reserved_key(key))
+            .collect::<Vec<_>>();
+        reserved_input.sort();
+        if !reserved_input.is_empty() {
+            return Err(AttractorError::ValidationError(format!(
+                "canonical workflow input contains reserved context key(s): {}",
+                reserved_input.join(", ")
+            )));
+        }
+
         // Phase 3: Initialize (merge graph attrs into existing context)
-        for (key, val) in &graph.attrs {
-            context.set(key, attr_to_json(val)).await;
+        for (key, value) in configured.graph_context_defaults() {
+            context.set(key, value.clone()).await;
         }
         let mut completed_nodes: Vec<String> = Vec::new();
         let mut node_outcomes: HashMap<String, Outcome> = HashMap::new();
@@ -208,17 +327,9 @@ impl PipelineExecutor {
             .expect("compiled start node must exist in source graph");
         let mut current_node = start;
 
-        // Safety limits from context (set by CLI flags)
-        let max_budget: f64 = context
-            .get("max_budget_usd")
-            .await
-            .and_then(|v| v.as_f64())
-            .unwrap_or(DEFAULT_MAX_BUDGET_USD);
-        let max_steps: u64 = context
-            .get("max_steps")
-            .await
-            .and_then(|v| v.as_u64())
-            .unwrap_or(200);
+        // Safety limits from the immutable run configuration.
+        let max_budget = *configured.controls().max_budget_usd().value();
+        let max_steps = *configured.controls().max_steps().value();
         let mut total_cost: f64 = 0.0;
         let mut step_count: u64 = 0;
 
@@ -230,7 +341,9 @@ impl PipelineExecutor {
                     "Resuming from checkpoint"
                 );
                 // Restore context
-                context.apply_updates(cp.context_snapshot).await;
+                let mut restored = cp.context_snapshot;
+                restored.retain(|key, _| !is_reserved_key(key));
+                context.apply_updates(restored).await;
                 // Restore completed state
                 completed_nodes = cp.completed_nodes;
                 node_outcomes = cp.node_outcomes;
@@ -293,8 +406,14 @@ impl PipelineExecutor {
                     }
                 })?;
                 let outcome = handler
-                    .execute_resolved(current_node, resolved_node, &context, graph)
+                    .execute_configured(
+                        current_node,
+                        resolved_node,
+                        HandlerExecutionContext::new(&context, configured.controls()),
+                        graph,
+                    )
                     .await?;
+                apply_handler_updates(&context, &current_node.id, &outcome).await?;
                 completed_nodes.push(current_node.id.clone());
                 node_outcomes.insert(current_node.id.clone(), outcome);
                 break;
@@ -323,17 +442,10 @@ impl PipelineExecutor {
                 *counter += 1;
                 let iteration = *counter;
 
-                // Resolve max_fix_iterations: node attr → manifest → context → default 3
-                let manifest_max_iters = manifest_max_fix_iterations(&context).await;
-                let context_max_iters = context
-                    .get("quality_max_fix_iterations")
-                    .await
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as u32);
-                let max_iters = match current_node.raw_attrs.get("max_fix_iterations") {
-                    Some(attractor_dot::AttributeValue::Integer(n)) => *n as u32,
-                    _ => manifest_max_iters.or(context_max_iters).unwrap_or(3),
-                };
+                let max_iters = *configured
+                    .controls()
+                    .quality_max_fix_iterations(&current_node.id)
+                    .value();
 
                 if iteration > max_iters {
                     return Err(AttractorError::Other(format!(
@@ -358,24 +470,24 @@ impl PipelineExecutor {
                          </retry-warning>",
                         current_node.id
                     );
-                    context
-                        .set(
-                            format!("__quality_retry_warning::{}", current_node.id),
-                            serde_json::Value::String(warning),
-                        )
-                        .await;
                     tracing::warn!(
                         node = %current_node.id,
                         iteration = iteration,
                         max = max_iters,
                         footprint = %last_fp,
+                        warning = %warning,
                         "Quality retry loop"
                     );
                 }
             }
 
             let outcome = handler
-                .execute_resolved(current_node, resolved_node, &context, graph)
+                .execute_configured(
+                    current_node,
+                    resolved_node,
+                    HandlerExecutionContext::new(&context, configured.controls()),
+                    graph,
+                )
                 .await?;
 
             // Extract failure_footprint for the quality loop tracker
@@ -416,18 +528,7 @@ impl PipelineExecutor {
             }
 
             // Apply context updates
-            context.apply_updates(outcome.context_updates.clone()).await;
-            context
-                .set(
-                    "outcome",
-                    serde_json::Value::String(status_to_string(outcome.status)),
-                )
-                .await;
-            if let Some(ref label) = outcome.preferred_label {
-                context
-                    .set("preferred_label", serde_json::Value::String(label.clone()))
-                    .await;
-            }
+            apply_handler_updates(&context, &current_node.id, &outcome).await?;
 
             // Select next edge — resolve condition keys from outcome and context
             let ctx_snapshot = context.snapshot().await;

@@ -280,6 +280,250 @@ fn invalid_semantics_start_zero_provider_processes() {
 }
 
 #[test]
+fn invalid_or_reserved_controls_fail_before_provider_or_fresh_checkpoint_side_effects() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let cases = [
+        (
+            "reserved.dot",
+            "graph [dry_run=\"false\"]",
+            Vec::<&str>::new(),
+            "reserved",
+        ),
+        ("steps.dot", "", vec!["--max-steps", "0"], "max_steps"),
+        (
+            "budget.dot",
+            "",
+            vec!["--max-budget-usd", "NaN"],
+            "max_budget_usd",
+        ),
+    ];
+
+    for (name, graph_attr, extra, expected) in cases {
+        let pipeline = write_pipeline(
+            fixture.path(),
+            name,
+            &format!(
+                "digraph G {{ {graph_attr} start [shape=\"Mdiamond\"] work [shape=\"box\", llm_provider=\"codex\", timeout=1s] done [shape=\"Msquare\"] start -> work -> done }}"
+            ),
+        );
+        let logs = fixture.path().join(format!("{name}-logs"));
+        fs::create_dir_all(&logs).unwrap();
+        let checkpoint = logs.join("checkpoint.json");
+        fs::write(&checkpoint, "sentinel").unwrap();
+        let mut args = vec![
+            "run",
+            pipeline.to_str().unwrap(),
+            "--logs",
+            logs.to_str().unwrap(),
+            "--fresh",
+        ];
+        args.extend(extra);
+
+        let output = run_with_shims(&args, shims.path(), &marker);
+        assert!(!output.status.success(), "{name} unexpectedly ran");
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(diagnostics.contains(expected), "{name}: {diagnostics}");
+        assert!(!marker.exists(), "{name} started a provider");
+        assert_eq!(fs::read_to_string(&checkpoint).unwrap(), "sentinel");
+    }
+}
+
+#[test]
+fn invalid_graph_quality_limit_fails_before_fresh_checkpoint_side_effects() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let pipeline = write_pipeline(
+        fixture.path(),
+        "quality-zero.dot",
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            check [shape="ellipse", type="quality", max_fix_iterations=0]
+            work [shape="box", llm_provider="codex", timeout=1s]
+            done [shape="Msquare"]
+            start -> check -> work -> done
+        }"#,
+    );
+    let logs = fixture.path().join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    let checkpoint = logs.join("checkpoint.json");
+    fs::write(&checkpoint, "sentinel").unwrap();
+
+    let output = run_with_shims(
+        &[
+            "run",
+            pipeline.to_str().unwrap(),
+            "--logs",
+            logs.to_str().unwrap(),
+            "--fresh",
+        ],
+        shims.path(),
+        &marker,
+    );
+
+    assert!(!output.status.success());
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("max_fix_iterations"), "{diagnostics}");
+    assert!(diagnostics.contains("check"), "{diagnostics}");
+    assert!(
+        !marker.exists(),
+        "invalid quality control started a provider"
+    );
+    assert_eq!(fs::read_to_string(&checkpoint).unwrap(), "sentinel");
+}
+
+#[test]
+fn built_in_budget_warning_does_not_claim_an_explicit_cli_flag() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let pipeline = write_pipeline(
+        fixture.path(),
+        "built-in-budget.dot",
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            work [shape="box", llm_provider="codex", timeout=1s]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+
+    let output = run_with_shims(
+        &["run", pipeline.to_str().unwrap(), "--dry-run"],
+        shims.path(),
+        &marker,
+    );
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(diagnostics.contains("implicit $200"), "{diagnostics}");
+    assert!(!diagnostics.contains("--max-budget-usd"), "{diagnostics}");
+    assert!(!marker.exists(), "dry-run started a provider");
+}
+
+#[test]
+fn dry_run_uses_typed_controls_and_starts_no_provider() {
+    let fixture = tempfile::tempdir().unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    let logs = fixture.path().join("logs");
+    let pipeline = write_pipeline(
+        fixture.path(),
+        "dry.dot",
+        r#"digraph G { start [shape="Mdiamond"] work [shape="box", llm_provider="codex"] done [shape="Msquare"] start -> work -> done }"#,
+    );
+    let output = run_with_shims(
+        &[
+            "run",
+            pipeline.to_str().unwrap(),
+            "--logs",
+            logs.to_str().unwrap(),
+            "--dry-run",
+        ],
+        shims.path(),
+        &marker,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!marker.exists());
+}
+
+#[test]
+fn directory_mode_prepares_every_plan_before_starting_any_provider() {
+    let fixture = tempfile::tempdir().unwrap();
+    let pipelines = fixture.path().join("pipelines");
+    fs::create_dir(&pipelines).unwrap();
+    let shims = tempfile::tempdir().unwrap();
+    provider_shims(shims.path());
+    let marker = fixture.path().join("providers-started");
+    write_pipeline(
+        &pipelines,
+        "01-valid.dot",
+        r#"digraph G { start [shape="Mdiamond"] work [shape="box", llm_provider="codex", timeout=1s] done [shape="Msquare"] start -> work -> done }"#,
+    );
+    write_pipeline(
+        &pipelines,
+        "02-reserved.dot",
+        r#"digraph G { graph [max_steps=999] start [shape="Mdiamond"] done [shape="Msquare"] start -> done }"#,
+    );
+
+    let output = Command::new(pas())
+        .args(["run", pipelines.to_str().unwrap(), "--fresh"])
+        .current_dir(fixture.path())
+        .env("PATH", shims.path())
+        .env("PAS_TEST_PROVIDER_MARKER", &marker)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        !marker.exists(),
+        "a provider started before all plans were prepared"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("max_steps"));
+}
+
+#[test]
+fn tool_handler_uses_typed_canonical_workdir() {
+    let fixture = tempfile::tempdir().unwrap();
+    let workdir = tempfile::tempdir().unwrap();
+    let logs = fixture.path().join("logs");
+    let pipeline = write_pipeline(
+        fixture.path(),
+        "workdir.dot",
+        r#"digraph G { start [shape="Mdiamond"] tool [shape="parallelogram", tool_command="pwd > typed-workdir-marker"] done [shape="Msquare"] start -> tool -> done }"#,
+    );
+    let output = Command::new(pas())
+        .args([
+            "run",
+            pipeline.to_str().unwrap(),
+            "--workdir",
+            workdir.path().to_str().unwrap(),
+            "--logs",
+            logs.to_str().unwrap(),
+            "--fresh",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual = fs::read_to_string(workdir.path().join("typed-workdir-marker")).unwrap();
+    assert_eq!(
+        Path::new(actual.trim()).canonicalize().unwrap(),
+        workdir.path().canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn run_renders_missing_provider_as_typed_diagnostic_before_side_effects() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -58,8 +58,8 @@ enum Commands {
         max_budget_usd: Option<f64>,
 
         /// Maximum number of node executions before aborting. Prevents runaway loops. Default: 200.
-        #[arg(long, default_value = "200")]
-        max_steps: u64,
+        #[arg(long)]
+        max_steps: Option<u64>,
 
         /// Ignore checkpoint and start fresh
         #[arg(long)]
@@ -250,8 +250,8 @@ enum Commands {
         max_budget_usd: Option<f64>,
 
         /// Maximum number of node executions per pipeline. Default: 200.
-        #[arg(long, default_value = "200")]
-        max_steps: u64,
+        #[arg(long)]
+        max_steps: Option<u64>,
 
         /// Ignore checkpoints and start fresh
         #[arg(long)]

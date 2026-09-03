@@ -267,11 +267,9 @@ async fn context_updates_propagate() {
         "Expected step.result in final context, keys: {:?}",
         result.final_context.keys().collect::<Vec<_>>()
     );
-    // The engine also sets "outcome" in context
-    assert_eq!(
-        result.final_context.get("outcome"),
-        Some(&serde_json::Value::String("success".into())),
-    );
+    // Framework routing state is typed and is not persisted as workflow data.
+    assert!(!result.final_context.contains_key("outcome"));
+    assert!(!result.final_context.contains_key("preferred_label"));
 }
 
 // Test 5: Goal gate failure with retry target loops back
@@ -761,7 +759,7 @@ async fn quality_loop_fires_at_iteration_beyond_max_fix_iterations() {
 // Test 14: Retry warning injected when quality node re-enters on iteration 2
 // Note: the engine sleeps 1 second at iteration >= 2; this test takes ~1s.
 #[tokio::test]
-async fn quality_retry_warning_injected_on_second_iteration() {
+async fn quality_retry_warning_remains_engine_owned_on_second_iteration() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -823,16 +821,11 @@ async fn quality_retry_warning_injected_on_second_iteration() {
         .await
         .expect("pipeline should succeed on second quality attempt");
 
-    let warning_key = "__quality_retry_warning::verify";
     assert!(
-        result.final_context.contains_key(warning_key),
-        "retry warning must be in final_context at iteration 2; keys: {:?}",
-        result.final_context.keys().collect::<Vec<_>>()
-    );
-    let warning = result.final_context[warning_key].as_str().unwrap_or("");
-    assert!(
-        warning.contains("retry-warning"),
-        "warning should contain <retry-warning> sentinel, got: {warning:?}"
+        !result
+            .final_context
+            .contains_key("__quality_retry_warning::verify"),
+        "framework retry state must not leak into workflow Context"
     );
 }
 

@@ -20,7 +20,9 @@ pub struct PipelineCheckpoint {
     pub completed_nodes: Vec<String>,
     /// Outcome produced by each completed node, keyed by node ID.
     pub node_outcomes: HashMap<String, attractor_types::Outcome>,
-    /// Serialised snapshot of the pipeline [`Context`](attractor_types::Context).
+    /// Serialised workflow-data snapshot from pipeline [`Context`](attractor_types::Context).
+    /// Typed run controls are not authoritative here and are filtered from
+    /// legacy snapshots during restore.
     pub context_snapshot: HashMap<String, serde_json::Value>,
     /// RFC 3339 timestamp of when the checkpoint was created.
     pub timestamp: String,

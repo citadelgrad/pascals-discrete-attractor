@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use attractor_dot::AttributeValue;
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
+use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::handler::NodeHandler;
+use crate::handler::{HandlerExecutionContext, NodeHandler, ResolvedNodeHandler};
 
 // ---------------------------------------------------------------------------
 // ToolHandler — executes a shell command (parallelogram shape)
@@ -19,11 +20,64 @@ impl NodeHandler for ToolHandler {
         "tool"
     }
 
+    fn resolved_handler(&self) -> Option<&dyn ResolvedNodeHandler> {
+        Some(self)
+    }
+
     async fn execute(
         &self,
         node: &PipelineNode,
         context: &Context,
         _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let dry_run = context
+            .get("dry_run")
+            .await
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let workdir = context
+            .get("workdir")
+            .await
+            .and_then(|value| value.as_str().map(std::path::PathBuf::from));
+        self.execute_with_controls(node, dry_run, workdir.as_deref())
+            .await
+    }
+}
+
+#[async_trait]
+impl ResolvedNodeHandler for ToolHandler {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        context: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute(node, context, _graph).await
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute_with_controls(
+            node,
+            *execution.config().dry_run().value(),
+            Some(execution.config().workdir().value().as_path()),
+        )
+        .await
+    }
+}
+
+impl ToolHandler {
+    async fn execute_with_controls(
+        &self,
+        node: &PipelineNode,
+        dry_run: bool,
+        workdir: Option<&std::path::Path>,
     ) -> Result<Outcome> {
         let command = node
             .raw_attrs
@@ -39,13 +93,6 @@ impl NodeHandler for ToolHandler {
             })?;
 
         tracing::info!(node = %node.id, label = %node.label, command = %command, "Executing tool command");
-
-        // Check if dry_run is set in context
-        let dry_run = context
-            .get("dry_run")
-            .await
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
 
         if dry_run {
             tracing::info!(node = %node.id, "Dry run — skipping command execution");
@@ -81,8 +128,7 @@ impl NodeHandler for ToolHandler {
         cmd.stderr(std::process::Stdio::piped());
 
         // Set working directory from context
-        let snapshot = context.snapshot().await;
-        if let Some(serde_json::Value::String(dir)) = snapshot.get("workdir") {
+        if let Some(dir) = workdir {
             cmd.current_dir(dir);
         }
 

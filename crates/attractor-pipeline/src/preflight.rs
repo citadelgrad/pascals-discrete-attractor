@@ -14,6 +14,7 @@ use attractor_quality::resolution::{resolve, ResolutionError};
 
 use crate::execution_plan::{ExecutionPlan, HandlerIdentity, LlmProvider, ResolvedNodeKind};
 use crate::graph::PipelineGraph;
+use crate::run_configuration::{ConfigurationSource, RunConfiguration};
 use crate::DEFAULT_MAX_BUDGET_USD;
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,31 @@ pub fn run_plan_with_budget(
     workdir: &Path,
     max_budget_usd: Option<f64>,
 ) -> Vec<PreflightFinding> {
+    let (budget, source) = match max_budget_usd {
+        Some(budget) => (budget, ConfigurationSource::Caller),
+        None => (DEFAULT_MAX_BUDGET_USD, ConfigurationSource::BuiltIn),
+    };
+    run_plan_inner(plan, workdir, budget, source, None)
+}
+
+/// Run preflight against the exact immutable configuration used by execution.
+pub fn run_configuration(configured: &RunConfiguration) -> Vec<PreflightFinding> {
+    run_plan_inner(
+        configured.plan(),
+        configured.controls().workdir().value(),
+        *configured.controls().max_budget_usd().value(),
+        configured.controls().max_budget_usd().source(),
+        Some(configured.controls().manifest().is_some()),
+    )
+}
+
+fn run_plan_inner(
+    plan: &ExecutionPlan,
+    workdir: &Path,
+    max_budget_usd: f64,
+    budget_source: ConfigurationSource,
+    prepared_manifest_present: Option<bool>,
+) -> Vec<PreflightFinding> {
     let mut findings = Vec::new();
 
     // Codergen nodes with no resolved timeout silently fall back to the
@@ -102,9 +128,19 @@ pub fn run_plan_with_budget(
     for (provider_name, node_count) in uncosted_provider_counts(plan) {
         let display_name = provider_display_name(&provider_name);
         let node_label = if node_count == 1 { "node" } else { "nodes" };
-        let budget_description = match max_budget_usd {
-            Some(budget) => format!("the explicit ${budget:.2} budget from --max-budget-usd"),
-            None => format!("the implicit ${DEFAULT_MAX_BUDGET_USD:.0} safety budget"),
+        let budget_description = match budget_source {
+            ConfigurationSource::Caller => {
+                format!("the explicit ${max_budget_usd:.2} budget from --max-budget-usd")
+            }
+            ConfigurationSource::Manifest => {
+                format!("the ${max_budget_usd:.2} budget from pas.toml")
+            }
+            ConfigurationSource::Graph => {
+                format!("the graph-declared ${max_budget_usd:.2} budget")
+            }
+            ConfigurationSource::BuiltIn => {
+                format!("the implicit ${max_budget_usd:.0} safety budget")
+            }
         };
         findings.push(PreflightFinding {
             severity: Severity::Warn,
@@ -124,7 +160,23 @@ pub fn run_plan_with_budget(
         return findings;
     }
 
-    // Resolve the manifest exactly once.
+    if let Some(manifest_present) = prepared_manifest_present {
+        if !manifest_present {
+            findings.push(PreflightFinding {
+                severity: Severity::Warn,
+                code: "QUALITY_NO_MANIFEST".into(),
+                message: format!(
+                    "Pipeline uses 'quality' handler but no pas.toml found in {}",
+                    workdir.display()
+                ),
+                suggestion: Some("pas init".into()),
+                workdir: Some(workdir.to_path_buf()),
+            });
+        }
+        return findings;
+    }
+
+    // Compatibility entry points resolve the manifest exactly once.
     match resolve(workdir) {
         Ok(_) => {
             // Manifest found and valid — no warnings.

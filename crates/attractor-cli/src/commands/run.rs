@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow;
 
@@ -14,77 +15,35 @@ pub struct CodergenClaudeCliOpts {
 }
 
 impl CodergenClaudeCliOpts {
-    fn has_inherit_mode(&self) -> bool {
-        self.settings_mode
+    fn to_execution_options(&self) -> anyhow::Result<attractor_pipeline::ClaudeExecutionOptions> {
+        let settings_mode = self
+            .settings_mode
             .as_deref()
-            .map(|mode| mode.eq_ignore_ascii_case("inherit"))
-            .unwrap_or(false)
-    }
-
-    async fn apply_to_context(&self, context: &attractor_types::Context) {
-        if let Some(value) = &self.settings_mode {
-            context
-                .set(
-                    "codergen.claude.settings_mode",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
-        if let Some(value) = &self.setting_sources {
-            context
-                .set(
-                    "codergen.claude.setting_sources",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
-        if let Some(value) = &self.settings {
-            context
-                .set(
-                    "codergen.claude.settings",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
-        if let Some(value) = &self.tools {
-            context
-                .set(
-                    "codergen.claude.tools",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
-        if let Some(value) = &self.agents {
-            context
-                .set(
-                    "codergen.claude.agents",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
-        if !self.plugin_dirs.is_empty() {
-            context
-                .set(
-                    "codergen.claude.plugin_dirs",
-                    serde_json::Value::Array(
-                        self.plugin_dirs
-                            .iter()
-                            .map(|path| {
-                                serde_json::Value::String(path.to_string_lossy().into_owned())
-                            })
-                            .collect(),
-                    ),
-                )
-                .await;
-        }
-        if let Some(value) = &self.mcp_config {
-            context
-                .set(
-                    "codergen.claude.mcp_config",
-                    serde_json::Value::String(value.clone()),
-                )
-                .await;
-        }
+            .map(attractor_pipeline::ClaudeSettingsMode::from_str)
+            .transpose()
+            .map_err(anyhow::Error::msg)?;
+        let setting_sources = self
+            .setting_sources
+            .as_deref()
+            .map(|sources| {
+                sources
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|source| !source.is_empty())
+                    .map(attractor_pipeline::ClaudeSettingSource::from_str)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(anyhow::Error::msg)?;
+        Ok(attractor_pipeline::ClaudeExecutionOptions {
+            settings_mode,
+            setting_sources,
+            settings: self.settings.clone(),
+            tools: self.tools.clone(),
+            agents: self.agents.clone(),
+            plugin_dirs: (!self.plugin_dirs.is_empty()).then(|| self.plugin_dirs.clone()),
+            mcp_config: self.mcp_config.clone(),
+        })
     }
 }
 
@@ -190,17 +149,14 @@ fn print_highlighted(lines: &[String]) {
     println!("{cyan}+{border}+{reset}");
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn cmd_run(
+fn prepare_run_configuration(
     path: &std::path::Path,
     workdir: Option<&std::path::Path>,
-    logs: Option<&std::path::Path>,
     dry_run: bool,
     max_budget_usd: Option<f64>,
-    max_steps: u64,
-    fresh: bool,
+    max_steps: Option<u64>,
     codergen_claude: &CodergenClaudeCliOpts,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<attractor_pipeline::RunConfiguration> {
     let graph = crate::load_pipeline(path)?;
     let plan = match attractor_pipeline::ExecutionPlan::compile(graph.clone()) {
         Ok(plan) => plan,
@@ -210,29 +166,50 @@ pub async fn cmd_run(
             anyhow::bail!("Pipeline validation failed: {error}");
         }
     };
-    let graph = plan.graph();
-
-    // Validate before doing any other work: a runtime node with no explicit
-    // llm_provider must never silently default to Claude and spawn a real
-    // provider CLI process. (The engine also validates internally before
-    // executing any node, but checking here gives clear, per-node output
-    // before we even touch the filesystem for logs/checkpoints.)
     let diagnostics = attractor_pipeline::validate_plan(&plan);
     if super::print_diagnostics(&diagnostics) {
         anyhow::bail!("Pipeline validation failed");
     }
 
+    attractor_pipeline::RunConfiguration::prepare(
+        plan,
+        attractor_pipeline::ExecutionOptions {
+            dry_run: dry_run.then_some(true),
+            max_steps,
+            max_budget_usd,
+            workdir: workdir.map(std::path::Path::to_path_buf),
+            claude: codergen_claude.to_execution_options()?,
+            ..Default::default()
+        },
+    )
+    .map_err(anyhow::Error::msg)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_run(
+    path: &std::path::Path,
+    workdir: Option<&std::path::Path>,
+    logs: Option<&std::path::Path>,
+    dry_run: bool,
+    max_budget_usd: Option<f64>,
+    max_steps: Option<u64>,
+    fresh: bool,
+    codergen_claude: &CodergenClaudeCliOpts,
+) -> anyhow::Result<()> {
+    let configured = prepare_run_configuration(
+        path,
+        workdir,
+        dry_run,
+        max_budget_usd,
+        max_steps,
+        codergen_claude,
+    )?;
+    let graph = configured.plan().graph();
+
     // Preflight checks: environment-level warnings that don't fail validation
     // but can cause silent problems at runtime (e.g. a codergen node with no
     // timeout falling back to the hardcoded 600s kill).
-    let preflight_workdir = workdir
-        .map(|d| d.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    for finding in attractor_pipeline::preflight_run_plan_with_budget(
-        &plan,
-        &preflight_workdir,
-        max_budget_usd,
-    ) {
+    for finding in attractor_pipeline::preflight_run_configuration(&configured) {
         let severity = match finding.severity {
             attractor_pipeline::PreflightSeverity::Warn => "WARN",
             attractor_pipeline::PreflightSeverity::Error => "ERROR",
@@ -266,47 +243,34 @@ pub async fn cmd_run(
     if let Some(cp) = &checkpoint {
         print_resume_banner(cp);
     }
-    if dry_run {
+    if *configured.controls().dry_run().value() {
         println!("(dry run mode -- no LLM calls)");
     }
-    if codergen_claude.has_inherit_mode() {
+    if *configured.controls().claude().settings_mode().value()
+        == attractor_pipeline::ClaudeSettingsMode::Inherit
+    {
         println!(
             "WARNING: codergen Claude settings inheritance enabled; personal Claude Code hooks/settings may run."
         );
     }
 
-    // Set up the pipeline context with workdir
-    let context = attractor_types::Context::new();
-    if let Some(dir) = workdir {
-        let abs = std::fs::canonicalize(dir)?;
-        context
-            .set(
-                "workdir",
-                serde_json::Value::String(abs.to_string_lossy().into_owned()),
-            )
-            .await;
-        println!("Working directory: {}", abs.display());
-    }
-    if dry_run {
-        context.set("dry_run", serde_json::Value::Bool(true)).await;
-    }
-    codergen_claude.apply_to_context(&context).await;
-
-    // Safety limits
-    if let Some(budget) = max_budget_usd {
-        context
-            .set("max_budget_usd", serde_json::json!(budget))
-            .await;
+    println!(
+        "Working directory: {}",
+        configured.controls().workdir().value().display()
+    );
+    if configured.controls().max_budget_usd().source()
+        == attractor_pipeline::ConfigurationSource::Caller
+    {
+        let budget = configured.controls().max_budget_usd().value();
         println!("Budget limit: ${:.2}", budget);
     }
-    context.set("max_steps", serde_json::json!(max_steps)).await;
-    println!("Step limit: {}", max_steps);
+    println!("Step limit: {}", configured.controls().max_steps().value());
 
     let interviewer = std::sync::Arc::new(attractor_pipeline::ConsoleInterviewer);
     let registry = attractor_pipeline::default_registry_with_interviewer(interviewer);
     let executor = attractor_pipeline::PipelineExecutor::new(registry);
     let result = executor
-        .run_plan_with_checkpoint(&plan, context, &logs_dir)
+        .run_configuration_with_checkpoint(&configured, attractor_types::Context::new(), &logs_dir)
         .await?;
 
     println!("\nPipeline completed");
@@ -327,7 +291,7 @@ pub async fn cmd_run_dir(
     workdir: Option<&std::path::Path>,
     dry_run: bool,
     max_budget_usd: Option<f64>,
-    max_steps: u64,
+    max_steps: Option<u64>,
     fresh: bool,
     codergen_claude: &CodergenClaudeCliOpts,
 ) -> anyhow::Result<()> {
@@ -348,6 +312,19 @@ pub async fn cmd_run_dir(
              To generate .dot files from specs: pas generate <DOCS_DIR>",
             dir.display()
         );
+    }
+
+    // Prepare every plan before mutating the batch manifest or starting the
+    // first pipeline. A later unsafe file must fail the whole batch closed.
+    for dot_file in &dot_files {
+        prepare_run_configuration(
+            dot_file,
+            workdir,
+            dry_run,
+            max_budget_usd,
+            max_steps,
+            codergen_claude,
+        )?;
     }
 
     // Manifest tracks cross-file progress
@@ -490,7 +467,7 @@ mod tests {
             Some(logs_dir.path()),
             false,
             None,
-            100,
+            Some(100),
             false,
             &CodergenClaudeCliOpts::default(),
         )
@@ -537,7 +514,7 @@ mod tests {
             Some(logs_dir.path()),
             true,
             None,
-            100,
+            Some(100),
             false,
             &CodergenClaudeCliOpts::default(),
         )

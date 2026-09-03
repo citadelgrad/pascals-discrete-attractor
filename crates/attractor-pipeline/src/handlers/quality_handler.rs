@@ -7,8 +7,9 @@ use attractor_dot::AttributeValue;
 use attractor_quality::telemetry::{self, StageEvent};
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
+use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::handler::NodeHandler;
+use crate::handler::{HandlerExecutionContext, NodeHandler, ResolvedNodeHandler};
 
 // Environment variables passed through to quality stage processes.
 const ENV_ALLOWLIST: &[&str] = &[
@@ -47,11 +48,68 @@ impl NodeHandler for QualityHandler {
         "quality"
     }
 
+    fn resolved_handler(&self) -> Option<&dyn ResolvedNodeHandler> {
+        Some(self)
+    }
+
     async fn execute(
         &self,
         node: &PipelineNode,
         context: &Context,
         _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let quality_disabled = context
+            .get("quality_disabled")
+            .await
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let workdir: PathBuf = context
+            .get("workdir")
+            .await
+            .and_then(|value| value.as_str().map(PathBuf::from))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let manifest = attractor_quality::resolve(&workdir).ok();
+        self.execute_with_controls(node, quality_disabled, &workdir, manifest.as_ref())
+            .await
+    }
+}
+
+#[async_trait]
+impl ResolvedNodeHandler for QualityHandler {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute(node, context, graph).await
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute_with_controls(
+            node,
+            *execution.config().quality_disabled().value(),
+            execution.config().workdir().value(),
+            execution.config().manifest(),
+        )
+        .await
+    }
+}
+
+impl QualityHandler {
+    async fn execute_with_controls(
+        &self,
+        node: &PipelineNode,
+        quality_disabled: bool,
+        workdir: &Path,
+        resolved_manifest: Option<&attractor_quality::ResolvedManifest>,
     ) -> Result<Outcome> {
         let node_id = &node.id;
 
@@ -61,25 +119,13 @@ impl NodeHandler for QualityHandler {
         }
 
         // Check 2: quality_disabled=true in runtime context → skip with success
-        if context
-            .get("quality_disabled")
-            .await
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
+        if quality_disabled {
             return Ok(skip_outcome("Quality checks disabled via runtime flag"));
         }
 
-        // Determine workdir from the standard pipeline context key.
-        let workdir: PathBuf = context
-            .get("workdir")
-            .await
-            .and_then(|v| v.as_str().map(PathBuf::from))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
         // Primary: manifest-driven stages; fallback: quality_checks attribute
-        let stages: Vec<StageSpec> = match attractor_quality::resolve(&workdir) {
-            Ok(resolved) => {
+        let stages: Vec<StageSpec> = match resolved_manifest {
+            Some(resolved) => {
                 if let Some(quality) = &resolved.manifest.quality {
                     if !quality.stages.is_empty() {
                         ensure_manifest_trusted(&resolved.path, &resolved.blake3_hash, node_id)?;
@@ -105,10 +151,7 @@ impl NodeHandler for QualityHandler {
                     stages_from_attr(node, node_id)?
                 }
             }
-            Err(e) => {
-                tracing::debug!(node = %node_id, error = %e, "manifest resolution failed; falling back to quality_checks attribute");
-                stages_from_attr(node, node_id)?
-            }
+            None => stages_from_attr(node, node_id)?,
         };
 
         let default_timeout = node.timeout.unwrap_or(std::time::Duration::from_secs(600));
@@ -138,7 +181,7 @@ impl NodeHandler for QualityHandler {
 
             let mut cmd = tokio::process::Command::new(program);
             cmd.args(args);
-            cmd.current_dir(&workdir);
+            cmd.current_dir(workdir);
             cmd.env_clear();
             cmd.kill_on_drop(true);
             cmd.stdout(std::process::Stdio::piped());

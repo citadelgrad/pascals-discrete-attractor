@@ -11,7 +11,7 @@ use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
 use crate::execution_plan::{HandlerIdentity, LlmProvider, ResolvedNode, ResolvedNodeKind};
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::handler::{NodeHandler, ProviderNodeHandler};
+use crate::handler::{HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
 
 #[path = "codergen_provider.rs"]
 mod provider;
@@ -38,6 +38,12 @@ use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, Llm
 // ---------------------------------------------------------------------------
 
 pub struct CodergenHandler;
+
+struct CodergenExecutionControls {
+    dry_run: bool,
+    workdir: Option<String>,
+    claude: ClaudeCliConfig,
+}
 
 #[async_trait]
 impl NodeHandler for CodergenHandler {
@@ -77,14 +83,14 @@ impl NodeHandler for CodergenHandler {
     }
 }
 
-#[async_trait]
-impl ProviderNodeHandler for CodergenHandler {
-    async fn execute_resolved(
+impl CodergenHandler {
+    async fn execute_with_controls(
         &self,
         node: &PipelineNode,
         resolved: &ResolvedNode,
         context: &Context,
         graph: &PipelineGraph,
+        controls: CodergenExecutionControls,
     ) -> Result<Outcome> {
         let prompt = node.prompt.as_deref().unwrap_or("No prompt specified");
         let label = node.label.clone();
@@ -103,14 +109,7 @@ impl ProviderNodeHandler for CodergenHandler {
             "Executing codergen handler"
         );
 
-        // Check if dry_run is set in context
-        let dry_run = context
-            .get("dry_run")
-            .await
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        if dry_run {
+        if controls.dry_run {
             tracing::info!(node = %node.id, provider = provider.display_name(), "Dry run — skipping CLI execution");
             return Ok(Outcome {
                 status: StageStatus::Success,
@@ -197,22 +196,15 @@ impl ProviderNodeHandler for CodergenHandler {
                 _ => None,
             });
 
-        // Resolve working directory from context
-        let workdir = snapshot
-            .get("workdir")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let claude_config = resolve_claude_cli_config(&snapshot, workdir.as_deref(), &node.id)?;
-
         // Build the CLI command via the provider-specific builder
         let mut cmd = build_cli_command(&CliRunConfig {
             provider,
             prompt: &full_prompt,
             model,
-            workdir: workdir.as_deref(),
+            workdir: controls.workdir.as_deref(),
             node,
             graph,
-            claude: claude_config,
+            claude: controls.claude,
         });
 
         // Spawn the CLI process — detect missing binary
@@ -351,6 +343,83 @@ impl ProviderNodeHandler for CodergenHandler {
                 None
             },
         })
+    }
+}
+
+#[async_trait]
+impl ProviderNodeHandler for CodergenHandler {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let snapshot = context.snapshot().await;
+        let dry_run = snapshot
+            .get("dry_run")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let workdir = snapshot
+            .get("workdir")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+        let claude = resolve_claude_cli_config(&snapshot, workdir.as_deref(), &node.id)?;
+        self.execute_with_controls(
+            node,
+            resolved,
+            context,
+            graph,
+            CodergenExecutionControls {
+                dry_run,
+                workdir,
+                claude,
+            },
+        )
+        .await
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let config = execution.config();
+        let claude = ClaudeCliConfig {
+            settings_mode: *config.claude().settings_mode().value(),
+            setting_sources: config
+                .claude()
+                .setting_sources()
+                .value()
+                .iter()
+                .map(|source| source.as_str().to_owned())
+                .collect(),
+            settings: config.claude().settings().value().clone(),
+            tools: config.claude().tools().value().clone(),
+            agents: config.claude().agents().value().clone(),
+            plugin_dirs: config
+                .claude()
+                .plugin_dirs()
+                .value()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+            mcp_config: config.claude().mcp_config().value().clone(),
+        };
+        self.execute_with_controls(
+            node,
+            resolved,
+            execution.workflow(),
+            graph,
+            CodergenExecutionControls {
+                dry_run: *config.dry_run().value(),
+                workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
+                claude,
+            },
+        )
+        .await
     }
 }
 

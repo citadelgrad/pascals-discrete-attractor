@@ -357,12 +357,9 @@ async fn context_propagation_across_nodes() {
         "step_two.completed should be in final context"
     );
 
-    // Engine sets "outcome" to the status string of the last non-exit node
-    assert_eq!(
-        result.final_context.get("outcome"),
-        Some(&serde_json::json!("success")),
-        "outcome should be set in final context"
-    );
+    // Routing pseudo-fields remain typed engine state, not workflow Context.
+    assert!(!result.final_context.contains_key("outcome"));
+    assert!(!result.final_context.contains_key("preferred_label"));
 }
 
 // ---------------------------------------------------------------------------

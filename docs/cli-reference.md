@@ -50,6 +50,19 @@ pas run <PIPELINE> [OPTIONS]
 | `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for `codergen` nodes. Repeatable. |
 | `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for `codergen` nodes. `--strict-mcp-config` remains enabled. |
 
+PAS resolves each run-control field independently using `caller > manifest > permitted graph defaults > built-ins`.
+Graph defaults are permitted only for workflow semantics and the quality node's
+`max_fix_iterations`; graphs cannot author global `dry_run`, `workdir`,
+`max_steps`, `max_budget_usd`, `quality_disabled`,
+`quality_max_fix_iterations`, or `codergen.claude.*` controls. CLI/API values
+remain authoritative. Invalid typed controls and reserved graph attributes fail
+before provider/tool startup, log creation, or before `--fresh` deletes a checkpoint.
+
+The built-ins are `dry_run=false`, `max_steps=200`, a $200 tracked global
+budget, the canonical current directory, quality enabled, three quality-fix
+iterations, and Claude `subscription_bare` isolation. A node-level
+`max_budget_usd` remains a separate per-Claude-session cap.
+
 #### Directory mode
 
 When `PIPELINE` is a directory, `run` collects all `*.dot` files and executes them sequentially in lexical order. Use zero-padded names to control execution order (`phase-01.dot`, `phase-02.dot`, `phase-11.dot`). Checkpoints apply per-pipeline within the run.
@@ -102,7 +115,8 @@ plugin_dirs = [".pas/claude-plugin"]
 mcp_config_json = "{}"
 ```
 
-CLI flags override `pas.toml` for the current run.
+CLI flags override the corresponding `pas.toml` field for the current run;
+unset CLI fields continue to inherit their individual manifest values.
 
 ---
 

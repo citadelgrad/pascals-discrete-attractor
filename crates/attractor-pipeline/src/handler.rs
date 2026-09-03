@@ -8,6 +8,36 @@ use attractor_types::{Context, Outcome, Result};
 
 use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
+use crate::run_configuration::ResolvedConfig;
+
+/// Read-only workflow data plus immutable typed controls for canonical execution.
+#[derive(Clone, Copy)]
+pub struct HandlerExecutionContext<'a> {
+    workflow: &'a Context,
+    config: &'a ResolvedConfig,
+}
+
+impl<'a> HandlerExecutionContext<'a> {
+    pub(crate) fn new(workflow: &'a Context, config: &'a ResolvedConfig) -> Self {
+        Self { workflow, config }
+    }
+
+    pub fn config(self) -> &'a ResolvedConfig {
+        self.config
+    }
+
+    pub async fn get(self, key: &str) -> Option<serde_json::Value> {
+        self.workflow.get(key).await
+    }
+
+    pub async fn snapshot(self) -> HashMap<String, serde_json::Value> {
+        self.workflow.snapshot().await
+    }
+
+    pub(crate) fn workflow(self) -> &'a Context {
+        self.workflow
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Handler traits
@@ -24,6 +54,17 @@ pub trait ResolvedNodeHandler: Send + Sync {
         context: &Context,
         graph: &PipelineGraph,
     ) -> Result<Outcome>;
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute_resolved(node, resolved, execution.workflow(), graph)
+            .await
+    }
 }
 
 /// Typed execution contract for handlers that consume compiled provider semantics.
@@ -41,6 +82,17 @@ pub trait ProviderNodeHandler: Send + Sync {
         context: &Context,
         graph: &PipelineGraph,
     ) -> Result<Outcome>;
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute_resolved(node, resolved, execution.workflow(), graph)
+            .await
+    }
 }
 
 #[async_trait]
@@ -114,6 +166,50 @@ impl DynHandler {
                 None => self.0.execute(node, context, graph).await,
             },
         }
+    }
+
+    /// Execute with immutable controls through the canonical configured path.
+    pub async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        // Compatibility handlers still accept mutable `Context`, so canonical
+        // execution gives every handler an isolated copy. Direct mutations are
+        // converted into ordinary outcome updates and pass through the
+        // executor's reserved-key validation before reaching live workflow
+        // state.
+        let isolated_workflow = execution.workflow().clone_isolated().await;
+        let before = isolated_workflow.snapshot().await;
+        let isolated_execution =
+            HandlerExecutionContext::new(&isolated_workflow, execution.config());
+        let mut outcome = match self.0.provider_handler() {
+            Some(handler) => {
+                handler
+                    .execute_configured(node, resolved, isolated_execution, graph)
+                    .await
+            }
+            None => match self.0.resolved_handler() {
+                Some(handler) => {
+                    handler
+                        .execute_configured(node, resolved, isolated_execution, graph)
+                        .await
+                }
+                None => self.0.execute(node, &isolated_workflow, graph).await,
+            },
+        }?;
+
+        let mut direct_updates = isolated_workflow
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(key, value)| before.get(key) != Some(value))
+            .collect::<HashMap<_, _>>();
+        direct_updates.extend(outcome.context_updates);
+        outcome.context_updates = direct_updates;
+        Ok(outcome)
     }
 }
 

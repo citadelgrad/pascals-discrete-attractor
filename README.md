@@ -23,6 +23,10 @@ PAS doesn't just run tasks — it verifies them. Six layers of checks ensure tha
 5. **Goal Gates** — The "proof of work" layer. Nodes marked `goal_gate=true` are audited at exit. If any gate is unsatisfied, the engine resolves a retry target (node → fallback → graph-level) and loops back. No target found means pipeline abort.
 6. **Budget & Step Guards** — `max_steps`, `max_budget_usd`, and `max_retries` are enforced continuously. Runaway loops are impossible.
 
+Run controls are immutable typed configuration, separate from workflow `Context` data.
+DOT attributes, handler outputs, and resumed checkpoints cannot replace caller
+limits, dry-run mode, the working directory, or Claude isolation settings.
+
 For the full specification including code references and examples, see **[docs/task-verification.md](docs/task-verification.md)**.
 
 ## Overview

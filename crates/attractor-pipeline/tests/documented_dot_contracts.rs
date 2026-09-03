@@ -527,6 +527,50 @@ fn cli_info_docs_describe_resolved_execution_semantics() {
 }
 
 #[test]
+fn typed_run_configuration_boundary_is_documented_consistently() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let required = [
+        (
+            "README.md",
+            "Run controls are immutable typed configuration",
+        ),
+        (
+            "docs/cli-reference.md",
+            "caller > manifest > permitted graph defaults > built-ins",
+        ),
+        (
+            "docs/cli-reference.md",
+            "before `--fresh` deletes a checkpoint",
+        ),
+        ("docs/dot-dialect.md", "Reserved graph attributes"),
+        ("docs/dot-dialect.md", "`codergen.claude.*`"),
+        ("docs/guide.md", "Context contains workflow data only"),
+        ("docs/task-verification.md", "RunConfiguration"),
+        ("CHANGELOG.md", "typed `RunConfiguration`"),
+    ];
+    for (relative, claim) in required {
+        let source = std::fs::read_to_string(workspace.join(relative)).unwrap();
+        assert!(source.contains(claim), "{relative} is missing: {claim}");
+    }
+
+    let verification =
+        std::fs::read_to_string(workspace.join("docs/task-verification.md")).unwrap();
+    for stale in [
+        "context tracks the full pipeline state",
+        "The engine also writes the current outcome into `context[\"outcome\"]`",
+        "**Relevant code:** `crates/attractor-types/src/lib.rs` — `Context` implementation.",
+    ] {
+        assert!(
+            !verification.contains(stale),
+            "stale Context claim: {stale}"
+        );
+    }
+}
+
+#[test]
 fn cli_dry_run_docs_are_provider_neutral() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

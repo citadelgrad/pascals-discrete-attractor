@@ -6,6 +6,15 @@ All notable changes to PAS are documented here.
 
 ### Fixed
 
+- Pipeline run policy now uses a typed `RunConfiguration` with per-field source
+  provenance and caller-over-manifest-over-permitted-graph-over-built-in
+  precedence. Workflow graph attributes, handler outputs, and legacy checkpoint
+  snapshots cannot override dry-run, workdir, global step/budget limits,
+  quality controls, Claude isolation, or internal routing state.
+- CLI preparation validates controls and reserved graph names before provider or
+  tool startup and before `--fresh` removes a checkpoint. Canonical codergen,
+  tool, and quality handlers consume typed controls; `Context` now carries
+  workflow values only on the non-web execution path.
 - Pipeline execution now compiles one canonical typed `ExecutionPlan` after defaults, compatibility aliases, stylesheets, and prompt transforms. Validation, preflight, provider selection, handler dispatch, and start/exit execution consume that plan; conflicting or unknown semantics fail before handlers, provider CLIs, or checkpoints start.
 - Runtime provider requirements now follow the canonical resolved handler capability instead of node shape: every node whose resolved handler consumes a provider must name `llm_provider`, with no implicit Claude fallback. A diamond without a prompt is pass-through and needs no provider unless it selects `type="codergen"` explicitly; conversely, a registered custom provider-consuming handler with an omitted or custom shape requires a provider. `pas scaffold` and `pas generate` use that same capability to fill missing providers before writing (and print the affected node ids), while `pas validate` and `pas run` report the blocking `provider_required` rule for unresolved omissions. Validation fails before any handler, provider CLI, or checkpoint starts.
 - Added `attractor_dot::to_dot_string`, a DOT serializer that round-trips a parsed `DotGraph` back to source text, used internally to normalize pipeline files after filling in defaults.
@@ -61,7 +70,7 @@ All notable changes to PAS are documented here.
   - `step_limit_exact_boundary_does_not_abort` — step cap uses strict `>`, not `>=`
   - `budget_limit_exact_equality_does_not_abort` — cost equal to budget should not abort
   - `quality_loop_fires_at_iteration_beyond_max_fix_iterations` — loop counter fires at N+1 entries, not N; handler call count asserted
-  - `quality_retry_warning_injected_on_second_iteration` — `__quality_retry_warning` context key verified at iteration 2
+  - `quality_retry_warning_remains_engine_owned_on_second_iteration` — retry warnings stay in engine tracing rather than workflow Context
   - `fail_handler_with_no_outgoing_edge_returns_handler_error` — Fail on a dead-end node returns `HandlerError`, not silent success
   - `truncate_head_tail_exact_boundary_not_truncated` — exactly `head+tail` lines returns unchanged text
 
@@ -71,7 +80,7 @@ All notable changes to PAS are documented here.
 
 - **`QualityHandler`** — manifest-driven quality gate with env isolation, per-stage telemetry, head/tail output truncation, and failure footprint tracking (`attractor-quality`, `attractor-pipeline`).
 - **`pas.toml` manifest** — walk-up resolution from working directory; `[quality.stages]` drives quality checks without node attributes.
-- **Quality loop control** — engine enforces `max_fix_iterations`, injects `__quality_retry_warning` context on retry, checkpoints with `schema_version`.
+- **Quality loop control** — engine enforces `max_fix_iterations`, emits structured retry warnings, and checkpoints counters with `schema_version`.
 - **Preflight check** — warns when a quality node is present but no `pas.toml` manifest is found.
 - **Trust store** — `attractor-quality` records trust decisions; LLM enrichment stub and `pas trust` CLI commands.
 - **`pas init`** — toolchain detection, template emission, TUI confirmation dialog, `--yes` non-interactive mode.

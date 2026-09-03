@@ -117,28 +117,36 @@ This enables verification patterns like "if tests pass, deploy; if tests partial
 
 ## 5. State Observation (Context & Checkpoint)
 
-The pipeline maintains a shared `Context` (an async key-value store) that serves as the state observer.
+The pipeline uses an immutable typed `RunConfiguration` for execution policy and
+a shared `Context` (an async key-value store) for workflow data.
 
 ### Status progression
 
-As each node executes, the context tracks the full pipeline state:
+As each node executes, typed engine state and workflow Context have distinct roles:
 
 - **Before execution:** Node is the `current_node` in the engine loop
-- **After execution:** `Outcome` recorded in `node_outcomes` map, context updates applied
+- **After execution:** `Outcome` is recorded in `node_outcomes`; validated workflow updates are applied to Context
 - **At exit:** `enforce_goal_gates()` audits all gate nodes before allowing completion
 
 ### Checkpoint/resume
 
-Pipeline state can be serialized mid-execution and restored later, enabling:
+Workflow and traversal state can be serialized mid-execution and restored later, enabling:
 - Long-running pipelines that survive process restarts
 - Human review gates that pause for approval
 - Debugging failed pipelines from the point of failure
 
+Run controls are never restored from Context. Legacy checkpoint keys matching
+`dry_run`, limits, workdir, provider isolation, or internal routing names are
+filtered, so the current `RunConfiguration` remains authoritative.
+
 ### Cost tracking
 
-Each node's `cost_usd` context update is accumulated. The engine logs per-node and running totals, and aborts if the budget is exceeded.
+Each node's `cost_usd` workflow update is accumulated against the typed global
+budget. The engine logs per-node and running totals and aborts if the budget is
+exceeded. The budget value itself is not stored in Context.
 
-**Relevant code:** `crates/attractor-types/src/lib.rs` — `Context` implementation.
+**Relevant code:** `crates/attractor-pipeline/src/run_configuration.rs` and
+`crates/attractor-types/src/context.rs`.
 
 ---
 

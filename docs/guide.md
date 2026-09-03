@@ -842,6 +842,14 @@ investigate [prompt="...Write findings to .pas/findings.md"]
 implement  [prompt="Read .pas/findings.md for context, then..."]
 ```
 
+Context contains workflow data only. An immutable typed `RunConfiguration`
+holds dry-run mode, global step and budget limits, workdir, quality policy, and
+Claude isolation. Canonical handlers receive a read-only workflow view plus
+that typed configuration; they do not discover trusted controls through magic
+Context keys. Checkpoints restore workflow values but cannot replace current
+caller policy. Routing `outcome` and `preferred_label` are current typed engine
+state and are not persisted into Context.
+
 ---
 
 ## Multi-Provider Support

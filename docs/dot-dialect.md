@@ -210,6 +210,20 @@ The grammar above defines what **parses**. This section defines what the attract
 | `auto_status` | boolean | true | Auto-set status from outcome |
 | `allow_partial` | boolean | false | Allow partial success |
 
+### Reserved graph attributes
+
+Top-level graph attributes are workflow defaults, not run policy. The names
+`dry_run`, `workdir`, `max_steps`, `max_budget_usd`, `quality_disabled`,
+`quality_max_fix_iterations`, `outcome`, and `preferred_label` are reserved,
+as are the `codergen.claude.*`, `__pas.*`, and `__pas::*` namespaces. A graph
+using one fails during `RunConfiguration` preparation. Handler context updates
+to these names also fail closed, and legacy checkpoints have them filtered on
+restore. Ordinary graph values such as `goal`, `language`, and `deploy_env`
+remain available to prompt transforms and workflow Context.
+
+The node attribute `max_budget_usd` is still allowed as a per-session Claude
+cap; it is distinct from the reserved top-level global budget control.
+
 Compatibility aliases are accepted at the semantic compilation boundary: `node_type` or
 `handler` for `type`, `stylesheet` for `model_stylesheet`, and `classes` for `class`.
 If canonical and compatibility spellings are both present with different values,

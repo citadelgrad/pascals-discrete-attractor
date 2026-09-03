@@ -483,6 +483,24 @@ fn provider_guide_matches_the_tested_gemini_invocation_contract() {
 }
 
 #[test]
+fn provider_guide_documents_the_canonical_gemini_cli_package() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let source = std::fs::read_to_string(workspace.join("docs/guide.md")).unwrap();
+
+    assert!(
+        source.contains("Gemini: `npm install -g @google/gemini-cli`"),
+        "provider guide must document Google's published Gemini CLI package"
+    );
+    assert!(
+        !source.contains("@anthropic-ai/gemini-cli"),
+        "provider guide still advertises the nonexistent Anthropic-scoped Gemini package"
+    );
+}
+
+#[test]
 fn goal_gate_docs_use_canonical_compiled_exit_membership() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -920,7 +920,7 @@ If a provider's CLI binary isn't installed, the pipeline will fail with a `CliNo
 
 - Claude: `npm install -g @anthropic-ai/claude-code`
 - Codex: `npm install -g @openai/codex`
-- Gemini: `npm install -g @anthropic-ai/gemini-cli`
+- Gemini: `npm install -g @google/gemini-cli`
 
 ---
 

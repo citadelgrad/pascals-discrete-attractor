@@ -142,6 +142,6 @@ If all tasks are closed or remaining tasks are blocked, respond with DONE on the
 
     close_task -> check_remaining
 
-    check_remaining -> pick_task [label="MORE", condition="preferred_label=MORE", loop_restart=true]
+    check_remaining -> pick_task [label="MORE", condition="preferred_label=MORE", loop_restart=true, reset_quality_loop_state=true]
     check_remaining -> done      [label="DONE", condition="preferred_label=DONE"]
 }

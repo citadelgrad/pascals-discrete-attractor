@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
-use crate::checkpoint::{clear_checkpoint, load_checkpoint, save_checkpoint, PipelineCheckpoint};
+use crate::checkpoint::{
+    clear_checkpoint, load_checkpoint, save_checkpoint, validate_checkpoint, PipelineCheckpoint,
+};
 use crate::edge_selection::select_edge;
 use crate::events::{EventEmitter, PipelineEvent};
 use crate::execution_plan::{ExecutionPlan, HandlerIdentity};
@@ -60,6 +62,7 @@ struct CheckpointData<'a> {
     quality_loop_counters: &'a HashMap<String, u32>,
     quality_last_footprint: &'a HashMap<String, String>,
     previous_node_id: Option<&'a str>,
+    execution_fingerprint: Option<&'a str>,
     events: Option<&'a EventEmitter>,
 }
 
@@ -78,6 +81,7 @@ impl CheckpointData<'_> {
             self.quality_loop_counters.clone(),
             self.quality_last_footprint.clone(),
             self.previous_node_id.map(str::to_string),
+            self.execution_fingerprint.map(str::to_string),
         );
         checkpoint.total_handler_attempts = progress.total_handler_attempts;
         checkpoint.active_node_id = progress.active_node_id.clone();
@@ -104,6 +108,23 @@ fn status_to_string(status: StageStatus) -> String {
         StageStatus::Retry => "retry".to_string(),
         StageStatus::Fail => "fail".to_string(),
         StageStatus::Skipped => "skipped".to_string(),
+    }
+}
+
+/// Body text of the quality retry warning injected at iteration >= 2.
+///
+/// A recorded failure footprint means an objective quality stage genuinely
+/// failed on the previous attempt. An empty footprint means the pipeline
+/// re-entered the quality node after a downstream review/fixup cycle where
+/// every stage passed, and the wording must not claim otherwise.
+fn retry_warning_reason(last_footprint: &str) -> &'static str {
+    if last_footprint.is_empty() {
+        "The pipeline re-entered this quality node for another \
+         verification pass after a downstream fixup. Re-run the \
+         stages and review the current diff carefully."
+    } else {
+        "Quality stage failed on the previous attempt. Review the failure output \
+         and fix the root cause before proceeding."
     }
 }
 
@@ -545,8 +566,18 @@ impl PipelineExecutor {
         let max_budget = *configured.controls().max_budget_usd().value();
         let mut progress = ExecutionProgress::default();
 
+        // Deterministic fingerprint of the compiled plan this run executes.
+        // Recorded in every checkpoint and verified on resume so a materially
+        // changed DOT cannot silently inherit stale loop/retry state.
+        let execution_fingerprint = plan.fingerprint();
+
         if let Some(logs) = logs_root {
             if let Some(cp) = load_checkpoint(logs).await? {
+                validate_checkpoint(
+                    &cp,
+                    &execution_fingerprint,
+                    &logs.join("checkpoint.json"),
+                )?;
                 tracing::info!(
                     node = %cp.current_node_id,
                     completed = cp.completed_nodes.len(),
@@ -637,6 +668,7 @@ impl PipelineExecutor {
                             quality_loop_counters: &quality_loop_counters,
                             quality_last_footprint: &quality_last_footprint,
                             previous_node_id: prev_node_id.as_deref(),
+                            execution_fingerprint: Some(&execution_fingerprint),
                             events: self.events.as_ref(),
                         },
                     )
@@ -687,15 +719,18 @@ impl PipelineExecutor {
                     // 1-second cooldown between loop iterations
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-                    // Inject structured retry-warning with sentinel tags
+                    // Inject structured retry-warning with sentinel tags. The
+                    // reason text is derived from the recorded failure
+                    // footprint so re-entry driven by a downstream review/
+                    // fixup cycle is not misreported as an objective failure.
                     let last_fp = quality_last_footprint
                         .get(&current_node.id)
                         .cloned()
                         .unwrap_or_default();
+                    let reason = retry_warning_reason(&last_fp);
                     let warning = format!(
                         "<retry-warning iteration=\"{iteration}\" node=\"{}\" footprint=\"{last_fp}\">\n\
-                         Quality stage failed on the previous attempt. Review the failure output \
-                         and fix the root cause before proceeding.\n\
+                         {reason}\n\
                          </retry-warning>",
                         current_node.id
                     );
@@ -724,6 +759,7 @@ impl PipelineExecutor {
                         quality_loop_counters: &quality_loop_counters,
                         quality_last_footprint: &quality_last_footprint,
                         previous_node_id: prev_node_id.as_deref(),
+                        execution_fingerprint: Some(&execution_fingerprint),
                         events: self.events.as_ref(),
                     },
                 )
@@ -813,6 +849,15 @@ impl PipelineExecutor {
                         completed_nodes.clear();
                         node_outcomes.clear();
                     }
+
+                    // Explicit outer work-cycle boundary: a completed cycle's
+                    // consumed quality retry budget must not leak into the
+                    // next cycle. Reset before the checkpoint save so the
+                    // fresh budget is what resume restores.
+                    if edge.reset_quality_loop_state {
+                        quality_loop_counters.clear();
+                        quality_last_footprint.clear();
+                    }
                     let next_id = edge.to.clone();
                     current_node = graph.node(&next_id).ok_or_else(|| {
                         AttractorError::Other(format!("Edge target '{}' not found", next_id))
@@ -829,6 +874,7 @@ impl PipelineExecutor {
                         quality_loop_counters: &quality_loop_counters,
                         quality_last_footprint: &quality_last_footprint,
                         previous_node_id: Some(&just_completed),
+                        execution_fingerprint: Some(&execution_fingerprint),
                         events: self.events.as_ref(),
                     }
                     .save(&current_node.id, &progress)

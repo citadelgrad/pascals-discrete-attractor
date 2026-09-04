@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 /// Snapshot of pipeline execution state for crash recovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +62,19 @@ pub struct PipelineCheckpoint {
     /// Attempts already begun during the active node visit.
     #[serde(default)]
     pub active_node_attempts: usize,
+    /// Fingerprint of the compiled execution plan this checkpoint belongs to.
+    ///
+    /// On resume the engine recomputes the fingerprint of the current plan
+    /// and rejects the checkpoint when it does not match, instead of
+    /// replaying stale loop/retry state onto a materially changed graph.
+    /// Legacy checkpoints (schema_version < 2) omit it and are accepted
+    /// with a warning, since their provenance cannot be verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_fingerprint: Option<String>,
 }
+
+/// Checkpoint schema version written by this build.
+pub const CHECKPOINT_SCHEMA_VERSION: u32 = 2;
 
 impl PipelineCheckpoint {
     /// Create a new checkpoint from current execution state.
@@ -80,13 +93,14 @@ impl PipelineCheckpoint {
             session_id: None,
             step_count: 0,
             total_cost: 0.0,
-            schema_version: 1,
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
             quality_loop_counters: HashMap::new(),
             quality_last_footprint: HashMap::new(),
             previous_node_id: None,
             total_handler_attempts: 0,
             active_node_id: None,
             active_node_attempts: 0,
+            execution_fingerprint: None,
         }
     }
 
@@ -109,13 +123,14 @@ impl PipelineCheckpoint {
             session_id: Some(session_id),
             step_count,
             total_cost,
-            schema_version: 1,
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
             quality_loop_counters: HashMap::new(),
             quality_last_footprint: HashMap::new(),
             previous_node_id: None,
             total_handler_attempts: 0,
             active_node_id: None,
             active_node_attempts: 0,
+            execution_fingerprint: None,
         }
     }
 
@@ -132,6 +147,7 @@ impl PipelineCheckpoint {
         quality_loop_counters: HashMap<String, u32>,
         quality_last_footprint: HashMap<String, String>,
         previous_node_id: Option<String>,
+        execution_fingerprint: Option<String>,
     ) -> Self {
         Self {
             current_node_id,
@@ -142,13 +158,14 @@ impl PipelineCheckpoint {
             session_id: None,
             step_count,
             total_cost,
-            schema_version: 1,
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
             quality_loop_counters,
             quality_last_footprint,
             previous_node_id,
             total_handler_attempts: 0,
             active_node_id: None,
             active_node_attempts: 0,
+            execution_fingerprint,
         }
     }
 }
@@ -156,15 +173,23 @@ impl PipelineCheckpoint {
 /// Save a checkpoint to the given directory.
 ///
 /// The directory is created if it does not already exist.  The checkpoint is
-/// written to `<logs_root>/checkpoint.json`.
+/// written atomically: JSON is written to `checkpoint.json.tmp`, fsynced,
+/// then renamed over `checkpoint.json`. A crash mid-write therefore leaves
+/// the previous checkpoint intact rather than corrupting the sole recovery
+/// artifact.
 pub async fn save_checkpoint(
     checkpoint: &PipelineCheckpoint,
     logs_root: &Path,
 ) -> attractor_types::Result<PathBuf> {
     tokio::fs::create_dir_all(logs_root).await?;
     let path = logs_root.join("checkpoint.json");
+    let tmp = logs_root.join("checkpoint.json.tmp");
     let json = serde_json::to_string_pretty(checkpoint)?;
-    tokio::fs::write(&path, json).await?;
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    file.write_all(json.as_bytes()).await?;
+    file.sync_all().await?;
+    drop(file);
+    tokio::fs::rename(&tmp, &path).await?;
     tracing::debug!(path = %path.display(), "Checkpoint saved");
     Ok(path)
 }
@@ -183,6 +208,58 @@ pub async fn load_checkpoint(
     let json = tokio::fs::read_to_string(&path).await?;
     let checkpoint: PipelineCheckpoint = serde_json::from_str(&json)?;
     Ok(Some(checkpoint))
+}
+
+/// Validate a loaded checkpoint against the plan about to resume it.
+///
+/// Fails closed on:
+///
+/// - a schema version newer than this build can understand, and
+/// - a recorded execution fingerprint that does not match the current
+///   plan's fingerprint (the DOT was changed in a way that alters
+///   execution semantics).
+///
+/// Legacy checkpoints (`schema_version` below [`CHECKPOINT_SCHEMA_VERSION`],
+/// no fingerprint) are accepted with a warning: their provenance cannot be
+/// verified, so resume continues rather than blocking every pre-fingerprint
+/// checkpoint, but the caller is told the state is unverified.
+pub fn validate_checkpoint(
+    checkpoint: &PipelineCheckpoint,
+    current_fingerprint: &str,
+    path: &Path,
+) -> attractor_types::Result<()> {
+    if checkpoint.schema_version > CHECKPOINT_SCHEMA_VERSION {
+        return Err(attractor_types::AttractorError::CheckpointIncompatible {
+            path: path.display().to_string(),
+            reason: format!(
+                "schema version {} was written by a newer PAS than this build (understands up to {}); \
+                 run with that PAS or pass --fresh to discard it",
+                checkpoint.schema_version, CHECKPOINT_SCHEMA_VERSION
+            ),
+        });
+    }
+    match &checkpoint.execution_fingerprint {
+        Some(recorded) if recorded != current_fingerprint => {
+            Err(attractor_types::AttractorError::CheckpointIncompatible {
+                path: path.display().to_string(),
+                reason: format!(
+                    "execution fingerprint {recorded} does not match the current pipeline ({current_fingerprint}); \
+                     the DOT changed in a way that alters execution semantics. \
+                     Re-run with --fresh or restore the original DOT"
+                ),
+            })
+        }
+        Some(_) => Ok(()),
+        None => {
+            tracing::warn!(
+                path = %path.display(),
+                schema_version = checkpoint.schema_version,
+                "Resuming legacy checkpoint without an execution fingerprint; \
+                 provenance is unverified"
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Delete checkpoint after successful pipeline completion.

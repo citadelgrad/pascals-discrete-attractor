@@ -271,6 +271,7 @@ for exit. Combining a magic ID with incompatible shape/type signals is an error.
 | `condition` | string | -- | Condition expression, e.g. `"preferred_label=PASS"`, `"outcome=success"` |
 | `weight` | integer | 0 | Higher = preferred when multiple edges match |
 | `loop_restart` | boolean | false | Clear completed nodes/outcomes (for back-edges in loops) |
+| `reset_quality_loop_state` | boolean | false | Clear quality retry counters and failure footprints. Set on outer work-cycle transitions so a completed task's consumed `max_fix_iterations` budget does not leak into the next task |
 
 ## Graph Attributes
 

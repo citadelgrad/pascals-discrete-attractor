@@ -436,6 +436,60 @@ impl ExecutionPlan {
         &self.exit_ids
     }
 
+    /// Deterministic fingerprint of the compiled execution semantics.
+    ///
+    /// Two plans produce the same fingerprint only when every node resolves
+    /// to the same handler/kind/provider/invocation policy and every edge
+    /// carries the same source, target, label, condition, weight, and loop
+    /// flags. Checkpoints record this fingerprint so resume can reject a
+    /// checkpoint taken against a materially changed graph instead of
+    /// replaying stale state onto a different plan. Prompt text and purely
+    /// cosmetic attributes are intentionally excluded: they change often
+    /// and do not invalidate loop/retry state.
+    pub fn fingerprint(&self) -> String {
+        let mut node_ids = self.nodes.keys().collect::<Vec<_>>();
+        node_ids.sort();
+        let mut canonical = String::new();
+        canonical.push_str(&format!("start:{};", self.start_id));
+        for exit in &self.exit_ids {
+            canonical.push_str(&format!("exit:{exit};"));
+        }
+        for node_id in node_ids {
+            let node = self.nodes.get(node_id).expect("collected node exists");
+            let provider = node.provider.map(|p| p.as_str()).unwrap_or("-");
+            canonical.push_str(&format!(
+                "node:{id}|kind:{kind:?}|handler:{handler}|provider:{provider}|attempts:{attempts}|timeout:{timeout};",
+                id = node.node_id,
+                kind = node.kind,
+                handler = node.handler.as_str(),
+                provider = provider,
+                attempts = node.invocation.max_attempts.get(),
+                timeout = node
+                    .invocation
+                    .timeout
+                    .map(|t| t.as_millis().to_string())
+                    .unwrap_or_else(|| "-".into()),
+            ));
+        }
+        let mut edges = self.graph.all_edges().to_vec();
+        edges.sort_by(|a, b| {
+            (a.from.as_str(), a.to.as_str()).cmp(&(b.from.as_str(), b.to.as_str()))
+        });
+        for edge in edges {
+            canonical.push_str(&format!(
+                "edge:{from}->{to}|label:{label}|condition:{condition}|weight:{weight}|loop_restart:{loop_restart}|reset_quality:{reset};",
+                from = edge.from,
+                to = edge.to,
+                label = edge.label.as_deref().unwrap_or("-"),
+                condition = edge.condition.as_deref().unwrap_or("-"),
+                weight = edge.weight,
+                loop_restart = edge.loop_restart,
+                reset = edge.reset_quality_loop_state,
+            ));
+        }
+        blake3::hash(canonical.as_bytes()).to_hex().to_string()
+    }
+
     pub fn all_nodes(&self) -> impl Iterator<Item = &ResolvedNode> {
         self.nodes.values()
     }

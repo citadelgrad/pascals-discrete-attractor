@@ -41,6 +41,14 @@ pub struct PipelineEdge {
     pub condition: Option<String>,
     pub weight: i32,
     pub loop_restart: bool,
+    /// Explicit outer work-cycle boundary. Traversing this edge clears
+    /// quality-loop attempt counters and failure footprints so the next
+    /// work cycle starts with a fresh retry budget. This is deliberately
+    /// separate from `loop_restart`: an inner fixup back-edge normally
+    /// sets `loop_restart=true` (clear completed-node history) while the
+    /// retry budget must survive; an outer cycle transition sets this
+    /// flag so a completed cycle's consumed budget does not leak forward.
+    pub reset_quality_loop_state: bool,
     pub(crate) raw_attrs: HashMap<String, AttributeValue>,
 }
 
@@ -138,6 +146,8 @@ fn edge_def_to_pipeline_edge(
             .map(|v| v as i32)
             .unwrap_or(0),
         loop_restart: get_bool_attr(&attrs, "loop_restart").unwrap_or(false),
+        reset_quality_loop_state: get_bool_attr(&attrs, "reset_quality_loop_state")
+            .unwrap_or(false),
         raw_attrs: attrs,
     }
 }

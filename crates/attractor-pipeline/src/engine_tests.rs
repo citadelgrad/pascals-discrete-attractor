@@ -1704,3 +1704,467 @@ async fn fail_handler_with_no_outgoing_edge_returns_handler_error() {
         other => panic!("expected HandlerError, got: {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Quality work-cycle boundary + checkpoint hardening tests (attractor-1cc.7)
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+/// Quality handler with scripted per-call outcomes, consumed in order.
+struct ScriptedQuality {
+    outcomes: Vec<StageStatus>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl NodeHandler for ScriptedQuality {
+    fn handler_type(&self) -> &str {
+        "quality"
+    }
+
+    async fn execute(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.outcomes.get(call) {
+            Some(StageStatus::Fail) => Ok(Outcome::fail("objective gate failed")),
+            _ => Ok(Outcome::success("objective gates passed")),
+        }
+    }
+}
+
+/// Quality handler that always fails (drives abort-at-ceiling tests).
+struct AlwaysFailQuality {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl NodeHandler for AlwaysFailQuality {
+    fn handler_type(&self) -> &str {
+        "quality"
+    }
+
+    async fn execute(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Outcome::fail("never heals"))
+    }
+}
+
+/// Workflow handler with scripted per-node outcomes. Each node's scripted
+/// results are consumed in order; when exhausted the node succeeds.
+struct ScriptedWorkflow {
+    scripts: HashMap<String, Vec<StageStatus>>,
+    calls: HashMap<String, Arc<AtomicUsize>>,
+}
+
+impl ScriptedWorkflow {
+    fn new() -> Self {
+        Self {
+            scripts: HashMap::new(),
+            calls: HashMap::new(),
+        }
+    }
+
+    fn script(&mut self, node: &str, outcomes: Vec<StageStatus>) -> Arc<AtomicUsize> {
+        let counter = Arc::new(AtomicUsize::new(0));
+        self.scripts.insert(node.to_string(), outcomes);
+        self.calls.insert(node.to_string(), Arc::clone(&counter));
+        counter
+    }
+}
+
+#[async_trait]
+impl NodeHandler for ScriptedWorkflow {
+    fn handler_type(&self) -> &str {
+        "codergen"
+    }
+
+    async fn execute(
+        &self,
+        node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let call = self
+            .calls
+            .get(&node.id)
+            .expect("scripted node registered")
+            .fetch_add(1, Ordering::SeqCst);
+        match self.scripts.get(&node.id).and_then(|s| s.get(call)) {
+            Some(StageStatus::Fail) => Ok(Outcome::fail("scripted fail")),
+            _ => Ok(Outcome::success("scripted")),
+        }
+    }
+}
+
+/// Two-task epic-runner shape with `max_fix_iterations=1` on the quality
+/// node. `boundary_attr` is appended to the outer `next -> implement` edge
+/// ("" or ", reset_quality_loop_state=true").
+fn two_cycle_graph(boundary_attr: &str) -> PipelineGraph {
+    parse_graph(&format!(
+        r#"digraph G {{
+            node      [llm_provider="claude"]
+            start     [shape="Mdiamond"]
+            implement [shape="box", prompt="implement"]
+            quality   [shape="box", type="quality", max_fix_iterations=1]
+            review    [shape="diamond", prompt="review"]
+            fixup     [shape="box", prompt="fixup"]
+            next      [shape="diamond", prompt="next"]
+            done      [shape="Msquare"]
+
+            start -> implement -> quality
+            quality -> review [condition="outcome=success"]
+            quality -> fixup  [condition="outcome=fail"]
+            review -> next  [condition="outcome=success"]
+            review -> fixup [condition="outcome=fail"]
+            fixup -> quality [loop_restart=true]
+            next -> implement [loop_restart=true{boundary_attr}]
+            next -> done [condition="outcome=fail"]
+        }}"#
+    ))
+}
+
+fn two_cycle_registry(workflow: ScriptedWorkflow, quality: ScriptedQuality) -> HandlerRegistry {
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(ConditionalHandler);
+    registry.register(workflow);
+    registry.register(quality);
+    registry
+}
+
+/// Scripted outcomes for one full two-task run where each task's quality
+/// gate fails once, is fixed, then passes review.
+fn two_cycle_workflow() -> ScriptedWorkflow {
+    let mut workflow = ScriptedWorkflow::new();
+    workflow.script(
+        "implement",
+        vec![StageStatus::Success, StageStatus::Success],
+    );
+    workflow.script("review", vec![StageStatus::Success, StageStatus::Success]);
+    workflow.script("fixup", vec![StageStatus::Success, StageStatus::Success]);
+    workflow.script("next", vec![StageStatus::Success, StageStatus::Fail]);
+    workflow
+}
+
+// An exhausted cycle's consumed retry budget must not leak into the next
+// outer work cycle. With the explicit boundary, the second task's quality
+// node starts at iteration 1 again even though the first task consumed its
+// whole budget.
+#[tokio::test]
+async fn work_cycle_boundary_gives_each_task_a_fresh_quality_budget() {
+    let graph = two_cycle_graph(", reset_quality_loop_state=true");
+    let workflow = two_cycle_workflow();
+    let quality = ScriptedQuality {
+        outcomes: vec![
+            StageStatus::Fail,    // cycle 1: quality fails -> fixup
+            StageStatus::Success, // cycle 1: fixed -> review
+            StageStatus::Fail,    // cycle 2: quality fails -> fixup
+            StageStatus::Success, // cycle 2: fixed -> review
+        ],
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let registry = two_cycle_registry(workflow, quality);
+
+    let result = PipelineExecutor::new(registry).run(&graph).await;
+    assert!(
+        result.is_ok(),
+        "second work cycle must receive a fresh retry budget: {:?}",
+        result.err()
+    );
+}
+
+// Without the boundary attribute the old bug reproduces: the second task
+// re-enters quality from the same upstream node with the first task's
+// consumed counter and aborts at the ceiling.
+#[tokio::test]
+async fn without_work_cycle_boundary_second_task_inherits_consumed_budget() {
+    let graph = two_cycle_graph("");
+    let workflow = two_cycle_workflow();
+    let quality = ScriptedQuality {
+        outcomes: vec![
+            StageStatus::Fail,
+            StageStatus::Success,
+            StageStatus::Fail, // cycle 2's first entry exceeds the budget
+        ],
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let registry = two_cycle_registry(workflow, quality);
+
+    let error = PipelineExecutor::new(registry)
+        .run(&graph)
+        .await
+        .expect_err("stale counter from cycle 1 must abort cycle 2 without a boundary");
+    assert!(
+        error.to_string().contains("exceeded max_fix_iterations"),
+        "expected quality ceiling abort, got: {error}"
+    );
+}
+
+// The boundary reset must be persisted in the checkpoint saved *before* the
+// next cycle's nodes run. The run is interrupted by the step limit right at
+// cycle 2's first node; the persisted checkpoint must already carry the
+// cleared quality-loop state and the plan fingerprint.
+#[tokio::test]
+async fn boundary_reset_is_checkpointed_and_survives_resume() {
+    let graph = two_cycle_graph(", reset_quality_loop_state=true");
+    let logs = tempfile::tempdir().unwrap();
+
+    let workflow = two_cycle_workflow();
+    let quality = ScriptedQuality {
+        outcomes: vec![
+            StageStatus::Fail,
+            StageStatus::Success,
+            StageStatus::Fail,
+            StageStatus::Success,
+        ],
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let registry = two_cycle_registry(workflow, quality);
+    let context = Context::new();
+    // Execution order: start(1) implement(2) quality(3) fixup(4) quality(5)
+    // review(6) next(7) -> boundary edge checkpoint saved -> implement(8)
+    // -> step-limit check fails on attempt 9. The last persisted checkpoint
+    // is the boundary-edge save with cleared quality-loop state.
+    context.set("max_steps", serde_json::json!(8u64)).await;
+
+    let first = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, context, logs.path())
+        .await;
+    assert!(
+        first.is_err(),
+        "step limit should interrupt cycle 2, got: {first:?}"
+    );
+
+    let cp = load_checkpoint(logs.path()).await.unwrap().unwrap();
+    assert!(
+        cp.quality_loop_counters.is_empty(),
+        "boundary reset must be persisted, found: {:?}",
+        cp.quality_loop_counters
+    );
+    assert!(
+        cp.quality_last_footprint.is_empty(),
+        "boundary reset must clear footprints too"
+    );
+    assert!(
+        cp.execution_fingerprint.is_some(),
+        "checkpoints must record the plan fingerprint"
+    );
+    // The interruption lands on cycle 2's quality invocation; the last
+    // persisted checkpoint is the edge save into `quality`, which must
+    // still carry the boundary-cleared loop state.
+    assert_eq!(cp.current_node_id, "quality");
+}
+
+// Resume inside an *active* retry episode must preserve the consumed
+// budget: the counter restored from the checkpoint still counts.
+#[tokio::test]
+async fn resume_inside_active_fixup_preserves_consumed_budget() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node   [llm_provider="claude"]
+            start  [shape="Mdiamond"]
+            fix    [shape="box", prompt="fix"]
+            verify [shape="box", type="quality", max_fix_iterations=2]
+            done   [shape="Msquare"]
+            start -> fix -> verify
+            verify -> done [condition="outcome=success"]
+            verify -> fix  [condition="outcome=fail", loop_restart=true]
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+
+    let quality_calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(ConditionalHandler);
+    registry.register(MockCodergenHandler); // handles `fix`
+    registry.register(AlwaysFailQuality {
+        calls: Arc::clone(&quality_calls),
+    });
+
+    // Simulate an interruption mid-retry: quality already consumed one
+    // attempt from the fix->verify edge and is about to run again. The
+    // fingerprint must come from the same compile path the engine uses
+    // (compile_with_registry with this registry).
+    let mut checkpoint = PipelineCheckpoint::new(
+        "verify".into(),
+        vec!["start".into(), "fix".into()],
+        HashMap::new(),
+        HashMap::new(),
+    );
+    checkpoint.previous_node_id = Some("fix".into());
+    checkpoint
+        .quality_loop_counters
+        .insert("verify::fix".into(), 1);
+    checkpoint.schema_version = crate::checkpoint::CHECKPOINT_SCHEMA_VERSION;
+    let plan =
+        crate::execution_plan::ExecutionPlan::compile_with_registry(graph.clone(), &registry)
+            .unwrap();
+    checkpoint.execution_fingerprint = Some(plan.fingerprint());
+    save_checkpoint(&checkpoint, logs.path()).await.unwrap();
+
+    let error = PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .expect_err("restored budget must still enforce the ceiling");
+    assert!(
+        error.to_string().contains("exceeded max_fix_iterations"),
+        "expected ceiling abort, got: {error}"
+    );
+    assert_eq!(
+        quality_calls.load(Ordering::SeqCst),
+        1,
+        "resumed counter=1 -> iteration 2 runs the handler once, iteration 3 aborts"
+    );
+}
+
+// A checkpoint whose recorded fingerprint does not match the current plan
+// must be rejected before any state is restored.
+#[tokio::test]
+async fn fingerprint_mismatch_rejects_resume() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+    let mut checkpoint = PipelineCheckpoint::new(
+        "work".into(),
+        vec!["start".into()],
+        HashMap::new(),
+        HashMap::new(),
+    );
+    checkpoint.execution_fingerprint = Some("deadbeef".into());
+    save_checkpoint(&checkpoint, logs.path()).await.unwrap();
+
+    let error = PipelineExecutor::new(test_registry())
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .expect_err("mismatched fingerprint must fail closed");
+    match error {
+        AttractorError::CheckpointIncompatible { reason, .. } => {
+            assert!(reason.contains("fingerprint"), "{reason}");
+        }
+        other => panic!("expected CheckpointIncompatible, got: {other:?}"),
+    }
+}
+
+// Legacy checkpoints without a fingerprint resume (with a warning) rather
+// than blocking every pre-fingerprint run.
+#[tokio::test]
+async fn legacy_checkpoint_without_fingerprint_still_resumes() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+    // Schema version 1, no fingerprint field at all.
+    let json = r#"{
+        "current_node_id": "work",
+        "completed_nodes": ["start"],
+        "node_outcomes": {},
+        "context_snapshot": {},
+        "timestamp": "2026-09-03T00:00:00Z",
+        "schema_version": 1
+    }"#;
+    tokio::fs::write(logs.path().join("checkpoint.json"), json)
+        .await
+        .unwrap();
+
+    let result = PipelineExecutor::new(test_registry())
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await;
+    assert!(result.is_ok(), "legacy resume should proceed: {result:?}");
+}
+
+// A checkpoint written by a newer schema must be rejected, not guessed at.
+#[tokio::test]
+async fn future_schema_version_rejects_resume() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+    let json = r#"{
+        "current_node_id": "work",
+        "completed_nodes": ["start"],
+        "node_outcomes": {},
+        "context_snapshot": {},
+        "timestamp": "2026-09-03T00:00:00Z",
+        "schema_version": 99
+    }"#;
+    tokio::fs::write(logs.path().join("checkpoint.json"), json)
+        .await
+        .unwrap();
+
+    let error = PipelineExecutor::new(test_registry())
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .expect_err("future schema must fail closed");
+    match error {
+        AttractorError::CheckpointIncompatible { reason, .. } => {
+            assert!(reason.contains("newer PAS"), "{reason}");
+        }
+        other => panic!("expected CheckpointIncompatible, got: {other:?}"),
+    }
+}
+
+// Atomic persistence: a saved checkpoint leaves no stray temp file and
+// round-trips; a second save cleanly replaces the first.
+#[tokio::test]
+async fn checkpoint_save_is_atomic_and_leaves_no_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let cp = PipelineCheckpoint::new("b".into(), vec!["a".into()], HashMap::new(), HashMap::new());
+    save_checkpoint(&cp, dir.path()).await.unwrap();
+    save_checkpoint(&cp, dir.path()).await.unwrap();
+
+    assert!(!dir.path().join("checkpoint.json.tmp").exists());
+    let loaded = load_checkpoint(dir.path()).await.unwrap().unwrap();
+    assert_eq!(loaded.current_node_id, "b");
+    assert_eq!(
+        loaded.schema_version,
+        crate::checkpoint::CHECKPOINT_SCHEMA_VERSION
+    );
+}
+
+// The retry warning must not claim an objective quality failure when the
+// re-entry was driven by a downstream review/fixup cycle (empty footprint).
+#[test]
+fn retry_warning_reason_distinguishes_quality_failure_from_review_fixup() {
+    let after_failure = super::retry_warning_reason("a3f9c2b14e8d7012");
+    assert!(after_failure.contains("Quality stage failed"));
+
+    let after_review_fixup = super::retry_warning_reason("");
+    assert!(
+        after_review_fixup.contains("re-entered"),
+        "{after_review_fixup}"
+    );
+    assert!(!after_review_fixup.contains("Quality stage failed"));
+}

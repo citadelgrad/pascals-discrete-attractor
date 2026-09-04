@@ -226,6 +226,7 @@ nodeA -> nodeB [weight=10]               // Weighted (higher = preferred)
 | `condition` | string | — | Condition expression that must be true for this edge |
 | `weight` | integer | 0 | Higher weight = preferred when multiple edges match |
 | `loop_restart` | boolean | false | If true, clears completed nodes and outcomes (for loops) |
+| `reset_quality_loop_state` | boolean | false | If true, clears quality retry counters and failure footprints (for outer work-cycle transitions) |
 
 ### Chained edges
 

@@ -6,6 +6,19 @@ All notable changes to PAS are documented here.
 
 ### Fixed
 
+- Quality retry budgets no longer leak across outer work cycles. Edges may set
+  `reset_quality_loop_state=true` on a work-cycle transition (e.g. the
+  epic-runner `check_remaining -> pick_task` back-edge); traversing it clears
+  quality attempt counters and failure footprints before the next cycle's
+  checkpoint is saved, so a completed task's consumed `max_fix_iterations`
+  budget cannot abort the next task. Inner fixup back-edges keep
+  `loop_restart=true` and still preserve the active retry budget. Checkpoints
+  now record a compiled-plan fingerprint and are written atomically (tmp file,
+  fsync, rename); resume rejects a schema newer than this build understands
+  and a fingerprint that does not match the current pipeline, accepts legacy
+  checkpoints without a fingerprint with a warning, and the quality retry
+  warning no longer claims an objective stage failed when the re-entry came
+  from a downstream review/fixup cycle.
 - Reject goal-gate retry targets that resolve to an exit node, preventing a no-await traversal loop that could evade `max_steps`. Subprocess-backed handlers now use cancellation-safe process-group guards so an outer node deadline cannot leave descendants running.
 - Wired node retries, handler deadlines, attempt accounting/checkpointing, and lifecycle events through one canonical `ExecutionPlan`/`PipelineExecutor` invocation policy. The disconnected public `execute_with_retry`/`BackoffPolicy` path and redundant `PipelineNode.max_retries` projection were removed so retry semantics cannot drift. Agent sessions now honor loop detection and default shell timeouts; built-in provider streaming flags are truthful.
 - Canonical compilation now rejects unsupported fidelity, reasoning-effort, auto-status, partial-success, thread, and manager-loop semantics, and rejects Claude-only `allowed_tools`/node `max_budget_usd` controls outside Claude-backed codergen nodes. Removed the disconnected fidelity and subagent library APIs. See [the execution capability contract](docs/execution-capabilities.md).

@@ -50,6 +50,9 @@ pub enum AttractorError {
     #[error("Goal gate unsatisfied: node '{node}' did not reach SUCCESS")]
     GoalGateUnsatisfied { node: String },
 
+    #[error("Checkpoint at '{path}' cannot be resumed: {reason}")]
+    CheckpointIncompatible { path: String, reason: String },
+
     #[error("No retry target for failed goal gate '{node}'")]
     NoRetryTarget { node: String },
 

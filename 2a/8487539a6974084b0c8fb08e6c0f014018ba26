@@ -1,0 +1,46 @@
+CHANGELOG.md
+  h_12ee2b2686c122 9-21
+crates/attractor-pipeline/src/checkpoint.rs
+  h_12ee2b2686c122 12,65-73,76-78,96,103,126,133,150,161,168,176-179,186,188-192,213-264
+crates/attractor-pipeline/src/engine.rs
+  h_12ee2b2686c122 12-14,65,84,114-130,569-573,576-580,671,722-725,730,733,762,852-860,877
+crates/attractor-pipeline/src/engine_tests.rs
+  h_12ee2b2686c122 1707-2170
+crates/attractor-pipeline/src/execution_plan.rs
+  h_12ee2b2686c122 439-492
+crates/attractor-pipeline/src/graph.rs
+  h_12ee2b2686c122 44-51,149-150
+crates/attractor-types/src/error.rs
+  h_12ee2b2686c122 53-55
+docs/dot-dialect.md
+  h_12ee2b2686c122 274
+docs/examples/epic-runner.dot
+  h_12ee2b2686c122 153
+docs/guide.md
+  h_12ee2b2686c122 229
+pipelines/attractor-5b8.dot
+  h_12ee2b2686c122 164
+pipelines/attractor-e0n.dot
+  h_12ee2b2686c122 230
+pipelines/attractor-kbu.dot
+  h_12ee2b2686c122 145
+pipelines/attractor-qsb.dot
+  h_12ee2b2686c122 145
+pipelines/attractor-s6a.dot
+  h_12ee2b2686c122 145
+pipelines/build-beads-integration.dot
+  h_12ee2b2686c122 211
+templates/epic-runner.dot
+  h_12ee2b2686c122 153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "2a8487539a6974084b0c8fb08e6c0f014018ba26",
+  "prompts": {},
+  "humans": {
+    "h_12ee2b2686c122": {
+      "author": "Scott Nixon <citadelgrad@gmail.com>"
+    }
+  }
+}

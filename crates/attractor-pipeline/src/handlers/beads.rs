@@ -29,8 +29,8 @@ use crate::handler::{EventSink, HandlerExecutionContext, NodeHandler, ResolvedNo
 use crate::run_commits;
 use crate::transforms::expand_variables;
 
-const HANDLER: &str = "beads.select";
-const CLOSE_HANDLER: &str = "beads.close";
+pub(crate) const SELECT_HANDLER: &str = "beads.select";
+pub(crate) const CLOSE_HANDLER: &str = "beads.close";
 /// Prefix of the context keys that describe the claimed Task.
 const TASK_PREFIX: &str = "task.";
 const CLOSED: &str = "closed";
@@ -59,7 +59,7 @@ impl BeadsSelectHandler {
 #[async_trait]
 impl NodeHandler for BeadsSelectHandler {
     fn handler_type(&self) -> &str {
-        HANDLER
+        SELECT_HANDLER
     }
 
     fn resolved_handler(&self) -> Option<&dyn ResolvedNodeHandler> {
@@ -124,7 +124,7 @@ impl BeadsSelectHandler {
         events: Option<&dyn EventSink>,
     ) -> Result<Outcome> {
         let fail = |message: String| AttractorError::HandlerError {
-            handler: HANDLER.into(),
+            handler: SELECT_HANDLER.into(),
             node: node.id.clone(),
             message,
         };

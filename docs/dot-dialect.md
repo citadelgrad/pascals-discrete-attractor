@@ -206,7 +206,7 @@ These failures use the node-scoped `unsupported_execution_topology` rule and occ
 | `label` | string | node ID | Display name in logs |
 | `prompt` | string | -- | Task sent to the selected provider CLI. Its presence makes a conditional LLM-backed; explicit `type="codergen"` does so even without a prompt. |
 | `shape` | string | -- | Node shape (see table above) |
-| `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"quality"`, `"wait.human"`; fan-in and manager roles are recognized but rejected |
+| `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"quality"`, `"wait.human"`, `"beads.select"`, `"beads.close"` (see [Beads handlers](#beads-handlers)); fan-in and manager roles are recognized but rejected |
 | `llm_model` | string | graph `model` | Model override: `"haiku"`, `"sonnet"`, `"opus"`, or full model ID |
 | `llm_provider` | string | -- | Required whenever the resolved handler consumes a provider. Values: `"claude"`, `"codex"`, `"gemini"`; aliases: `anthropic`, `openai`, `google` (case-insensitive). |
 | `allowed_tools` | string | all | Claude-only tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"`; rejected outside Claude-backed codergen nodes |
@@ -256,12 +256,36 @@ checkpoints, handlers, or provider CLIs start. `pas generate` and `pas scaffold`
 insert an explicit Claude provider into generated source, then recompile it strictly.
 A registered custom handler may use an omitted or otherwise unknown custom shape; it
 cannot override a known built-in role shape without producing
-`ConflictingRoleSignals`.
+`ConflictingRoleSignals`. The two built-in Beads handlers are the exception: each may
+also carry the one shape the spec gives it (see [Beads handlers](#beads-handlers)).
 
 Exactly one start and one exit are required. `shape="Mdiamond"` and
 `shape="Msquare"` are canonical. For compatibility, a node whose shape and type are
 both omitted may use case-insensitive ID `start` for start or `exit`, `end`, or `done`
 for exit. Combining a magic ID with incompatible shape/type signals is an error.
+
+## Beads handlers
+
+`beads.select` and `beads.close` claim and close Tasks of a Beads Epic. Neither
+consumes a provider, so neither takes `llm_provider`. Values must be quoted.
+
+```dot
+pick_task  [shape="diamond", type="beads.select", epic="e-1", order="e-1.3,e-1.2"]
+close_task [shape="box", type="beads.close", require_upstream=true]
+pick_task -> implement [label="MORE", condition="preferred_label=MORE"]
+pick_task -> done      [label="DONE", condition="preferred_label=DONE"]
+```
+
+| Handler | Shape | Attributes |
+|---------|-------|------------|
+| `beads.select` | `diamond` or none | `epic` (required, non-empty string), `order`, `exclude` (comma lists of Task IDs). Routes with `preferred_label` `MORE`, `DONE` or `BLOCKED`. |
+| `beads.close` | `box` or none | `require_upstream` (default `true`), `reason` (template). |
+
+Any other known shape is a `ConflictingRoleSignals` error. A `beads.select` node
+without `epic` fails compilation with the node-scoped `attribute_required` rule.
+`pas validate` and `pas run` (except `--dry-run`) also report one node-scoped
+`beads_available` error per Beads node when `bd` is not on `PATH`, so the Run fails
+before it starts. Pipelines without Beads nodes never look at `PATH`.
 
 ## Edge Attributes
 

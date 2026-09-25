@@ -1,7 +1,8 @@
 //! Pipeline preflight checks.
 //!
 //! Distinct from `validation.rs` — validation is syntactic/structural (pure,
-//! no filesystem access).  Preflight performs environment checks at run time:
+//! no filesystem access, apart from the `bd`-on-`PATH` lookup for Pipelines
+//! with Beads nodes).  Preflight performs environment checks at run time:
 //! it may read the filesystem, check manifest presence, etc.
 //!
 //! Entry point: [`run`] — called once per `pas run` before execution starts.

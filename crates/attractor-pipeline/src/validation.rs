@@ -170,15 +170,23 @@ impl LintRule for GoalGateHasRetryRule {
 // ---------------------------------------------------------------------------
 
 /// Run all built-in lint rules and return collected diagnostics.
+///
+/// Unlike [`validate_plan`], this also checks the environment the default
+/// handlers need (see [`validate_beads_available`]).
 pub fn validate(graph: &PipelineGraph) -> Vec<Diagnostic> {
     match ExecutionPlan::compile(graph.clone()) {
-        Ok(plan) => validate_plan(&plan),
+        Ok(plan) => {
+            let mut diagnostics = validate_plan(&plan);
+            diagnostics.extend(validate_beads_available(&plan));
+            diagnostics
+        }
         Err(error) => {
             let mut diagnostics = validate_nonsemantic_structure(graph);
             if let Ok(compilation) =
                 ExecutionPlan::compile_for_generation(graph.clone(), LlmProvider::Claude)
             {
                 diagnostics.extend(validate_plan_structure(&compilation.plan));
+                diagnostics.extend(validate_beads_available(&compilation.plan));
             }
             diagnostics.extend(error.diagnostics.into_iter().map(semantic_diagnostic));
             diagnostics
@@ -191,6 +199,53 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<Diagnostic> {
     let mut diagnostics = validate_nonsemantic_structure(plan.graph());
     diagnostics.extend(validate_plan_structure(plan));
     diagnostics
+}
+
+/// One `beads_available` error per `beads.select` / `beads.close` node when
+/// `bd` is not on `PATH`, so a Run fails before it starts rather than at the
+/// first Beads stage. Pipelines without Beads nodes never look at `PATH`.
+///
+/// Kept out of [`validate_plan`] because an engine may register Beads
+/// handlers that run a `bd` from somewhere other than `PATH`.
+pub fn validate_beads_available(plan: &ExecutionPlan) -> Vec<Diagnostic> {
+    if beads_nodes(plan).is_empty() {
+        return Vec::new();
+    }
+    let found = crate::beads_adapter::bd_on_path(std::env::var_os("PATH").as_deref());
+    beads_unavailable(plan, found)
+}
+
+fn beads_nodes(plan: &ExecutionPlan) -> Vec<(&str, &str)> {
+    let mut nodes = plan
+        .all_nodes()
+        .map(|node| (node.node_id.as_str(), node.handler.as_str()))
+        .filter(|(_, handler)| {
+            [
+                crate::handlers::beads::SELECT_HANDLER,
+                crate::handlers::beads::CLOSE_HANDLER,
+            ]
+            .contains(handler)
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_unstable();
+    nodes
+}
+
+fn beads_unavailable(plan: &ExecutionPlan, bd_found: bool) -> Vec<Diagnostic> {
+    if bd_found {
+        return Vec::new();
+    }
+    beads_nodes(plan)
+        .into_iter()
+        .map(|(node_id, handler)| Diagnostic {
+            rule: "beads_available".into(),
+            severity: Severity::Error,
+            message: format!("Node '{node_id}' uses handler '{handler}' but bd is not on PATH"),
+            node_id: Some(node_id.to_string()),
+            edge: None,
+            fix: Some("Install beads (bd) and make sure it is on PATH".into()),
+        })
+        .collect()
 }
 
 fn validate_nonsemantic_structure(graph: &PipelineGraph) -> Vec<Diagnostic> {
@@ -342,6 +397,7 @@ fn semantic_diagnostic(diagnostic: SemanticDiagnostic) -> Diagnostic {
         SemanticDiagnosticKind::InvalidAttributeType => "attribute_type",
         SemanticDiagnosticKind::InvalidAttributeValue => "attribute_value",
         SemanticDiagnosticKind::MissingProvider => "provider_required",
+        SemanticDiagnosticKind::MissingAttribute => "attribute_required",
         SemanticDiagnosticKind::UnknownProvider => "provider_valid",
         SemanticDiagnosticKind::MissingStart | SemanticDiagnosticKind::MultipleStarts => {
             "start_node"

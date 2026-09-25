@@ -13,8 +13,8 @@
 //! on `PATH`, and fail instead when `PAS_REQUIRE_BD=1`. The error-path tests
 //! use a stub program and never need `bd`.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde::de::DeserializeOwned;
@@ -23,6 +23,27 @@ use tokio::process::Command;
 
 /// The only literal naming the Beads program in `crates/`.
 const BD_PROGRAM: &str = "bd";
+
+/// Whether an executable `bd` is in one of the directories of `path` (a
+/// `PATH`-style list). Validation uses this to fail early instead of mid-Run;
+/// it never spawns `bd`.
+pub fn bd_on_path(path: Option<&OsStr>) -> bool {
+    path.is_some_and(|path| {
+        std::env::split_paths(path).any(|dir| is_executable(&dir.join(BD_PROGRAM)))
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file() || path.with_extension("exe").is_file()
+}
 
 /// An issue as reported by `bd show`, `bd children`, `bd ready`, `bd list`,
 /// `bd update` and `bd close`. Unknown fields are ignored; `status` stays a
@@ -721,6 +742,31 @@ mod tests {
             matches!(&err, BeadsError::BdNotFound { .. }),
             "expected BdNotFound, got {err:?}"
         );
+    }
+
+    #[test]
+    fn bd_on_path_finds_only_an_executable_bd() {
+        let empty = tempfile::tempdir().unwrap();
+        let plain = tempfile::tempdir().unwrap();
+        std::fs::write(plain.path().join(BD_PROGRAM), "not executable").unwrap();
+        let nested = tempfile::tempdir().unwrap();
+        std::fs::create_dir(nested.path().join(BD_PROGRAM)).unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        stub(bin.path(), BD_PROGRAM, "exit 0");
+
+        let joined = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
+        assert!(!bd_on_path(None));
+        assert!(!bd_on_path(Some(OsStr::new(""))));
+        assert!(!bd_on_path(Some(empty.path().as_os_str())));
+        assert!(!bd_on_path(Some(plain.path().as_os_str())));
+        assert!(!bd_on_path(Some(nested.path().as_os_str())));
+        assert!(bd_on_path(Some(bin.path().as_os_str())));
+        assert!(bd_on_path(Some(&joined(&[
+            empty.path(),
+            plain.path(),
+            bin.path()
+        ]))));
+        assert!(!bd_on_path(Some(&joined(&[empty.path(), plain.path()]))));
     }
 
     #[tokio::test]

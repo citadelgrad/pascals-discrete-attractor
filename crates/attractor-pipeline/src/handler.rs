@@ -402,6 +402,8 @@ pub fn default_registry() -> HandlerRegistry {
     reg.register(crate::handlers::ParallelHandler);
     reg.register(crate::handlers::FanInHandler);
     reg.register(crate::handlers::ManagerLoopHandler);
+    reg.register(crate::handlers::BeadsSelectHandler::default());
+    reg.register(crate::handlers::BeadsCloseHandler::default());
     reg
 }
 
@@ -618,6 +620,11 @@ mod tests {
         assert!(reg.has("parallel"));
         assert!(reg.has("parallel.fan_in"));
         assert!(reg.has("stack.manager_loop"));
+        assert!(reg.has("beads.select"));
+        assert!(reg.has("beads.close"));
+        let capabilities = reg.handler_capabilities();
+        assert_eq!(capabilities.get("beads.select"), Some(&false));
+        assert_eq!(capabilities.get("beads.close"), Some(&false));
     }
 
     fn make_minimal_graph() -> PipelineGraph {

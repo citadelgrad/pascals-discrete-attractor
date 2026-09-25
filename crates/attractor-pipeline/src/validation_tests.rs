@@ -657,3 +657,75 @@ fn provider_required_pre_fix_pipeline_is_not_grandfathered() {
         "error should name at least one offending node; got: {err_msg}"
     );
 }
+
+const BEADS_PIPELINE: &str = r#"digraph G {
+    start [shape="Mdiamond"]
+    pick_task [shape="diamond", type="beads.select", epic="e-1"]
+    close_task [shape="box", type="beads.close", require_upstream=true]
+    done [shape="Msquare"]
+    start -> pick_task
+    pick_task -> close_task [condition="preferred_label=MORE"]
+    pick_task -> done [condition="preferred_label=DONE"]
+    close_task -> pick_task
+}"#;
+
+// AC1: with bd available the Beads Pipeline has no diagnostics at all.
+#[test]
+fn beads_pipeline_has_no_diagnostics_when_bd_is_found() {
+    let plan = ExecutionPlan::compile(parse_and_build(BEADS_PIPELINE)).unwrap();
+    let diags = validate_plan(&plan);
+    assert!(diags.is_empty(), "{diags:?}");
+    assert!(beads_unavailable(&plan, true).is_empty());
+}
+
+// AC2: without bd, one error per Beads node, each naming its node.
+#[test]
+fn beads_nodes_report_missing_bd_per_node() {
+    let plan = ExecutionPlan::compile(parse_and_build(BEADS_PIPELINE)).unwrap();
+    let diags = beads_unavailable(&plan, false);
+    let summary = diags
+        .iter()
+        .map(|d| (d.rule.as_str(), d.severity, d.node_id.as_deref().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        vec![
+            ("beads_available", Severity::Error, "close_task"),
+            ("beads_available", Severity::Error, "pick_task"),
+        ]
+    );
+    assert!(diags[0].message.contains("'close_task'") && diags[0].message.contains("beads.close"));
+    assert!(diags[1].message.contains("'pick_task'") && diags[1].message.contains("beads.select"));
+    assert!(diags.iter().all(|d| d.message.contains("PATH")));
+}
+
+#[test]
+fn pipelines_without_beads_nodes_never_need_bd() {
+    let plan = ExecutionPlan::compile(parse_and_build(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="Do work", llm_provider="claude"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    ))
+    .unwrap();
+    assert!(beads_unavailable(&plan, false).is_empty());
+    assert!(validate_beads_available(&plan).is_empty());
+}
+
+// AC3: the missing epic surfaces through validate() under its own rule.
+#[test]
+fn beads_select_without_epic_fails_validation_naming_the_node() {
+    let pg = parse_and_build(&BEADS_PIPELINE.replace(r#", epic="e-1""#, ""));
+    let diags = validate(&pg);
+    let required = diags
+        .iter()
+        .filter(|d| d.rule == "attribute_required")
+        .collect::<Vec<_>>();
+    assert_eq!(required.len(), 1, "{diags:?}");
+    assert_eq!(required[0].severity, Severity::Error);
+    assert_eq!(required[0].node_id.as_deref(), Some("pick_task"));
+    assert!(required[0].message.contains("'pick_task'"));
+    assert!(validate_or_raise(&pg).is_err());
+}

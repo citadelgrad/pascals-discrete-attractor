@@ -9,6 +9,7 @@ use attractor_dot::AttributeValue;
 
 use crate::graph::{PipelineEdge, PipelineGraph, PipelineNode};
 use crate::handler::HandlerRegistry;
+use crate::handlers::beads::{CLOSE_HANDLER, SELECT_HANDLER};
 use crate::transforms::apply_transforms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,6 +152,7 @@ pub enum SemanticDiagnosticKind {
     UnknownHandler,
     HandlerCapabilityMismatch,
     MissingProvider,
+    MissingAttribute,
     UnknownProvider,
     UnsupportedExecutionTopology,
     UnsupportedExecutionCapability,
@@ -322,6 +324,7 @@ impl ExecutionPlan {
 
         validate_supported_execution_topology(&graph, &nodes, &mut diagnostics);
         validate_supported_execution_capabilities(&graph, &nodes, &mut diagnostics);
+        validate_beads_attributes(&graph, &nodes, &mut diagnostics);
 
         starts.sort();
         exits.sort();
@@ -639,6 +642,36 @@ fn validate_supported_execution_capabilities(
     }
 }
 
+/// `beads.select` cannot run without the Epic it claims Tasks from, so a
+/// missing `epic` fails compilation instead of the Run.
+fn validate_beads_attributes(
+    graph: &PipelineGraph,
+    nodes: &HashMap<String, ResolvedNode>,
+    diagnostics: &mut Vec<SemanticDiagnostic>,
+) {
+    let mut node_ids = nodes
+        .values()
+        .filter(|node| node.handler.as_str() == SELECT_HANDLER)
+        .map(|node| node.node_id.as_str())
+        .collect::<Vec<_>>();
+    node_ids.sort_unstable();
+    for node_id in node_ids {
+        let source = graph.node(node_id).expect("resolved node must have source");
+        match source.raw_attrs.get("epic") {
+            Some(AttributeValue::String(epic)) if !epic.trim().is_empty() => {}
+            Some(AttributeValue::String(_)) | None => diagnostics.push(SemanticDiagnostic {
+                kind: SemanticDiagnosticKind::MissingAttribute,
+                node_id: Some(node_id.to_string()),
+                message: format!(
+                    "Node '{node_id}' resolves to handler '{SELECT_HANDLER}' but has no 'epic' attribute"
+                ),
+                fix: "Add epic=\"<epic-id>\" naming the Epic whose Tasks this node claims".into(),
+            }),
+            Some(value) => diagnostics.push(invalid_attribute_type(Some(node_id), "epic", value)),
+        }
+    }
+}
+
 fn validate_unsupported_attributes(
     graph: &PipelineGraph,
     diagnostics: &mut Vec<SemanticDiagnostic>,
@@ -704,6 +737,8 @@ fn builtin_handler_catalog() -> HashMap<String, bool> {
         ("parallel.fan_in", false),
         ("stack.manager_loop", false),
         ("quality", false),
+        (SELECT_HANDLER, false),
+        (CLOSE_HANDLER, false),
     ]
     .into_iter()
     .map(|(name, consumes_provider)| (name.to_string(), consumes_provider))
@@ -909,7 +944,9 @@ fn resolve_node(
         }
     } else if registered_custom_handler {
         if let Some(shape_role) = shape_role {
-            diagnostics.push(role_conflict(node, shape_role, Role::Custom));
+            if type_name.and_then(custom_handler_shape_role) != Some(shape_role) {
+                diagnostics.push(role_conflict(node, shape_role, Role::Custom));
+            }
         }
         Role::Custom
     } else {
@@ -1115,6 +1152,17 @@ fn type_role(node_type: &str) -> Option<Role> {
         "fan_in" | "parallel.fan_in" => Some(Role::FanIn),
         "manager" | "stack.manager_loop" => Some(Role::ManagerLoop),
         "quality" => Some(Role::Quality),
+        _ => None,
+    }
+}
+
+/// The one shape each built-in custom handler may also carry: `beads.select`
+/// routes by label like a diamond, `beads.close` is a plain box step. Every
+/// other custom handler conflicts with every known shape.
+fn custom_handler_shape_role(handler: &str) -> Option<Role> {
+    match handler {
+        SELECT_HANDLER => Some(Role::Conditional),
+        CLOSE_HANDLER => Some(Role::Task),
         _ => None,
     }
 }
@@ -1859,5 +1907,189 @@ mod tests {
             "pass-through conditionals do not consume providers"
         );
         assert_eq!(compilation.plan.node("quality").unwrap().provider, None);
+    }
+
+    fn beads_graph(select_attrs: &str, close_attrs: &str) -> PipelineGraph {
+        graph(&format!(
+            r#"digraph G {{
+                start [shape="Mdiamond"]
+                pick_task [type="beads.select"{select_attrs}]
+                close_task [type="beads.close"{close_attrs}]
+                done [shape="Msquare"]
+                start -> pick_task
+                pick_task -> close_task [condition="preferred_label=MORE"]
+                pick_task -> done [condition="preferred_label=DONE"]
+                close_task -> pick_task
+            }}"#
+        ))
+    }
+
+    fn diagnostics_for(node_id: &str, error: &SemanticError) -> Vec<SemanticDiagnosticKind> {
+        error
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.node_id.as_deref() == Some(node_id))
+            .map(|diagnostic| diagnostic.kind)
+            .collect()
+    }
+
+    // AC4: neither Beads handler consumes a provider.
+    #[test]
+    fn beads_handlers_do_not_consume_a_provider() {
+        let catalog = builtin_handler_catalog();
+        assert_eq!(catalog.get("beads.select"), Some(&false));
+        assert_eq!(catalog.get("beads.close"), Some(&false));
+
+        let plan = ExecutionPlan::compile(beads_graph(r#", epic="e-1""#, "")).unwrap();
+        for (id, handler) in [("pick_task", "beads.select"), ("close_task", "beads.close")] {
+            let node = plan.node(id).unwrap();
+            assert_eq!(node.kind, ResolvedNodeKind::Custom);
+            assert_eq!(node.handler, HandlerIdentity::Custom(handler.into()));
+            assert_eq!(node.provider, None, "{id} must not get a provider");
+            assert_eq!(plan.handler_capabilities.get(handler), Some(&false));
+        }
+
+        let generated = ExecutionPlan::compile_for_generation(
+            beads_graph(r#", epic="e-1""#, ""),
+            LlmProvider::Claude,
+        )
+        .unwrap();
+        assert!(generated.defaulted_provider_nodes.is_empty());
+        for id in ["pick_task", "close_task"] {
+            assert_eq!(generated.plan.node(id).unwrap().provider, None);
+            assert_eq!(generated.plan.source_node(id).unwrap().llm_provider, None);
+        }
+    }
+
+    #[test]
+    fn builtin_catalog_matches_default_registry() {
+        let registry = crate::handler::default_registry_with_interviewer(std::sync::Arc::new(
+            crate::interviewer::AutoApproveInterviewer,
+        ));
+        assert_eq!(registry.handler_capabilities(), builtin_handler_catalog());
+
+        let plan = ExecutionPlan::compile(beads_graph(r#", epic="e-1""#, "")).unwrap();
+        plan.ensure_registry_compatible(&registry).unwrap();
+        let from_registry =
+            ExecutionPlan::compile_with_registry(beads_graph(r#", epic="e-1""#, ""), &registry)
+                .unwrap();
+        assert_eq!(plan.fingerprint(), from_registry.fingerprint());
+    }
+
+    #[test]
+    fn beads_handlers_accept_their_spec_shapes() {
+        let plan = ExecutionPlan::compile(beads_graph(
+            r#", shape="diamond", epic="e-1""#,
+            r#", shape="box", require_upstream=true"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            plan.node("pick_task").unwrap().handler,
+            HandlerIdentity::Custom("beads.select".into())
+        );
+        assert_eq!(
+            plan.node("close_task").unwrap().handler,
+            HandlerIdentity::Custom("beads.close".into())
+        );
+    }
+
+    #[test]
+    fn beads_handlers_still_conflict_with_other_shapes() {
+        for shape in [
+            "Mdiamond",
+            "Msquare",
+            "box",
+            "hexagon",
+            "parallelogram",
+            "component",
+            "tripleoctagon",
+            "house",
+        ] {
+            let error = ExecutionPlan::compile(beads_graph(
+                &format!(r#", shape="{shape}", epic="e-1""#),
+                "",
+            ))
+            .unwrap_err();
+            assert!(
+                diagnostics_for("pick_task", &error)
+                    .contains(&SemanticDiagnosticKind::ConflictingRoleSignals),
+                "beads.select with shape {shape}: {error:?}"
+            );
+        }
+        for shape in [
+            "Mdiamond",
+            "Msquare",
+            "diamond",
+            "hexagon",
+            "parallelogram",
+            "component",
+            "tripleoctagon",
+            "house",
+        ] {
+            let error = ExecutionPlan::compile(beads_graph(
+                r#", epic="e-1""#,
+                &format!(r#", shape="{shape}""#),
+            ))
+            .unwrap_err();
+            assert!(
+                diagnostics_for("close_task", &error)
+                    .contains(&SemanticDiagnosticKind::ConflictingRoleSignals),
+                "beads.close with shape {shape}: {error:?}"
+            );
+        }
+    }
+
+    // AC3: beads.select needs an Epic, and the diagnostic names the node.
+    #[test]
+    fn beads_select_without_epic_is_rejected() {
+        for attrs in ["", r#", epic="""#, r#", epic="   ""#] {
+            let error = ExecutionPlan::compile(beads_graph(attrs, "")).unwrap_err();
+            assert_eq!(
+                error.diagnostics.len(),
+                1,
+                "attrs {attrs:?}: {:?}",
+                error.diagnostics
+            );
+            let diagnostic = &error.diagnostics[0];
+            assert_eq!(diagnostic.kind, SemanticDiagnosticKind::MissingAttribute);
+            assert_eq!(diagnostic.node_id.as_deref(), Some("pick_task"));
+            assert!(diagnostic.message.contains("'pick_task'"), "{diagnostic:?}");
+            assert!(diagnostic.message.contains("'epic'"), "{diagnostic:?}");
+        }
+
+        let error = ExecutionPlan::compile(beads_graph(", epic=true", "")).unwrap_err();
+        assert_eq!(
+            diagnostics_for("pick_task", &error),
+            vec![SemanticDiagnosticKind::InvalidAttributeType]
+        );
+
+        let registry = crate::handler::default_registry();
+        let error =
+            ExecutionPlan::compile_with_registry(beads_graph("", ""), &registry).unwrap_err();
+        assert_eq!(
+            diagnostics_for("pick_task", &error),
+            vec![SemanticDiagnosticKind::MissingAttribute],
+            "the engine's compile path rejects it too"
+        );
+    }
+
+    #[test]
+    fn epic_is_only_required_by_beads_select() {
+        ExecutionPlan::compile(beads_graph(r#", epic="e-1""#, "")).unwrap();
+        let mut catalog = builtin_handler_catalog();
+        catalog.insert("custom.review".into(), false);
+        ExecutionPlan::compile_with_policy(
+            graph(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    review [type="custom.review"]
+                    done [shape="Msquare"]
+                    start -> review -> done
+                }"#,
+            ),
+            &catalog,
+            MissingProviderPolicy::Reject,
+        )
+        .unwrap();
     }
 }

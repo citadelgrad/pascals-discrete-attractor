@@ -281,7 +281,11 @@ fn prepare_run_configuration(
             anyhow::bail!("Pipeline validation failed: {error}");
         }
     };
-    let diagnostics = attractor_pipeline::validate_plan(&plan);
+    let mut diagnostics = attractor_pipeline::validate_plan(&plan);
+    // A dry run never calls bd, so only a real Run needs it on PATH.
+    if !dry_run {
+        diagnostics.extend(attractor_pipeline::validate_beads_available(&plan));
+    }
     if super::print_diagnostics_to(&diagnostics, json) {
         anyhow::bail!("Pipeline validation failed");
     }

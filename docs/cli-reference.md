@@ -228,6 +228,10 @@ Runs canonical semantic compilation followed by nine structural checks without
 executing the pipeline. Useful for checking typed roles, providers, syntax, and
 structure before committing a DOT file.
 
+A Pipeline with `beads.select` or `beads.close` nodes also needs `bd` on `PATH`;
+without it, each such node gets a `beads_available` error. A `beads.select` node
+without `epic` gets an `attribute_required` error.
+
 ```
 pas validate <PIPELINE>
 ```

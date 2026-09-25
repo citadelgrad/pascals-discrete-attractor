@@ -5,6 +5,7 @@ pub mod init;
 pub mod launch;
 pub mod plan;
 pub mod run;
+mod run_lock;
 pub mod scaffold;
 pub mod validate;
 
@@ -16,6 +17,7 @@ pub use launch::cmd_launch;
 pub use plan::cmd_plan;
 pub use run::{
     cmd_run, cmd_run_dir, heartbeat_interval_from_env, CodergenClaudeCliOpts, RunInvocation,
+    RunRefused,
 };
 pub use scaffold::cmd_scaffold;
 pub use validate::cmd_validate;

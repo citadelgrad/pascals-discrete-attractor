@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
     cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, heartbeat_interval_from_env,
-    validate_decomposition, CodergenClaudeCliOpts, InitOpts, RunInvocation,
+    validate_decomposition, CodergenClaudeCliOpts, InitOpts, RunInvocation, RunRefused,
 };
 
 #[derive(Parser)]
@@ -101,6 +101,11 @@ enum Commands {
         /// line once the Run folder exists; other output goes to stderr
         #[arg(long)]
         json: bool,
+
+        /// Start even if another Run is active in this git worktree
+        /// (recorded as `shared_workdir` in `RunStarted`)
+        #[arg(long)]
+        allow_shared_workdir: bool,
     },
 
     /// Validate a pipeline .dot file
@@ -318,6 +323,20 @@ enum TrustAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let result = run_cli().await;
+    // A Run refused by a lock has its own exit code (C5).
+    if let Some(refused) = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<RunRefused>())
+    {
+        eprintln!("error: {refused}");
+        std::process::exit(refused.exit_code);
+    }
+    result
+}
+
+async fn run_cli() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Setup tracing
@@ -350,6 +369,7 @@ async fn main() -> anyhow::Result<()> {
             codergen_claude_mcp_config,
             run_id,
             json,
+            allow_shared_workdir,
         } => {
             let codergen_claude = CodergenClaudeCliOpts {
                 settings_mode: codergen_claude_settings_mode,
@@ -366,6 +386,7 @@ async fn main() -> anyhow::Result<()> {
                 json,
                 index_path: None,
                 heartbeat_interval: heartbeat_interval_from_env(),
+                allow_shared_workdir,
             };
             if pipeline.is_dir() {
                 cmd_run_dir(

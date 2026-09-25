@@ -49,6 +49,7 @@ pas run <PIPELINE> [OPTIONS]
 | `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for `codergen` nodes. |
 | `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for `codergen` nodes. Repeatable. |
 | `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for `codergen` nodes. `--strict-mcp-config` remains enabled. |
+| `--allow-shared-workdir` | — | false | Start even if another Run is active in the same git worktree. The Run records `shared_workdir: true` in its `RunStarted` event when it actually shares the worktree. |
 
 PAS resolves each run-control field independently using `caller > manifest > permitted graph defaults > built-ins`.
 Graph defaults are permitted only for workflow semantics and the quality node's
@@ -63,9 +64,18 @@ budget, the canonical current directory, quality enabled, three quality-fix
 iterations, and Claude `subscription_bare` isolation. A node-level
 `max_budget_usd` remains a separate per-Claude-session cap.
 
+#### Concurrency locks
+
+Each Attempt holds two exclusive, non-blocking `flock` locks until it ends. Both lock files contain `{"pid":…,"run_id":…}` for the Run that holds them.
+
+- **Pipeline lock:** `run.lock` in the Pipeline's logs folder. A second `pas run` of the same Pipeline exits with code 5: `error: pipeline already running (pid 1234, run 0192...)`. `--allow-shared-workdir` does not override this.
+- **Worktree lock:** `pas-run.lock` in the worktree's git dir (`git rev-parse --absolute-git-dir`). Each linked worktree has its own. A `pas run` of another Pipeline in the same worktree exits with code 6 and names the other Run, unless `--allow-shared-workdir` is passed. Outside a git repository, or without `git` on `PATH`, only the Pipeline lock is taken.
+
+Both locks are taken before the checkpoint is read, so a refused Run creates no Run folder or Run Index entry. With `--json`, the refusal is printed as `{"v":1,"ok":false,"error":{"code":"pipeline_locked"|"worktree_locked","message":…}}`. The OS releases both locks when the process exits, even after `kill -9`, so no cleanup is needed. A Pipeline whose stages call `pas run` in the same worktree needs `--allow-shared-workdir` on the inner `pas run`.
+
 #### Directory mode
 
-When `PIPELINE` is a directory, `run` collects all `*.dot` files and executes them sequentially in lexical order. Use zero-padded names to control execution order (`phase-01.dot`, `phase-02.dot`, `phase-11.dot`). Checkpoints apply per-pipeline within the run.
+When `PIPELINE` is a directory, `run` collects all `*.dot` files and executes them sequentially in lexical order. Use zero-padded names to control execution order (`phase-01.dot`, `phase-02.dot`, `phase-11.dot`). Checkpoints apply per-pipeline within the run. Each Pipeline takes and releases its own locks.
 
 #### Output
 
@@ -83,6 +93,8 @@ Prints:
 | 0 | Pipeline completed successfully |
 | 1 | Pipeline failed (validation error, handler error, goal gate unsatisfied, or quality loop exhausted) |
 | 2 | `pas.toml` found but not trusted — run `pas trust add` or set `PAS_TRUST_THIS=1` |
+| 5 | The Pipeline is already running (another Run holds its Pipeline lock) |
+| 6 | Another Run is active in this git worktree and `--allow-shared-workdir` was not passed |
 
 #### Quality manifest warnings
 
@@ -580,6 +592,8 @@ pas trust remove /path/to/project/pas.toml <blake3-hash>
 | 2 | Manifest not trusted | `run` (when quality stages attempted with untrusted `pas.toml`) |
 | 3 | Trust store corrupted | `run`, `trust` |
 | 4 | No `.git` root found without `--force` | `init` |
+| 5 | Pipeline already running | `run`, `launch` |
+| 6 | Git worktree busy with another Run | `run`, `launch` |
 
 ---
 

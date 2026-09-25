@@ -6,6 +6,8 @@ use std::time::Duration;
 use anyhow;
 use attractor_journal::{AttemptEndReason, EventData, IndexEntry, PipelineDir, RunMeta};
 
+use super::run_lock::{LockError, RunLock, WORKTREE_LOCK};
+
 /// Print a human-facing line: to stdout normally, to stderr in `--json` mode,
 /// where stdout carries only the machine-readable first line (C6).
 macro_rules! say {
@@ -32,6 +34,9 @@ pub struct RunInvocation {
     /// Time between Heartbeat Events; `None` uses [`HEARTBEAT_INTERVAL`].
     /// Only tests set it (`PAS_HEARTBEAT_INTERVAL_MS`).
     pub heartbeat_interval: Option<Duration>,
+    /// `--allow-shared-workdir`: start even if another Run holds the
+    /// Worktree lock, and record `shared_workdir: true` in `RunStarted`.
+    pub allow_shared_workdir: bool,
 }
 
 /// Time between Heartbeat Events while an Attempt runs (C3).
@@ -301,6 +306,8 @@ fn prepare_run_configuration(
 struct SetupError {
     code: &'static str,
     message: String,
+    /// Process exit code; 1 unless the Run was refused by a lock (C5).
+    exit_code: i32,
 }
 
 impl SetupError {
@@ -308,8 +315,132 @@ impl SetupError {
         Self {
             code,
             message: message.to_string(),
+            exit_code: 1,
         }
     }
+
+    fn refused(code: &'static str, exit_code: i32, message: impl std::fmt::Display) -> Self {
+        Self {
+            exit_code,
+            ..Self::new(code, message)
+        }
+    }
+}
+
+/// Exit code when another Run holds the Pipeline lock (C5).
+pub const EXIT_PIPELINE_LOCKED: i32 = 5;
+/// Exit code when another Run holds the Worktree lock (C5).
+pub const EXIT_WORKTREE_LOCKED: i32 = 6;
+
+/// `pas run` refused to start because another Run holds a lock. `main`
+/// prints `error: <message>` and exits with `exit_code`.
+#[derive(Debug)]
+pub struct RunRefused {
+    pub exit_code: i32,
+    pub message: String,
+}
+
+impl std::fmt::Display for RunRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for RunRefused {}
+
+/// The locks one Attempt holds (C5). Dropping them releases both.
+#[derive(Debug)]
+struct RunLocks {
+    pipeline: RunLock,
+    worktree: Option<RunLock>,
+}
+
+impl RunLocks {
+    /// Write this process's PID and `run_id` into every held lock file.
+    fn record(&self, run_id: Option<&str>) {
+        for lock in std::iter::once(&self.pipeline).chain(&self.worktree) {
+            if let Err(error) = lock.record(run_id) {
+                tracing::warn!(
+                    path = %lock.path().display(),
+                    %error,
+                    "cannot write the lock holder"
+                );
+            }
+        }
+    }
+}
+
+/// Take the Pipeline lock on `<logs_dir>/run.lock`, then the Worktree lock on
+/// `<git-dir>/pas-run.lock` when `workdir` is in a git worktree. Returns the
+/// locks and whether the Run shares its worktree with another Run.
+fn acquire_run_locks(
+    logs_dir: &std::path::Path,
+    workdir: &std::path::Path,
+    allow_shared_workdir: bool,
+) -> Result<(RunLocks, bool), SetupError> {
+    let setup = |e: &dyn std::fmt::Display| SetupError::new("run_setup_failed", e);
+    std::fs::create_dir_all(logs_dir).map_err(|e| {
+        setup(&format!(
+            "cannot create Pipeline folder {}: {e}",
+            logs_dir.display()
+        ))
+    })?;
+    let pipeline_path = PipelineDir::new(absolute(logs_dir)).run_lock();
+    let pipeline = match RunLock::try_acquire(&pipeline_path) {
+        Ok(lock) => lock,
+        Err(LockError::Busy(holder)) => {
+            return Err(SetupError::refused(
+                "pipeline_locked",
+                EXIT_PIPELINE_LOCKED,
+                format!("pipeline already running ({holder})"),
+            ))
+        }
+        Err(LockError::Io(e)) => {
+            return Err(setup(&format!(
+                "cannot lock {}: {e}",
+                pipeline_path.display()
+            )))
+        }
+    };
+    let mut locks = RunLocks {
+        pipeline,
+        worktree: None,
+    };
+    locks.record(None);
+
+    // Not a git worktree, or no `git`: only the Pipeline lock.
+    let Some(git_dir) = git_rev_parse(workdir, "--absolute-git-dir") else {
+        return Ok((locks, false));
+    };
+    let worktree_path = PathBuf::from(git_dir).join(WORKTREE_LOCK);
+    let shared = match RunLock::try_acquire(&worktree_path) {
+        Ok(lock) => {
+            lock.record(None)
+                .unwrap_or_else(|error| tracing::warn!(%error, "cannot write the lock holder"));
+            locks.worktree = Some(lock);
+            false
+        }
+        Err(LockError::Busy(holder)) if allow_shared_workdir => {
+            eprintln!("warning: sharing this git worktree with another Run ({holder})");
+            true
+        }
+        Err(LockError::Busy(holder)) => {
+            return Err(SetupError::refused(
+                "worktree_locked",
+                EXIT_WORKTREE_LOCKED,
+                format!(
+                    "another Run is active in this git worktree ({holder}); pass --allow-shared-workdir to run anyway"
+                ),
+            ))
+        }
+        Err(LockError::Io(e)) => {
+            return Err(setup(&format!(
+                "cannot lock {}: {e}",
+                worktree_path.display()
+            )))
+        }
+    };
+    Ok((locks, shared))
 }
 
 /// Which Run this `pas run` works on (spec C2).
@@ -434,6 +565,12 @@ fn setup_failed(json: bool, error: SetupError) -> anyhow::Error {
             })
         );
     }
+    if error.exit_code != 1 {
+        return anyhow::Error::new(RunRefused {
+            exit_code: error.exit_code,
+            message: error.message,
+        });
+    }
     anyhow::anyhow!(error.message)
 }
 
@@ -446,6 +583,7 @@ struct PreparedRun {
     run_dir: attractor_journal::RunDir,
     journal: Arc<attractor_journal::JournalWriter>,
     attempt: u32,
+    locks: RunLocks,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -477,6 +615,7 @@ pub async fn cmd_run(
         run_dir,
         journal,
         attempt,
+        locks,
     } = prepare_run(
         path,
         workdir,
@@ -583,6 +722,9 @@ pub async fn cmd_run(
             "cannot write AttemptEnded to the Run Journal"
         );
     }
+    // Held until the Attempt has ended, so this process stays the only
+    // journal writer (C3). On SIGTERM the OS releases them at exit.
+    drop(locks);
 
     let result = match outcome {
         AttemptOutcome::Finished(result) => result?,
@@ -605,7 +747,8 @@ pub async fn cmd_run(
 
 /// Validate the invocation and the plan, decide the Run, create its folder,
 /// `run.json`, and Index entry, open the journal, and record the Attempt's
-/// start. Nothing is written to disk until every check has passed.
+/// start. Nothing but the lock files is written to disk until every check
+/// has passed.
 #[allow(clippy::too_many_arguments)]
 async fn prepare_run(
     path: &std::path::Path,
@@ -666,6 +809,12 @@ async fn prepare_run(
         None => stable_logs_dir(path),
     };
 
+    // Locks come before the checkpoint is read or anything is written, so a
+    // refused Run leaves no trace (C5).
+    let workdir_abs = absolute(configured.controls().workdir().value());
+    let (locks, shared_workdir) =
+        acquire_run_locks(&logs_dir, &workdir_abs, invocation.allow_shared_workdir)?;
+
     // Check for existing checkpoint. Loaded (not just existence-checked) so
     // the resume banner can show real progress instead of a bare notice.
     // --fresh ignores it; it is cleared once the Run has been decided.
@@ -688,6 +837,7 @@ async fn prepare_run(
         });
     let identity = decide_run_id(checkpoint_run_id.as_deref(), requested.as_deref())?;
     let run_id = identity.id().to_string();
+    locks.record(Some(&run_id));
     let run_dir = PipelineDir::new(absolute(&logs_dir))
         .run(&run_id)
         .map_err(|e| setup(&e))?;
@@ -716,7 +866,6 @@ async fn prepare_run(
         ))
     })?;
     let attempt = last_attempt(&run_dir.events()) + 1;
-    let workdir_abs = absolute(configured.controls().workdir().value());
     let pipeline_path = absolute(path);
     let pas_version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -779,7 +928,7 @@ async fn prepare_run(
                 epic_id: None,
                 max_budget_usd: Some(*controls.max_budget_usd().value()),
                 max_steps: Some(*controls.max_steps().value()),
-                shared_workdir: false,
+                shared_workdir,
             })
             .map_err(journal_error)?;
     }
@@ -802,6 +951,7 @@ async fn prepare_run(
         run_dir,
         journal,
         attempt,
+        locks,
     })
 }
 
@@ -1054,9 +1204,11 @@ mod tests {
 
         let logs_dir = tempfile::tempdir().unwrap();
 
+        // A temp workdir: the crate dir would take this repository's
+        // Worktree lock and clash with any `pas run` active here.
         let result = cmd_run(
             &pipeline_path,
-            None,
+            Some(pipeline_dir.path()),
             Some(logs_dir.path()),
             true,
             None,

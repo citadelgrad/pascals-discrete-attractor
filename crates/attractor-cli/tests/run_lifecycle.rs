@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 const RUN_ID: &str = "01920000-0000-7000-8000-00000000abcd";
+/// Test hook that shortens the 30 s Heartbeat interval.
+const HEARTBEAT_ENV: &str = "PAS_HEARTBEAT_INTERVAL_MS";
 
 fn pas() -> &'static str {
     env!("CARGO_BIN_EXE_pas")
@@ -69,6 +71,7 @@ impl Fixture {
         command
             .args(self.args(extra))
             .env("PAS_STATE_DIR", self.path().join("state"))
+            .env_remove(HEARTBEAT_ENV)
             .current_dir(self.path());
         command
     }
@@ -648,6 +651,7 @@ fn directory_run_creates_one_run_per_pipeline() {
             .args(["--dry-run"])
             .args(extra)
             .env("PAS_STATE_DIR", fx.path().join("state"))
+            .env_remove(HEARTBEAT_ENV)
             .current_dir(fx.path())
             .output()
             .unwrap()
@@ -672,4 +676,262 @@ fn directory_run_creates_one_run_per_pipeline() {
             "completed"
         );
     }
+}
+
+fn ts(event: &Value) -> chrono::DateTime<chrono::FixedOffset> {
+    chrono::DateTime::parse_from_rfc3339(event["ts"].as_str().unwrap()).unwrap()
+}
+
+/// Every Heartbeat sits between this Attempt's `AttemptStarted` and its
+/// `AttemptEnded`, which is the journal's last Event.
+fn assert_heartbeats_inside_attempt(events: &[Value]) {
+    let started = events
+        .iter()
+        .position(|e| e["type"] == "AttemptStarted")
+        .unwrap();
+    let ended = events
+        .iter()
+        .rposition(|e| e["type"] == "AttemptEnded")
+        .unwrap();
+    assert_eq!(ended, events.len() - 1, "{:?}", types(events));
+    for (i, e) in events.iter().enumerate() {
+        if e["type"] == "Heartbeat" {
+            assert!(
+                i > started && i < ended,
+                "Heartbeat at {i}: {:?}",
+                types(events)
+            );
+        }
+    }
+}
+
+// AC: Heartbeats carry the `pas run` PID, are evenly spaced by the interval,
+// and none follows AttemptEnded (completed). Uses a 200 ms interval in place
+// of 30 s; `heartbeat_real_30s_interval` checks the real one.
+#[test]
+fn heartbeats_carry_pid_and_are_evenly_spaced() {
+    let fx = Fixture::new(
+        r#"digraph Nap {
+            start [shape="Mdiamond"]
+            nap [shape="parallelogram", timeout="60s", tool_command="sleep 1.1"]
+            done [shape="Msquare"]
+            start -> nap -> done
+        }"#,
+    );
+    let child = fx
+        .command(&[])
+        .env(HEARTBEAT_ENV, "200")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output);
+
+    let events = events(&fx.only_run_dir());
+    let beats = of_type(&events, "Heartbeat");
+    assert!(beats.len() >= 4, "{:?}", types(&events));
+    let started = of_type(&events, "AttemptStarted")[0];
+    for beat in &beats {
+        assert_eq!(beat["data"]["pid"], pid);
+        assert_eq!(beat["data"]["pid"], started["data"]["pid"]);
+        assert_eq!(beat["attempt"], 1);
+        assert_eq!(beat["run_id"], started["run_id"]);
+    }
+    for pair in beats.windows(2) {
+        let gap = (ts(pair[1]) - ts(pair[0])).num_milliseconds();
+        assert!((100..=300).contains(&gap), "gap {gap} ms: {beats:?}");
+    }
+    let first = (ts(beats[0]) - ts(started)).num_milliseconds();
+    assert!(
+        (100..=300).contains(&first),
+        "first Heartbeat {first} ms in"
+    );
+    assert_heartbeats_inside_attempt(&events);
+    assert_eq!(events.last().unwrap()["data"]["reason"], "completed");
+    assert_contiguous_seq(&events);
+}
+
+// AC: no Heartbeat after AttemptEnded{failed}.
+#[test]
+fn no_heartbeat_after_failed_attempt() {
+    let fx = Fixture::new(
+        r#"digraph Fails {
+            start [shape="Mdiamond"]
+            nap [shape="parallelogram", goal_gate=true, timeout="60s", tool_command="sleep 0.6; exit 1"]
+            done [shape="Msquare"]
+            start -> nap -> done
+        }"#,
+    );
+    assert_failure(&fx.command(&[]).env(HEARTBEAT_ENV, "100").output().unwrap());
+    // Anything still running would write within a few intervals.
+    std::thread::sleep(Duration::from_millis(400));
+
+    let events = events(&fx.only_run_dir());
+    assert!(
+        !of_type(&events, "Heartbeat").is_empty(),
+        "{:?}",
+        types(&events)
+    );
+    assert_heartbeats_inside_attempt(&events);
+    assert_eq!(events.last().unwrap()["data"]["reason"], "failed");
+    assert_contiguous_seq(&events);
+}
+
+// AC: no Heartbeat after AttemptEnded{stopped} on SIGTERM.
+#[test]
+fn no_heartbeat_after_sigterm() {
+    let fx = Fixture::new(
+        r#"digraph Sleepy {
+            start [shape="Mdiamond"]
+            nap [shape="parallelogram", timeout="120s", tool_command="exec sleep 60"]
+            done [shape="Msquare"]
+            start -> nap -> done
+        }"#,
+    );
+    let mut child = fx
+        .command(&[])
+        .env(HEARTBEAT_ENV, "100")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for("two Heartbeats", Duration::from_secs(20), || {
+        fx.run_dirs().first().is_some_and(|dir| {
+            fs::read_to_string(dir.join("events.jsonl"))
+                .is_ok_and(|t| t.matches("\"type\":\"Heartbeat\"").count() >= 2)
+        })
+    });
+    let status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let exit = loop {
+        if let Some(exit) = child.try_wait().unwrap() {
+            break exit;
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("pas did not exit after SIGTERM");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(exit.code(), Some(143), "{exit:?}");
+
+    let run_dir = fx.only_run_dir();
+    let journal = fs::read(run_dir.join("events.jsonl")).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(fs::read(run_dir.join("events.jsonl")).unwrap(), journal);
+    let events = events(&run_dir);
+    assert_heartbeats_inside_attempt(&events);
+    assert_eq!(events.last().unwrap()["data"]["reason"], "stopped");
+    assert_contiguous_seq(&events);
+}
+
+// AC: a Run shorter than 30 s (real interval) has no Heartbeat and completes.
+#[test]
+fn short_run_has_no_heartbeat() {
+    let fx = Fixture::new(THREE_STAGES);
+    assert_success(&fx.run(&["--dry-run"]));
+    let events = events(&fx.only_run_dir());
+    assert!(
+        of_type(&events, "Heartbeat").is_empty(),
+        "{:?}",
+        types(&events)
+    );
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "AttemptEnded");
+    assert_eq!(last["data"]["reason"], "completed");
+}
+
+// Each Pipeline of a directory Run stops its Heartbeat before its own
+// AttemptEnded; none leaks into the next Pipeline's Run.
+#[test]
+fn directory_run_stops_heartbeat_per_pipeline() {
+    let fx = Fixture::new(THREE_STAGES);
+    let batch = fx.path().join("batch");
+    fs::create_dir_all(&batch).unwrap();
+    let napping = |name: &str| {
+        format!(
+            r#"digraph {name} {{
+                start [shape="Mdiamond"]
+                nap [shape="parallelogram", timeout="60s", tool_command="sleep 0.5"]
+                done [shape="Msquare"]
+                start -> nap -> done
+            }}"#
+        )
+    };
+    fs::write(batch.join("01-a.dot"), napping("A")).unwrap();
+    fs::write(batch.join("02-b.dot"), napping("B")).unwrap();
+
+    let output = Command::new(pas())
+        .arg("run")
+        .arg(&batch)
+        .env("PAS_STATE_DIR", fx.path().join("state"))
+        .env(HEARTBEAT_ENV, "100")
+        .current_dir(fx.path())
+        .output()
+        .unwrap();
+    assert_success(&output);
+    std::thread::sleep(Duration::from_millis(400));
+
+    let index = fx.index_lines();
+    assert_eq!(index.len(), 2, "{index:?}");
+    for entry in &index {
+        let run_dir = PathBuf::from(entry["run_dir"].as_str().unwrap());
+        let events = events(&run_dir);
+        assert!(
+            !of_type(&events, "Heartbeat").is_empty(),
+            "{:?}",
+            types(&events)
+        );
+        assert!(events.iter().all(|e| e["run_id"] == entry["run_id"]));
+        assert_heartbeats_inside_attempt(&events);
+        assert_eq!(events.last().unwrap()["data"]["reason"], "completed");
+        assert_contiguous_seq(&events);
+    }
+}
+
+// AC, literally: a 95 s Run with the real 30 s interval has exactly 3
+// Heartbeats with the process PID, 30 s ± 2 s apart, none after AttemptEnded.
+// Slow; run with `cargo test -p attractor-cli --test run_lifecycle -- --ignored`.
+#[test]
+#[ignore = "takes 95 s"]
+fn heartbeat_real_30s_interval() {
+    let fx = Fixture::new(
+        r#"digraph Long {
+            start [shape="Mdiamond"]
+            nap [shape="parallelogram", timeout="300s", tool_command="sleep 95"]
+            done [shape="Msquare"]
+            start -> nap -> done
+        }"#,
+    );
+    let child = fx
+        .command(&[])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    assert_success(&child.wait_with_output().unwrap());
+
+    let events = events(&fx.only_run_dir());
+    let started = of_type(&events, "AttemptStarted")[0];
+    let ended = events.last().unwrap();
+    assert!((ts(ended) - ts(started)).num_seconds() >= 95);
+    let beats = of_type(&events, "Heartbeat");
+    assert_eq!(beats.len(), 3, "{:?}", types(&events));
+    for beat in &beats {
+        assert_eq!(beat["data"]["pid"], pid);
+    }
+    for pair in beats.windows(2) {
+        let gap = (ts(pair[1]) - ts(pair[0])).num_milliseconds();
+        assert!((28_000..=32_000).contains(&gap), "gap {gap} ms");
+    }
+    assert_heartbeats_inside_attempt(&events);
+    assert_eq!(ended["data"]["reason"], "completed");
+    assert_contiguous_seq(&events);
 }

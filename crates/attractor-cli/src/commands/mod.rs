@@ -14,7 +14,9 @@ pub use info::cmd_info;
 pub use init::{cmd_init, InitOpts};
 pub use launch::cmd_launch;
 pub use plan::cmd_plan;
-pub use run::{cmd_run, cmd_run_dir, CodergenClaudeCliOpts, RunInvocation};
+pub use run::{
+    cmd_run, cmd_run_dir, heartbeat_interval_from_env, CodergenClaudeCliOpts, RunInvocation,
+};
 pub use scaffold::cmd_scaffold;
 pub use validate::cmd_validate;
 

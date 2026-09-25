@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use commands::{
     cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
-    cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, validate_decomposition,
-    CodergenClaudeCliOpts, InitOpts, RunInvocation,
+    cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, heartbeat_interval_from_env,
+    validate_decomposition, CodergenClaudeCliOpts, InitOpts, RunInvocation,
 };
 
 #[derive(Parser)]
@@ -365,6 +365,7 @@ async fn main() -> anyhow::Result<()> {
                 run_id,
                 json,
                 index_path: None,
+                heartbeat_interval: heartbeat_interval_from_env(),
             };
             if pipeline.is_dir() {
                 cmd_run_dir(

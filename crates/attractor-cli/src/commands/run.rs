@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow;
 use attractor_journal::{AttemptEndReason, EventData, IndexEntry, PipelineDir, RunMeta};
@@ -28,6 +29,77 @@ pub struct RunInvocation {
     pub json: bool,
     /// Run Index file; `None` uses the machine-wide Index (C4).
     pub index_path: Option<PathBuf>,
+    /// Time between Heartbeat Events; `None` uses [`HEARTBEAT_INTERVAL`].
+    /// Only tests set it (`PAS_HEARTBEAT_INTERVAL_MS`).
+    pub heartbeat_interval: Option<Duration>,
+}
+
+/// Time between Heartbeat Events while an Attempt runs (C3).
+pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Env var that shortens the Heartbeat interval, for tests only.
+const HEARTBEAT_INTERVAL_ENV: &str = "PAS_HEARTBEAT_INTERVAL_MS";
+
+/// The Heartbeat interval set by `PAS_HEARTBEAT_INTERVAL_MS`, if any.
+pub fn heartbeat_interval_from_env() -> Option<Duration> {
+    let value = std::env::var(HEARTBEAT_INTERVAL_ENV).ok()?;
+    let interval = parse_heartbeat_interval_ms(&value);
+    if interval.is_none() {
+        tracing::warn!(
+            value,
+            "ignoring {HEARTBEAT_INTERVAL_ENV}: expected a positive number of milliseconds"
+        );
+    }
+    interval
+}
+
+/// A positive whole number of milliseconds; anything else is `None`.
+fn parse_heartbeat_interval_ms(value: &str) -> Option<Duration> {
+    match value.trim().parse::<u64>() {
+        Ok(ms) if ms > 0 => Some(Duration::from_millis(ms)),
+        _ => None,
+    }
+}
+
+/// Writes `Heartbeat{pid}` to the Run Journal every `interval` while the
+/// Attempt runs, the first one `interval` after it starts. Dropping it aborts
+/// the task; [`Heartbeat::stop`] also waits for it, so no Heartbeat can land
+/// after `AttemptEnded`.
+struct Heartbeat(Option<tokio::task::JoinHandle<()>>);
+
+impl Heartbeat {
+    fn start(journal: Arc<attractor_journal::JournalWriter>, pid: u32, interval: Duration) -> Self {
+        Self(Some(tokio::spawn(async move {
+            let first = tokio::time::Instant::now() + interval;
+            let mut ticks = tokio::time::interval_at(first, interval);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticks.tick().await;
+                if let Err(error) = journal.append(EventData::Heartbeat { pid }) {
+                    tracing::warn!(
+                        path = %journal.path().display(),
+                        %error,
+                        "cannot write Heartbeat to the Run Journal"
+                    );
+                }
+            }
+        })))
+    }
+
+    async fn stop(mut self) {
+        if let Some(task) = self.0.take() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for Heartbeat {
+    fn drop(&mut self) {
+        if let Some(task) = &self.0 {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -418,6 +490,12 @@ pub async fn cmd_run(
     )
     .await
     .map_err(|error| setup_failed(json, error))?;
+    // Started right after `AttemptStarted`; stopped before `AttemptEnded`.
+    let heartbeat = Heartbeat::start(
+        journal.clone(),
+        std::process::id(),
+        invocation.heartbeat_interval.unwrap_or(HEARTBEAT_INTERVAL),
+    );
 
     if json {
         println!(
@@ -490,6 +568,9 @@ pub async fn cmd_run(
         // stage's child process group.
     };
 
+    // Wait for the task, not just abort it: a Heartbeat already being
+    // written on another thread must land before `AttemptEnded`.
+    heartbeat.stop().await;
     let (reason, message) = attempt_end_reason(&outcome);
     if let Err(error) = journal.append(EventData::AttemptEnded {
         attempt,
@@ -1132,5 +1213,143 @@ mod tests {
         assert_eq!(std::fs::read(run_dir.join("run.json")).unwrap(), b"{}");
         assert!(!run_dir.join("events.jsonl").exists());
         assert!(!dir.path().join("runs.jsonl").exists());
+    }
+
+    /// A journal for Heartbeat tests, in a temp folder.
+    fn heartbeat_journal(dir: &std::path::Path) -> Arc<attractor_journal::JournalWriter> {
+        Arc::new(attractor_journal::JournalWriter::open(dir, OTHER_ID, 1).unwrap())
+    }
+
+    fn journal_lines(dir: &std::path::Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(dir.join("events.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    fn heartbeats(lines: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+        lines.iter().filter(|e| e["type"] == "Heartbeat").collect()
+    }
+
+    #[test]
+    fn heartbeat_interval_override_parses_positive_milliseconds() {
+        assert_eq!(
+            parse_heartbeat_interval_ms("250"),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(
+            parse_heartbeat_interval_ms(" 30000 "),
+            Some(HEARTBEAT_INTERVAL)
+        );
+        for bad in ["0", "", "x", "-5", "1.5"] {
+            assert_eq!(parse_heartbeat_interval_ms(bad), None, "{bad:?}");
+        }
+    }
+
+    // AC: a 95 s Attempt gets 3 Heartbeats, each with the process PID, 30 s
+    // apart, through the shared writer (contiguous seq).
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_writes_three_in_95_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = heartbeat_journal(dir.path());
+        let pid = std::process::id();
+        let started = tokio::time::Instant::now();
+        let heartbeat = Heartbeat::start(journal.clone(), pid, HEARTBEAT_INTERVAL);
+        let mut at = Vec::new();
+        let mut seen = 0;
+        while started.elapsed() < Duration::from_secs(95) {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let count = heartbeats(&journal_lines(dir.path())).len();
+            if count > seen {
+                seen = count;
+                at.push(started.elapsed());
+            }
+        }
+        heartbeat.stop().await;
+
+        let lines = journal_lines(dir.path());
+        let beats = heartbeats(&lines);
+        assert_eq!(beats.len(), 3, "{lines:?}");
+        for beat in &beats {
+            assert_eq!(beat["data"]["pid"], pid);
+            assert_eq!(beat["run_id"], OTHER_ID);
+            assert_eq!(beat["attempt"], 1);
+        }
+        let seqs: Vec<u64> = lines.iter().map(|e| e["seq"].as_u64().unwrap()).collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
+        // Observed (within the 0.5 s polling step) at 30 s, 60 s, 90 s.
+        for (i, t) in at.iter().enumerate() {
+            let expected = HEARTBEAT_INTERVAL * (i as u32 + 1);
+            assert!(
+                *t >= expected && *t <= expected + Duration::from_secs(1),
+                "Heartbeat {i} at {t:?}"
+            );
+        }
+    }
+
+    // AC: an Attempt shorter than the interval gets no Heartbeat.
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_none_before_first_interval() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = heartbeat_journal(dir.path());
+        let heartbeat = Heartbeat::start(journal, std::process::id(), HEARTBEAT_INTERVAL);
+        tokio::time::sleep(HEARTBEAT_INTERVAL - Duration::from_millis(100)).await;
+        heartbeat.stop().await;
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        assert!(journal_lines(dir.path()).is_empty());
+    }
+
+    // AC: once stopped, nothing follows AttemptEnded.
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_stop_waits_and_nothing_follows() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = heartbeat_journal(dir.path());
+        let heartbeat = Heartbeat::start(journal.clone(), std::process::id(), HEARTBEAT_INTERVAL);
+        tokio::time::sleep(Duration::from_secs(61)).await;
+        heartbeat.stop().await;
+        journal
+            .append(EventData::AttemptEnded {
+                attempt: 1,
+                reason: AttemptEndReason::Completed,
+                message: None,
+            })
+            .unwrap();
+        let next_seq = journal.next_seq();
+        tokio::time::sleep(Duration::from_secs(300)).await;
+
+        let lines = journal_lines(dir.path());
+        assert_eq!(heartbeats(&lines).len(), 2, "{lines:?}");
+        assert_eq!(lines.last().unwrap()["type"], "AttemptEnded");
+        assert_eq!(journal.next_seq(), next_seq);
+    }
+
+    // An early return from `cmd_run` drops the guard: the task must not keep
+    // writing into a later Pipeline's lifetime.
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_drop_aborts_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = heartbeat_journal(dir.path());
+        let heartbeat = Heartbeat::start(journal, std::process::id(), HEARTBEAT_INTERVAL);
+        tokio::time::sleep(Duration::from_secs(31)).await;
+        drop(heartbeat);
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        assert_eq!(heartbeats(&journal_lines(dir.path())).len(), 1);
+    }
+
+    // After a stall (e.g. laptop sleep) the task writes one Heartbeat and
+    // resumes normal spacing, never a burst.
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_after_stall_does_not_burst() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = heartbeat_journal(dir.path());
+        let heartbeat = Heartbeat::start(journal, std::process::id(), HEARTBEAT_INTERVAL);
+        // Let the task register its first deadline, then jump far past it
+        // without yielding, as a suspended machine would.
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(300)).await;
+        tokio::time::sleep(Duration::from_secs(29)).await;
+        heartbeat.stop().await;
+        assert_eq!(heartbeats(&journal_lines(dir.path())).len(), 1);
     }
 }

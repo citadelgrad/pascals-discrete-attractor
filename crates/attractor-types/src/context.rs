@@ -40,6 +40,11 @@ impl Context {
         self.inner.read().await.values.get(key).cloned()
     }
 
+    /// Remove a key, returning its value if it was present.
+    pub async fn remove(&self, key: &str) -> Option<serde_json::Value> {
+        self.inner.write().await.values.remove(key)
+    }
+
     /// Convenience accessor that returns a `String`. Falls back to `default`
     /// when the key is absent or not a JSON string.
     pub async fn get_string(&self, key: &str, default: &str) -> String {
@@ -94,6 +99,19 @@ mod tests {
         ctx.set("key", serde_json::json!("hello")).await;
         let val = ctx.get("key").await;
         assert_eq!(val, Some(serde_json::json!("hello")));
+    }
+
+    #[tokio::test]
+    async fn context_remove_deletes_only_that_key() {
+        let ctx = Context::new();
+        ctx.set("a", serde_json::json!(1)).await;
+        ctx.set("b", serde_json::json!(2)).await;
+
+        assert_eq!(ctx.remove("a").await, Some(serde_json::json!(1)));
+        assert_eq!(ctx.remove("a").await, None);
+        assert_eq!(ctx.get("a").await, None);
+        assert_eq!(ctx.get("b").await, Some(serde_json::json!(2)));
+        assert!(!ctx.snapshot().await.contains_key("a"));
     }
 
     #[tokio::test]

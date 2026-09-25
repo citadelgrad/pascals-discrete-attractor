@@ -5,6 +5,10 @@
 //! `EpicSnapshot`, then either claims one ready child (`MORE`), reports that
 //! every child is closed (`DONE`), or emits `TaskSelectionBlocked`
 //! (`BLOCKED`). All Beads access goes through [`BeadsAdapter`].
+//!
+//! `beads.close`: close the claimed Task once its Run Commits are on
+//! `@{upstream}`. Attributes: `require_upstream` (default `true`) and
+//! `reason` (optional template).
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -17,12 +21,18 @@ use attractor_types::{AttractorError, Context, Outcome, Result};
 use serde_json::Value;
 
 use crate::beads_adapter::{BeadsAdapter, BeadsIssue};
+use crate::engine::{task_id_value, TASK_ID_KEY};
 use crate::events::PipelineEvent;
 use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{EventSink, HandlerExecutionContext, NodeHandler, ResolvedNodeHandler};
+use crate::run_commits;
+use crate::transforms::expand_variables;
 
 const HANDLER: &str = "beads.select";
+const CLOSE_HANDLER: &str = "beads.close";
+/// Prefix of the context keys that describe the claimed Task.
+const TASK_PREFIX: &str = "task.";
 const CLOSED: &str = "closed";
 const BLOCKS: &str = "blocks";
 
@@ -412,6 +422,286 @@ fn write_current_task(
     std::fs::write(path, render_current_task(task, claimed, epic))
 }
 
+// ---------------------------------------------------------------------------
+// beads.close
+// ---------------------------------------------------------------------------
+
+/// Closes the claimed Task in Beads after checking its Run Commits reached
+/// `@{upstream}`.
+#[derive(Debug, Clone, Default)]
+pub struct BeadsCloseHandler {
+    adapter: BeadsAdapter,
+}
+
+impl BeadsCloseHandler {
+    /// Use `adapter` for Beads access; it is run in the Run's workdir.
+    pub fn new(adapter: BeadsAdapter) -> Self {
+        Self { adapter }
+    }
+}
+
+#[async_trait]
+impl NodeHandler for BeadsCloseHandler {
+    fn handler_type(&self) -> &str {
+        CLOSE_HANDLER
+    }
+
+    fn resolved_handler(&self) -> Option<&dyn ResolvedNodeHandler> {
+        Some(self)
+    }
+
+    /// Without the engine there is no Run Journal, so the Task's commits are
+    /// unknown (see [`Self::close`]).
+    async fn execute(
+        &self,
+        node: &PipelineNode,
+        context: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let dry_run = context
+            .get("dry_run")
+            .await
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let workdir = context
+            .get("workdir")
+            .await
+            .and_then(|value| value.as_str().map(std::path::PathBuf::from))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        self.close(node, context, dry_run, &workdir, None, None)
+            .await
+    }
+}
+
+#[async_trait]
+impl ResolvedNodeHandler for BeadsCloseHandler {
+    async fn execute_resolved(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        context: &Context,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute(node, context, graph).await
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &PipelineNode,
+        _resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.close(
+            node,
+            execution.workflow(),
+            *execution.config().dry_run().value(),
+            execution.config().workdir().value(),
+            execution.run_dir(),
+            execution.events(),
+        )
+        .await
+    }
+}
+
+impl BeadsCloseHandler {
+    /// The Task's commits are the `CommitsCreated` Events of this Run's
+    /// journal (all Attempts) that name it. On `fail` Beads is untouched and
+    /// `task.*` is kept, so a later stage can push and close again.
+    async fn close(
+        &self,
+        node: &PipelineNode,
+        context: &Context,
+        dry_run: bool,
+        workdir: &Path,
+        run_dir: Option<&Path>,
+        events: Option<&dyn EventSink>,
+    ) -> Result<Outcome> {
+        let error = |message: String| AttractorError::HandlerError {
+            handler: CLOSE_HANDLER.into(),
+            node: node.id.clone(),
+            message,
+        };
+        let attrs = CloseAttrs::from_node(node).map_err(error)?;
+        let task_id = task_id_value(context.get(TASK_ID_KEY).await.as_ref())
+            .ok_or_else(|| error("no Task is claimed: context has no task.id".into()))?;
+        if dry_run {
+            return Ok(Outcome::success(format!("dry run: would close {task_id}")));
+        }
+
+        let commits = match run_dir {
+            Some(run_dir) => {
+                let path = run_dir.join(attractor_journal::EVENTS_FILE);
+                Some(task_commits(&path, &task_id).map_err(|e| {
+                    error(format!(
+                        "cannot read the commits of task '{task_id}' from {}: {e}",
+                        path.display()
+                    ))
+                })?)
+            }
+            None => None,
+        };
+        let upstream = run_commits::upstream(workdir).await;
+        let mut unpushed = Vec::new();
+        if let (Some(commits), Some(upstream)) = (&commits, &upstream) {
+            for sha in commits {
+                // An unknown SHA (e.g. rewritten by a rebase) is not on upstream.
+                if !run_commits::is_ancestor(workdir, sha, upstream)
+                    .await
+                    .unwrap_or(false)
+                {
+                    unpushed.push(sha.clone());
+                }
+            }
+        }
+        let upstream_verified = commits.is_some() && upstream.is_some() && unpushed.is_empty();
+        if attrs.require_upstream && !upstream_verified {
+            let why = match (&commits, &upstream) {
+                (None, _) => "no Run Journal records its commits".to_string(),
+                (_, None) => "the branch has no upstream (@{upstream})".to_string(),
+                (Some(_), Some(upstream)) => format!(
+                    "{} commit(s) not on {upstream}: {}",
+                    unpushed.len(),
+                    unpushed
+                        .iter()
+                        .map(|sha| &sha[..sha.len().min(12)])
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            return Ok(Outcome::fail(format!("task {task_id} left open: {why}")));
+        }
+
+        let commits = commits.unwrap_or_default();
+        let upstream = upstream.unwrap_or_else(|| "no upstream".into());
+        let vars = HashMap::from([
+            ("task.id".to_string(), task_id.clone()),
+            (
+                "task.title".to_string(),
+                context.get_string("task.title", "").await,
+            ),
+            ("commits".to_string(), commits.join(", ")),
+            ("upstream".to_string(), upstream.clone()),
+        ]);
+        let reason = attrs
+            .reason
+            .as_deref()
+            .map(|template| expand_variables(template, &vars))
+            .filter(|reason| !reason.trim().is_empty())
+            .unwrap_or_else(|| {
+                let verified = if upstream_verified {
+                    format!("on {upstream}")
+                } else {
+                    "not verified on upstream".into()
+                };
+                format!(
+                    "Closed by PAS ({}): {} Run Commit(s) {verified}",
+                    node.id,
+                    commits.len()
+                )
+            });
+        self.adapter
+            .clone()
+            .in_dir(workdir)
+            .close(&task_id, Some(&reason))
+            .await
+            .map_err(|e| error(format!("cannot close task '{task_id}': {e}")))?;
+        if let Some(events) = events {
+            events.emit(PipelineEvent::TaskClosed {
+                task_id: task_id.clone(),
+                reason,
+                upstream_verified,
+                commits: commits.clone(),
+            });
+        }
+        for key in context.snapshot().await.into_keys() {
+            if key.starts_with(TASK_PREFIX) {
+                context.remove(&key).await;
+            }
+        }
+        Ok(Outcome::success(format!(
+            "closed {task_id}: {} commit(s), upstream {}",
+            commits.len(),
+            if upstream_verified {
+                "verified"
+            } else {
+                "not verified"
+            }
+        )))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CloseAttrs {
+    require_upstream: bool,
+    reason: Option<String>,
+}
+
+impl CloseAttrs {
+    fn from_node(node: &PipelineNode) -> std::result::Result<Self, String> {
+        let require_upstream = match node.raw_attrs.get("require_upstream") {
+            None => true,
+            Some(AttributeValue::Boolean(value)) => *value,
+            Some(AttributeValue::String(value)) => match value.trim() {
+                "true" => true,
+                "false" => false,
+                other => {
+                    return Err(format!(
+                        "attribute `require_upstream` must be true or false, got {other:?}"
+                    ))
+                }
+            },
+            Some(other) => {
+                return Err(format!(
+                    "attribute `require_upstream` must be true or false, got {other:?}"
+                ))
+            }
+        };
+        let reason = match node.raw_attrs.get("reason") {
+            None => None,
+            Some(AttributeValue::String(value)) => Some(value.clone()),
+            Some(other) => {
+                return Err(format!(
+                    "attribute `reason` must be a string, got {other:?}"
+                ))
+            }
+        };
+        Ok(Self {
+            require_upstream,
+            reason,
+        })
+    }
+}
+
+/// SHAs of the Run Commits attributed to `task_id` in the journal at `path`,
+/// in journal order (newest first within an Event), without duplicates.
+fn task_commits(path: &Path, task_id: &str) -> std::io::Result<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut shas = Vec::new();
+    for event in attractor_journal::read_all(path)? {
+        if let attractor_journal::EventData::CommitsCreated {
+            task_id: Some(id),
+            commits,
+            ..
+        } = event.data
+        {
+            if id != task_id {
+                continue;
+            }
+            for commit in commits {
+                if seen.insert(commit.sha.clone()) {
+                    shas.push(commit.sha);
+                }
+            }
+        }
+    }
+    Ok(shas)
+}
+
 #[cfg(test)]
 #[path = "beads_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "beads_close_tests.rs"]
+mod close_tests;

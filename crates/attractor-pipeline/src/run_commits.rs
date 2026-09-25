@@ -55,6 +55,42 @@ pub(crate) async fn commits_between(
     Ok(parse_log(&String::from_utf8_lossy(&output.stdout)))
 }
 
+/// The current branch's upstream as a short name (e.g. `origin/main`), or
+/// `None` without one, on a detached HEAD, or outside a repository.
+pub(crate) async fn upstream(workdir: &Path) -> Option<String> {
+    let output = git(workdir)
+        .args([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Whether `sha` is reachable from `rev` (`git merge-base --is-ancestor`).
+/// An unknown commit or any other git failure is an error.
+pub(crate) async fn is_ancestor(workdir: &Path, sha: &str, rev: &str) -> std::io::Result<bool> {
+    let status = git(workdir)
+        .args(["merge-base", "--is-ancestor", sha, rev])
+        .status()
+        .await?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(std::io::Error::other(format!(
+            "git merge-base --is-ancestor {sha} {rev} exited with {status}"
+        ))),
+    }
+}
+
 fn git(workdir: &Path) -> Command {
     let mut command = Command::new("git");
     command
@@ -152,6 +188,78 @@ mod tests {
     async fn head_is_none_for_a_missing_workdir() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(head(&dir.path().join("missing")).await, None);
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn upstream_and_is_ancestor_follow_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let (remote, work) = (dir.path().join("remote.git"), dir.path().join("work"));
+        git_ok(
+            dir.path(),
+            &["init", "-q", "--bare", remote.to_str().unwrap()],
+        );
+        git_ok(
+            dir.path(),
+            &["init", "-q", "-b", "main", work.to_str().unwrap()],
+        );
+        git_ok(&work, &["commit", "--allow-empty", "-qm", "one"]);
+        let pushed = git_ok(&work, &["rev-parse", "HEAD"]);
+
+        // No remote yet: no upstream.
+        assert_eq!(upstream(&work).await, None);
+
+        git_ok(
+            &work,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git_ok(&work, &["push", "-q", "-u", "origin", "main"]);
+        git_ok(&work, &["commit", "--allow-empty", "-qm", "two"]);
+        let local = git_ok(&work, &["rev-parse", "HEAD"]);
+
+        assert_eq!(upstream(&work).await.as_deref(), Some("origin/main"));
+        assert!(is_ancestor(&work, &pushed, "origin/main").await.unwrap());
+        assert!(!is_ancestor(&work, &local, "origin/main").await.unwrap());
+        assert!(is_ancestor(&work, &"0".repeat(40), "origin/main")
+            .await
+            .is_err());
+
+        // A detached HEAD has no upstream.
+        git_ok(&work, &["checkout", "-q", "--detach"]);
+        assert_eq!(upstream(&work).await, None);
+    }
+
+    #[tokio::test]
+    async fn upstream_is_none_outside_a_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(upstream(&dir.path().join("missing")).await, None);
     }
 
     #[tokio::test]

@@ -106,6 +106,15 @@ pub enum PipelineEvent {
         open: Vec<String>,
         blocked_by: BTreeMap<String, Vec<String>>,
     },
+    /// `beads.close` closed `task_id` in Beads. `commits` are the SHAs of the
+    /// Run Commits attributed to the Task; `upstream_verified` is true when
+    /// all of them are reachable from `@{upstream}`.
+    TaskClosed {
+        task_id: String,
+        reason: String,
+        upstream_verified: bool,
+        commits: Vec<String>,
+    },
 }
 
 impl PipelineEvent {
@@ -233,6 +242,17 @@ impl PipelineEvent {
                 epic_id,
                 open,
                 blocked_by,
+            },
+            Self::TaskClosed {
+                task_id,
+                reason,
+                upstream_verified,
+                commits,
+            } => EventData::TaskClosed {
+                task_id,
+                reason,
+                upstream_verified,
+                commits,
             },
         }
     }
@@ -484,6 +504,18 @@ mod tests {
                     ("e.2".into(), vec!["x".into()]),
                     ("e.3".into(), vec![]),
                 ]),
+            },
+            PipelineEvent::TaskClosed {
+                task_id: "e.1".into(),
+                reason: "done".into(),
+                upstream_verified: true,
+                commits: vec!["bbb".into(), "aaa".into()],
+            },
+            PipelineEvent::TaskClosed {
+                task_id: "e.2".into(),
+                reason: "".into(),
+                upstream_verified: false,
+                commits: vec![],
             },
         ];
 

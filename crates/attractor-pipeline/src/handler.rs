@@ -10,7 +10,7 @@ use attractor_types::{Context, Outcome, Result};
 use crate::events::PipelineEvent;
 use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::run_configuration::ResolvedConfig;
+use crate::run_configuration::{is_reserved_key, ResolvedConfig};
 
 /// Where a handler sends Events it emits itself (e.g. `LlmInvoked`). The
 /// engine's implementation journals the Event, then broadcasts it.
@@ -237,9 +237,17 @@ impl DynHandler {
             },
         }?;
 
-        let mut direct_updates = isolated_workflow
-            .snapshot()
-            .await
+        let after = isolated_workflow.snapshot().await;
+        // Direct removals (`beads.close` clearing `task.*`) cannot be
+        // expressed as updates, so they reach the live workflow here.
+        // Reserved keys are never removed.
+        for key in before
+            .keys()
+            .filter(|key| !after.contains_key(*key) && !is_reserved_key(key))
+        {
+            execution.workflow().remove(key).await;
+        }
+        let mut direct_updates = after
             .into_iter()
             .filter(|(key, value)| before.get(key) != Some(value))
             .collect::<HashMap<_, _>>();

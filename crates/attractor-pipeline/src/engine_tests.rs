@@ -1000,6 +1000,7 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::EpicSnapshot { .. } => "epic_snapshot",
             PipelineEvent::TaskClaimed { .. } => "task_claimed",
             PipelineEvent::TaskSelectionBlocked { .. } => "task_selection_blocked",
+            PipelineEvent::TaskClosed { .. } => "task_closed",
         });
     }
 
@@ -3706,4 +3707,71 @@ async fn codergen_stage_journals_llm_invoked_with_existing_transcript() {
         run_dir.join(&transcript).is_file(),
         "Transcript {transcript} missing"
     );
+}
+
+/// Removes `task.id` from the Context it is given, and records what the
+/// next stage sees.
+struct RemovingStage(Arc<std::sync::Mutex<Vec<Option<serde_json::Value>>>>);
+
+#[async_trait]
+impl NodeHandler for RemovingStage {
+    fn handler_type(&self) -> &str {
+        "test.remove"
+    }
+
+    async fn execute(
+        &self,
+        node: &crate::graph::PipelineNode,
+        ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let task_id = ctx.get("task.id").await;
+        self.0.lock().unwrap().push(task_id);
+        if node.id == "clear" {
+            ctx.remove("task.id").await;
+        }
+        Ok(Outcome::success("removed"))
+    }
+}
+
+// T3-3: a key a handler removes from its Context is gone for later stages and
+// in the final Context; other keys are untouched.
+#[tokio::test]
+async fn direct_context_removal_reaches_later_stages() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(RemovingStage(seen.clone()));
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            clear [type="test.remove"]
+            after [type="test.remove"]
+            done  [shape="Msquare"]
+            start -> clear -> after -> done
+        }"#,
+    );
+    let workdir = tempfile::tempdir().unwrap();
+    let context = Context::new();
+    context.set("task.id", serde_json::json!("e.1")).await;
+    context.set("keep", serde_json::json!("me")).await;
+    context
+        .set(
+            "workdir",
+            serde_json::json!(workdir.path().display().to_string()),
+        )
+        .await;
+
+    let result = PipelineExecutor::new(registry)
+        .run_with_context(&graph, context)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Some(serde_json::json!("e.1")), None]
+    );
+    assert!(!result.final_context.contains_key("task.id"));
+    assert_eq!(result.final_context["keep"], "me");
 }

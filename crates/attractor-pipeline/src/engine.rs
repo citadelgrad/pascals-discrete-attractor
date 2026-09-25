@@ -196,7 +196,7 @@ pub fn open_journal(run_dir: &Path, run_id: &str, attempt: u32) -> Result<Journa
 
 /// Context key naming the claimed Task. `beads.select` sets it and
 /// `beads.close` clears it (spec File Change 7).
-const TASK_ID_KEY: &str = "task.id";
+pub(crate) const TASK_ID_KEY: &str = "task.id";
 
 /// The claimed Task ID in `context`, if any.
 async fn claimed_task(context: &Context) -> Option<String> {
@@ -204,7 +204,7 @@ async fn claimed_task(context: &Context) -> Option<String> {
 }
 
 /// A `task.id` value as a Task ID; empty strings and non-strings are no Task.
-fn task_id_value(value: Option<&serde_json::Value>) -> Option<String> {
+pub(crate) fn task_id_value(value: Option<&serde_json::Value>) -> Option<String> {
     value
         .and_then(serde_json::Value::as_str)
         .map(str::trim)

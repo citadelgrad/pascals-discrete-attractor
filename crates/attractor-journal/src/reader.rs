@@ -108,10 +108,108 @@ async fn read_complete_lines(path: &Path, committed: &mut u64) -> io::Result<Vec
     let Some(end) = buf.iter().rposition(|&b| b == b'\n') else {
         return Ok(Vec::new());
     };
+    buf.truncate(end + 1);
+    // `read_to_end` may take several reads. If a new Attempt cut off a torn
+    // line and appended between them, `buf` splices old and new bytes. Only
+    // advance once a second read of the same range agrees; else retry.
+    if !unchanged(&mut file, *committed, &buf).await? {
+        return Ok(Vec::new());
+    }
     *committed += end as u64 + 1;
     Ok(buf[..end]
         .split(|&b| b == b'\n')
         .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
         .map(<[u8]>::to_vec)
         .collect())
+}
+
+/// Whether the file still holds `expected` at `offset`.
+async fn unchanged(file: &mut tokio::fs::File, offset: u64, expected: &[u8]) -> io::Result<bool> {
+    file.seek(io::SeekFrom::Start(offset)).await?;
+    let mut again = vec![0; expected.len()];
+    match file.read_exact(&mut again).await {
+        Ok(_) => Ok(again == expected),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OLD: &[u8] = b"{\"seq\":1}\n{\"seq\":2,\"type\":\"Torn";
+    const NEW: &[u8] = b"{\"seq\":1}\n{\"seq\":2,\"type\":\"Fresh\",\"attempt\":2}\n";
+    const LINE1: u64 = 11;
+
+    // A read that began before a resumed writer cut off the torn line and
+    // finished after it appended holds spliced bytes; they must not match.
+    #[tokio::test]
+    async fn spliced_read_is_rejected_and_fresh_line_follows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, NEW).unwrap();
+        let mut spliced = OLD[LINE1 as usize..].to_vec();
+        spliced.extend_from_slice(&NEW[OLD.len()..]);
+
+        let mut file = tokio::fs::File::open(&path).await.unwrap();
+        assert!(!unchanged(&mut file, LINE1, &spliced).await.unwrap());
+
+        let mut committed = LINE1;
+        let lines = read_complete_lines(&path, &mut committed).await.unwrap();
+        assert_eq!(lines, vec![NEW[LINE1 as usize..NEW.len() - 1].to_vec()]);
+        assert_eq!(committed, NEW.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn range_cut_short_is_not_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, &OLD[..LINE1 as usize]).unwrap();
+        let mut file = tokio::fs::File::open(&path).await.unwrap();
+        assert!(unchanged(&mut file, 0, &OLD[..LINE1 as usize])
+            .await
+            .unwrap());
+        assert!(!unchanged(&mut file, 0, OLD).await.unwrap());
+    }
+
+    // Regression: a spliced read used to advance past the fresh line, which
+    // was then never emitted. A writer repeatedly tears and resumes while the
+    // tail follows; every complete line must arrive exactly once, in order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tail_never_loses_a_line_across_torn_resumes() {
+        use tokio_stream::StreamExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, b"").unwrap();
+        let mut stream = Box::pin(tail_with_interval(&path, Duration::from_millis(1)));
+        let rounds = 200u64;
+        let writer_path = path.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            for seq in 1..=rounds {
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&writer_path)
+                    .unwrap();
+                f.write_all(&vec![b'x'; 4000]).unwrap(); // torn tail
+                std::thread::sleep(Duration::from_micros(300));
+                let keep = std::fs::read(&writer_path).unwrap().len() as u64 - 4000;
+                f.set_len(keep).unwrap();
+                let line = format!(
+                    "{{\"v\":1,\"seq\":{seq},\"ts\":\"2026-09-24T10:03:11.123Z\",\"run_id\":\"r\",\"attempt\":{seq},\"type\":\"CheckpointSaved\",\"data\":{{\"node_id\":\"{}\"}}}}\n",
+                    "n".repeat(3000)
+                );
+                f.write_all(line.as_bytes()).unwrap();
+            }
+        });
+        for want in 1..=rounds {
+            let e = tokio::time::timeout(Duration::from_secs(10), stream.next())
+                .await
+                .unwrap_or_else(|_| panic!("line {want} was lost"))
+                .unwrap();
+            assert_eq!(e.seq, want);
+        }
+        writer.await.unwrap();
+    }
 }

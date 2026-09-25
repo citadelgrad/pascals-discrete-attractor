@@ -1,0 +1,1 @@
+{"v":1,"seq":4,"ts":"2026-09-24T10:00:04.148Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"EpicSnapshot","data":{"epic_id":"attractor-ino","title":"PAS Monitor","tasks":[{"id":"attractor-ino.7","title":"pas runs","status":"closed"},{"id":"attractor-ino.8","title":"Golden-file contract tests","status":"open"}]}}

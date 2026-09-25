@@ -1,0 +1,1 @@
+{"v":1,"seq":6,"ts":"2026-09-24T10:00:06.222Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"TaskSelectionBlocked","data":{"epic_id":"attractor-ino","open":["attractor-ino.28","attractor-ino.31"],"blocked_by":{"attractor-ino.28":["attractor-ino.8"],"attractor-ino.31":["attractor-ino.9","attractor-ino.10"]}}}

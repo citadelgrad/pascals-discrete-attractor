@@ -1,0 +1,3 @@
+{"v":1,"seq":57,"ts":"2026-09-24T10:00:57.109Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"HumanInputAnswered","data":{"question_id":"q-review-1","choice":"yes","source":"monitor"}}
+{"v":1,"seq":58,"ts":"2026-09-24T10:00:58.146Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"HumanInputAnswered","data":{"question_id":"q-review-2","choice":"no","source":"terminal"}}
+{"v":1,"seq":59,"ts":"2026-09-24T10:00:59.183Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"HumanInputAnswered","data":{"question_id":"q-review-3","choice":"yes","source":"cli"}}

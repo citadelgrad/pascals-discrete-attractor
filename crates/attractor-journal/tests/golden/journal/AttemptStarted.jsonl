@@ -1,0 +1,2 @@
+{"v":1,"seq":2,"ts":"2026-09-24T10:00:02.074Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"AttemptStarted","data":{"attempt":2,"pid":48213,"pas_version":"0.11.0","argv":["pas","run","pipelines/attractor-ino.dot","--epic","attractor-ino"],"git_head":"50d45012a3b4c5d6e7f8091a2b3c4d5e6f708192","resumed_from_node":"implement"}}
+{"v":1,"seq":2,"ts":"2026-09-24T10:00:02.074Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptStarted","data":{"attempt":1,"pid":48100,"pas_version":"0.11.0","argv":["pas","run","pipelines/hello.dot"]}}

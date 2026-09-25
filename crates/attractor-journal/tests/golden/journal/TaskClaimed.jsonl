@@ -1,0 +1,1 @@
+{"v":1,"seq":5,"ts":"2026-09-24T10:00:05.185Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"TaskClaimed","data":{"task_id":"attractor-ino.8","title":"Golden-file contract tests","epic_id":"attractor-ino","node_id":"select_task"}}

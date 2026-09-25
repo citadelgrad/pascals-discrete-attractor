@@ -1,0 +1,1 @@
+{"v":1,"seq":89,"ts":"2026-09-24T10:01:29.293Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"PipelineCompleted","data":{"pipeline_name":"attractor-ino","completed_nodes":["start","select_task","implement","exit"],"duration_ms":5423117}}

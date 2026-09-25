@@ -1,0 +1,6 @@
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"AttemptEnded","data":{"attempt":2,"reason":"error","message":"handler codergen exited with status 1"}}
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptEnded","data":{"attempt":1,"reason":"completed"}}
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptEnded","data":{"attempt":1,"reason":"failed"}}
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptEnded","data":{"attempt":1,"reason":"stopped"}}
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptEnded","data":{"attempt":1,"reason":"budget_exhausted"}}
+{"v":1,"seq":90,"ts":"2026-09-24T10:01:30.330Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":1,"type":"AttemptEnded","data":{"attempt":1,"reason":"max_steps"}}

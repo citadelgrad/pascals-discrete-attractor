@@ -1,0 +1,1 @@
+{"v":1,"seq":60,"ts":"2026-09-24T10:01:00.220Z","run_id":"01926f3a-8b4c-7d2e-9f10-2a3b4c5d6e7f","attempt":2,"type":"TaskClosed","data":{"task_id":"attractor-ino.8","reason":"golden-file contract tests added","upstream_verified":true,"commits":["9f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6"]}}

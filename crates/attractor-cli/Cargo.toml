@@ -15,6 +15,7 @@ attractor-dot = { path = "../attractor-dot" }
 attractor-llm = { path = "../attractor-llm" }
 attractor-tools = { path = "../attractor-tools" }
 attractor-pipeline = { path = "../attractor-pipeline" }
+attractor-journal = { path = "../attractor-journal" }
 attractor-quality = { path = "../attractor-quality" }
 clap = { workspace = true }
 tokio = { workspace = true }
@@ -30,3 +31,4 @@ dialoguer = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
+uuid = { workspace = true }

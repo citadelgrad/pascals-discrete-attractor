@@ -9,6 +9,17 @@ fn pas() -> &'static str {
     env!("CARGO_BIN_EXE_pas")
 }
 
+/// `pas` with its Run Index in a scratch folder, never the developer's
+/// `~/.local/state/pas/runs.jsonl`.
+fn pas_command() -> Command {
+    let mut command = Command::new(pas());
+    command.env(
+        "PAS_STATE_DIR",
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join("cli-semantics-state"),
+    );
+    command
+}
+
 fn write_pipeline(dir: &Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, source).unwrap();
@@ -29,7 +40,7 @@ fn provider_shims(dir: &Path) {
 }
 
 fn run_with_shims(args: &[&str], shim_dir: &Path, marker: &Path) -> Output {
-    Command::new(pas())
+    pas_command()
         .args(args)
         .env("PATH", shim_dir)
         .env("PAS_TEST_PROVIDER_MARKER", marker)
@@ -43,7 +54,7 @@ fn run_with_shims_and_response(
     marker: &Path,
     response: &str,
 ) -> Output {
-    Command::new(pas())
+    pas_command()
         .args(args)
         .env("PATH", shim_dir)
         .env("PAS_TEST_PROVIDER_MARKER", marker)
@@ -312,7 +323,7 @@ fn exit_goal_gate_retry_target_fails_before_execution() {
     let pipeline = write_pipeline(fixture.path(), "exit-retry-target.dot", &source);
 
     let path = format!("{}:/bin:/usr/bin", shims.path().display());
-    let output = Command::new(pas())
+    let output = pas_command()
         .args([
             "run",
             pipeline.to_str().unwrap(),
@@ -607,7 +618,7 @@ fn directory_mode_prepares_every_plan_before_starting_any_provider() {
         r#"digraph G { graph [max_steps=999] start [shape="Mdiamond"] done [shape="Msquare"] start -> done }"#,
     );
 
-    let output = Command::new(pas())
+    let output = pas_command()
         .args(["run", pipelines.to_str().unwrap(), "--fresh"])
         .current_dir(fixture.path())
         .env("PATH", shims.path())
@@ -633,7 +644,7 @@ fn tool_handler_uses_typed_canonical_workdir() {
         "workdir.dot",
         r#"digraph G { start [shape="Mdiamond"] tool [shape="parallelogram", tool_command="pwd > typed-workdir-marker"] done [shape="Msquare"] start -> tool -> done }"#,
     );
-    let output = Command::new(pas())
+    let output = pas_command()
         .args([
             "run",
             pipeline.to_str().unwrap(),
@@ -731,7 +742,7 @@ fn validate_renders_every_semantic_error_with_rule_node_and_fix() {
         }"#,
     );
 
-    let output = Command::new(pas())
+    let output = pas_command()
         .args(["validate", pipeline.to_str().unwrap()])
         .output()
         .unwrap();
@@ -792,7 +803,7 @@ fn validate_renders_unsupported_topology_as_a_blocking_semantic_error() {
 
     for (name, source, node, fix) in cases {
         let pipeline = write_pipeline(fixture.path(), name, source);
-        let output = Command::new(pas())
+        let output = pas_command()
             .args(["validate", pipeline.to_str().unwrap()])
             .output()
             .unwrap();
@@ -807,7 +818,7 @@ fn validate_renders_unsupported_topology_as_a_blocking_semantic_error() {
         );
         assert!(stdout.contains(&format!("Fix: {fix}")), "{stdout}");
 
-        let info = Command::new(pas())
+        let info = pas_command()
             .args(["info", pipeline.to_str().unwrap()])
             .output()
             .unwrap();

@@ -36,6 +36,8 @@ pub const DEFAULT_MAX_BUDGET_USD: f64 = 200.0;
 pub struct PipelineExecutor {
     registry: HandlerRegistry,
     observers: Observers,
+    /// Run ID of the attached journal; recorded in every checkpoint.
+    run_id: Option<String>,
 }
 
 /// The result of a completed pipeline execution.
@@ -320,6 +322,7 @@ impl PipelineExecutor {
         Self {
             registry,
             observers: Observers::default(),
+            run_id: None,
         }
     }
 
@@ -328,6 +331,7 @@ impl PipelineExecutor {
         Self {
             registry: default_registry(),
             observers: Observers::default(),
+            run_id: None,
         }
     }
 
@@ -345,6 +349,7 @@ impl PipelineExecutor {
     /// write failures are logged and the Run continues.
     pub fn with_journal(mut self, journal: impl Into<Arc<JournalWriter>>) -> Self {
         let journal: Arc<JournalWriter> = journal.into();
+        self.run_id = Some(journal.run_id().to_string());
         self.observers.journal = Some(journal);
         self
     }
@@ -483,15 +488,13 @@ impl PipelineExecutor {
 
         for attempt in progress.active_node_attempts..max_attempts {
             if progress.step_count >= max_steps {
-                return Err(AttractorError::Other(format!(
-                    "Pipeline exceeded maximum step count ({max_steps}). Use --max-steps to increase."
-                )));
+                return Err(AttractorError::MaxStepsExceeded { max_steps });
             }
             if progress.total_cost > max_budget {
-                return Err(AttractorError::Other(format!(
-                    "Pipeline exceeded budget (${:.2} > ${:.2}). Use --max-budget-usd to increase.",
-                    progress.total_cost, max_budget
-                )));
+                return Err(AttractorError::BudgetExhausted {
+                    spent: progress.total_cost,
+                    limit: max_budget,
+                });
             }
             progress.step_count += 1;
             progress.total_handler_attempts += 1;
@@ -665,7 +668,9 @@ impl PipelineExecutor {
         // Tracks the node we came from (upstream) for loop-key construction
         let mut prev_node_id: Option<String> = None;
         // Run identity recorded in the checkpoint; carried through every save.
-        let mut run_id: Option<String> = None;
+        // The attached journal's Run ID wins: the caller has already reconciled
+        // it with the checkpoint's.
+        let mut run_id: Option<String> = self.run_id.clone();
 
         // Phase 4: Execute — check for checkpoint to resume from
         let start = graph
@@ -710,7 +715,7 @@ impl PipelineExecutor {
                 quality_loop_counters = cp.quality_loop_counters;
                 quality_last_footprint = cp.quality_last_footprint;
                 prev_node_id = cp.previous_node_id;
-                run_id = cp.run_id;
+                run_id = self.run_id.clone().or(cp.run_id);
                 // Jump to the node that was about to execute
                 current_node = graph.node(&cp.current_node_id).ok_or_else(|| {
                     AttractorError::Other(format!(
@@ -724,10 +729,10 @@ impl PipelineExecutor {
         loop {
             if progress.total_cost > max_budget {
                 tracing::error!(cost = progress.total_cost, max = max_budget, "Budget exceeded");
-                return Err(AttractorError::Other(format!(
-                    "Pipeline exceeded budget (${:.2} > ${:.2}). Use --max-budget-usd to increase.",
-                    progress.total_cost, max_budget
-                )));
+                return Err(AttractorError::BudgetExhausted {
+                    spent: progress.total_cost,
+                    limit: max_budget,
+                });
             }
 
             // Terminal check (exit node)

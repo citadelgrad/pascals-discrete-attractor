@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
     cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, validate_decomposition,
-    CodergenClaudeCliOpts, InitOpts,
+    CodergenClaudeCliOpts, InitOpts, RunInvocation,
 };
 
 #[derive(Parser)]
@@ -92,6 +92,15 @@ enum Commands {
         /// Claude MCP config JSON or file path for codergen nodes
         #[arg(long)]
         codergen_claude_mcp_config: Option<String>,
+
+        /// Use this Run ID (a UUID) instead of generating one
+        #[arg(long)]
+        run_id: Option<String>,
+
+        /// Print `{"v":1,"ok":true,"run_id","run_dir"}` as the first stdout
+        /// line once the Run folder exists; other output goes to stderr
+        #[arg(long)]
+        json: bool,
     },
 
     /// Validate a pipeline .dot file
@@ -313,7 +322,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Setup tracing
     let filter = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // `pas run --json` keeps stdout for its JSON first line.
+    if matches!(cli.command, Commands::Run { json: true, .. }) {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     match cli.command {
         Commands::Run {
@@ -331,6 +348,8 @@ async fn main() -> anyhow::Result<()> {
             codergen_claude_agents,
             codergen_claude_plugin_dir,
             codergen_claude_mcp_config,
+            run_id,
+            json,
         } => {
             let codergen_claude = CodergenClaudeCliOpts {
                 settings_mode: codergen_claude_settings_mode,
@@ -341,6 +360,12 @@ async fn main() -> anyhow::Result<()> {
                 plugin_dirs: codergen_claude_plugin_dir,
                 mcp_config: codergen_claude_mcp_config,
             };
+            let invocation = RunInvocation {
+                argv: std::env::args().collect(),
+                run_id,
+                json,
+                index_path: None,
+            };
             if pipeline.is_dir() {
                 cmd_run_dir(
                     &pipeline,
@@ -350,6 +375,7 @@ async fn main() -> anyhow::Result<()> {
                     max_steps,
                     fresh,
                     &codergen_claude,
+                    &invocation,
                 )
                 .await?;
             } else {
@@ -362,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
                     max_steps,
                     fresh,
                     &codergen_claude,
+                    &invocation,
                 )
                 .await?;
             }

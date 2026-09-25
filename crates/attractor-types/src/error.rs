@@ -59,6 +59,14 @@ pub enum AttractorError {
     #[error("Max retries exhausted for node '{node}' after {attempts} attempts")]
     RetriesExhausted { node: String, attempts: usize },
 
+    #[error(
+        "Pipeline exceeded budget (${spent:.2} > ${limit:.2}). Use --max-budget-usd to increase."
+    )]
+    BudgetExhausted { spent: f64, limit: f64 },
+
+    #[error("Pipeline exceeded maximum step count ({max_steps}). Use --max-steps to increase.")]
+    MaxStepsExceeded { max_steps: u64 },
+
     // === Tool Errors ===
     #[error("Tool '{tool}' error: {message}")]
     ToolError { tool: String, message: String },

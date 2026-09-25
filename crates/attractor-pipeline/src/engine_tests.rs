@@ -1285,10 +1285,46 @@ async fn budget_limit_aborts_pipeline() {
 
     let result = executor.run_with_context(&graph, context).await;
     assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AttractorError::BudgetExhausted { .. }),
+        "Expected a typed budget error, got: {err:?}"
+    );
+    let err = err.to_string();
     assert!(
         err.contains("exceeded budget"),
         "Expected budget error, got: {err}"
+    );
+}
+
+// The step limit is a typed error so `pas run` can end the Attempt with
+// reason `max_steps`; the message is unchanged.
+#[tokio::test]
+async fn step_limit_returns_max_steps_exceeded_error() {
+    let graph = parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start [shape="Mdiamond"]
+            a [shape="box", prompt="a"]
+            b [shape="box", prompt="b"]
+            done  [shape="Msquare"]
+            start -> a -> b -> done
+        }"#,
+    );
+    let context = Context::new();
+    context.set("dry_run", serde_json::json!(true)).await;
+    context.set("max_steps", serde_json::json!(1u64)).await;
+    let err = PipelineExecutor::with_default_registry()
+        .run_with_context(&graph, context)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AttractorError::MaxStepsExceeded { max_steps: 1 }),
+        "Expected a typed step-limit error, got: {err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "Pipeline exceeded maximum step count (1). Use --max-steps to increase."
     );
 }
 
@@ -2724,4 +2760,33 @@ async fn unwritable_journal_at_start_fails_run_before_first_stage() {
     assert_eq!(sink.calls.load(Ordering::SeqCst), 1);
     assert_eq!(drain_types(&mut receiver), vec!["PipelineFailed"]);
     assert!(!logs.path().join("checkpoint.json").exists());
+}
+
+// T1-4: a fresh Run with a journal records the journal's Run ID in its
+// checkpoint, so a later `pas run` resumes the same Run.
+#[tokio::test]
+async fn fresh_run_with_journal_records_run_id_in_checkpoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let logs = tmp.path().join("logs");
+    // Stop after two steps so the checkpoint is kept (it is cleared on completion).
+    let context = dry_run_context(tmp.path()).await;
+    context.set("max_steps", serde_json::json!(2u64)).await;
+
+    let err = PipelineExecutor::with_default_registry()
+        .with_journal(journal)
+        .run_with_checkpoint(&three_stage_graph(), context, &logs)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, AttractorError::MaxStepsExceeded { .. }),
+        "{err:?}"
+    );
+    let checkpoint = load_checkpoint(&logs)
+        .await
+        .unwrap()
+        .expect("checkpoint kept");
+    assert_eq!(checkpoint.run_id.as_deref(), Some(JOURNAL_RUN_ID));
 }

@@ -168,6 +168,7 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "attractor-dot",
+ "attractor-journal",
  "attractor-llm",
  "attractor-pipeline",
  "attractor-quality",
@@ -184,6 +185,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

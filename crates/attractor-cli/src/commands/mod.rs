@@ -14,11 +14,20 @@ pub use info::cmd_info;
 pub use init::{cmd_init, InitOpts};
 pub use launch::cmd_launch;
 pub use plan::cmd_plan;
-pub use run::{cmd_run, cmd_run_dir, CodergenClaudeCliOpts};
+pub use run::{cmd_run, cmd_run_dir, CodergenClaudeCliOpts, RunInvocation};
 pub use scaffold::cmd_scaffold;
 pub use validate::cmd_validate;
 
 pub(crate) fn print_diagnostics(diagnostics: &[attractor_pipeline::Diagnostic]) -> bool {
+    print_diagnostics_to(diagnostics, false)
+}
+
+/// Like [`print_diagnostics`], but writes to stderr when `to_stderr` is set
+/// (machine-readable modes keep stdout for their JSON).
+pub(crate) fn print_diagnostics_to(
+    diagnostics: &[attractor_pipeline::Diagnostic],
+    to_stderr: bool,
+) -> bool {
     let mut has_error = false;
     for diagnostic in diagnostics {
         let severity = match diagnostic.severity {
@@ -36,12 +45,21 @@ pub(crate) fn print_diagnostics(diagnostics: &[attractor_pipeline::Diagnostic]) 
         } else {
             String::new()
         };
-        println!(
+        let line = format!(
             "[{}] {}{}: {}",
             severity, diagnostic.rule, location, diagnostic.message
         );
+        if to_stderr {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
         if let Some(fix) = &diagnostic.fix {
-            println!("  Fix: {fix}");
+            if to_stderr {
+                eprintln!("  Fix: {fix}");
+            } else {
+                println!("  Fix: {fix}");
+            }
         }
     }
     has_error

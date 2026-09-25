@@ -81,6 +81,10 @@ pub async fn cmd_launch(
         max_steps,
         fresh,
         codergen_claude,
+        &super::RunInvocation {
+            argv: std::env::args().collect(),
+            ..Default::default()
+        },
     )
     .await?;
 

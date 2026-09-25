@@ -1,7 +1,8 @@
 # Provider stream fixtures
 
 Stdout samples used by the codergen stream parser tests
-(`src/handlers/codergen_handler_tests.rs`). Each file is exactly what PAS reads
+(`src/handlers/codergen_handler_tests.rs`) and by the pre-streaming Outcome
+regression tests (`src/handlers/codergen_regression_tests.rs`). Each file is exactly what PAS reads
 from the provider's stdout for one Model Invocation.
 
 | File | CLI version | Command | Origin |

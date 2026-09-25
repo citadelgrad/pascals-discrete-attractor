@@ -816,3 +816,7 @@ fn extract_label(response: &str, labels: &[String]) -> Option<String> {
 #[cfg(test)]
 #[path = "codergen_handler_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "codergen_regression_tests.rs"]
+mod regression_tests;

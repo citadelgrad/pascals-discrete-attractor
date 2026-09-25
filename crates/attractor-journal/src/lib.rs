@@ -11,6 +11,7 @@ pub mod index;
 pub mod layout;
 pub mod meta;
 pub mod reader;
+pub mod status;
 pub mod writer;
 
 pub use event::{AnswerSource, AttemptEndReason, CommitRef, EventData, JournalEvent, TaskSummary};
@@ -24,6 +25,7 @@ pub use layout::{
 };
 pub use meta::{read_run_meta, write_run_meta, RunMeta};
 pub use reader::{read_all, read_all_raw, tail, tail_with_interval};
+pub use status::{derive_status, run_status, RunStatus, CRASH_AFTER};
 pub use writer::JournalWriter;
 
 /// Version of the Run Journal envelope (`v` on every journal line).

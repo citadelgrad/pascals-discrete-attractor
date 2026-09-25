@@ -132,6 +132,76 @@ unset CLI fields continue to inherit their individual manifest values.
 
 ---
 
+### `runs` — List Runs
+
+Lists every Run in the Run Index (`runs.jsonl` in `$PAS_STATE_DIR`, else
+`$XDG_STATE_HOME/pas`, else `~/.local/state/pas`) in start order, each with a
+status derived from its Run Journal. The Index never stores a status.
+`pas runs` only reads: it takes no Run lock, so it never makes a starting
+`pas run` exit with 5 or 6.
+
+```
+pas runs [--active] [--json]
+```
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--active` | Only list Runs whose status is `running` |
+| `--json` | Print one JSON object on stdout (see below) |
+
+#### Statuses
+
+The last Attempt of the Run decides:
+
+| Status | Meaning |
+|--------|---------|
+| `completed` | The last Attempt ended with reason `completed` |
+| `stopped` | The last Attempt ended with reason `stopped` |
+| `failed` | The last Attempt ended with reason `failed`, `error`, `budget_exhausted`, or `max_steps` |
+| `crashed` | The last Attempt has no `AttemptEnded`, its last sign of life is more than 2 minutes old, and its PID is not alive |
+| `running` | The last Attempt has no `AttemptEnded` and is not `crashed` |
+| `missing` | The Run folder (`run_dir`) no longer exists |
+
+The last sign of life is the Attempt's last `Heartbeat` (written every 30 s),
+else its `AttemptStarted`, else the Index `started_at`. The PID comes from the
+same Event; when none is known it counts as not alive. So a Run killed with
+`kill -9` shows `running` for up to 2 minutes, then `crashed`.
+
+A Run Journal that cannot be read prints a warning on stderr; the Run is
+still listed, with its status derived as if the journal had no Events.
+
+#### Output
+
+```
+RUN ID                                STATUS     STARTED               PIPELINE                 WORKDIR
+0192a3b4-...                          completed  2026-09-24T10:00:00Z  /abs/pipelines/x.dot     /abs/repo
+0192a3c5-...                          running    2026-09-24T11:30:12Z  /abs/pipelines/y.dot     /abs/repo
+```
+
+With no Runs it prints `(no runs)` (`(no active runs)` with `--active`).
+
+With `--json`, stdout is exactly one object. Each Run is its Index entry
+plus `status`:
+
+```json
+{"v":1,"ok":true,"runs":[{"v":1,"run_id":"0192...","started_at":"2026-09-24T10:00:00Z","workdir":"/abs/repo","pipeline_path":"/abs/pipelines/x.dot","run_dir":"/abs/repo/.pas/logs/x-1a2b3c4d/runs/0192...","status":"completed"}]}
+```
+
+An empty or absent Index gives `{"v":1,"ok":true,"runs":[]}`. If the Index
+exists but cannot be read, stdout is
+`{"v":1,"ok":false,"error":{"code":"index_unreadable","message":"..."}}`.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Listed (including an empty or absent Index, and `missing` Runs) |
+| 1 | The Run Index exists but cannot be read |
+
+---
+
 ### `validate` — Check a pipeline for errors
 
 Runs canonical semantic compilation followed by nine structural checks without
@@ -588,7 +658,7 @@ pas trust remove /path/to/project/pas.toml <blake3-hash>
 | Code | Meaning | Raised by |
 |------|---------|-----------|
 | 0 | Success | all commands |
-| 1 | General failure (validation error, handler error, quality loop exhausted) | `run`, `validate`, `launch`, `trust` |
+| 1 | General failure (validation error, handler error, quality loop exhausted, unreadable Run Index) | `run`, `runs`, `validate`, `launch`, `trust` |
 | 2 | Manifest not trusted | `run` (when quality stages attempted with untrusted `pas.toml`) |
 | 3 | Trust store corrupted | `run`, `trust` |
 | 4 | No `.git` root found without `--force` | `init` |

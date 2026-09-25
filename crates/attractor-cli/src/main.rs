@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use commands::{
     cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
-    cmd_run, cmd_run_dir, cmd_scaffold, cmd_validate, heartbeat_interval_from_env,
+    cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_validate, heartbeat_interval_from_env,
     validate_decomposition, CodergenClaudeCliOpts, InitOpts, RunInvocation, RunRefused,
 };
 
@@ -106,6 +106,18 @@ enum Commands {
         /// (recorded as `shared_workdir` in `RunStarted`)
         #[arg(long)]
         allow_shared_workdir: bool,
+    },
+
+    /// List Runs from the Run Index with a status derived from each Run
+    /// Journal: running, completed, failed, stopped, crashed, or missing
+    Runs {
+        /// Only list Runs whose status is `running`
+        #[arg(long)]
+        active: bool,
+
+        /// Print one JSON object `{"v":1,"ok":true,"runs":[...]}`
+        #[arg(long)]
+        json: bool,
     },
 
     /// Validate a pipeline .dot file
@@ -341,8 +353,11 @@ async fn run_cli() -> anyhow::Result<()> {
 
     // Setup tracing
     let filter = if cli.verbose { "debug" } else { "info" };
-    // `pas run --json` keeps stdout for its JSON first line.
-    if matches!(cli.command, Commands::Run { json: true, .. }) {
+    // `--json` modes keep stdout for their JSON.
+    if matches!(
+        cli.command,
+        Commands::Run { json: true, .. } | Commands::Runs { json: true, .. }
+    ) {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)
@@ -430,6 +445,7 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             cmd_init(&workdir, &opts)?;
         }
+        Commands::Runs { active, json } => cmd_runs(active, json)?,
         Commands::Validate { pipeline } => {
             cmd_validate(&pipeline)?;
         }

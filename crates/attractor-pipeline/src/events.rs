@@ -4,7 +4,7 @@
 //! external observers (loggers, metrics collectors, UI, etc.) can subscribe to
 //! pipeline execution progress without coupling to the engine internals.
 
-use attractor_journal::EventData;
+use attractor_journal::{CommitRef, EventData};
 use serde::{Deserialize, Serialize};
 
 /// Events emitted during pipeline execution.
@@ -55,6 +55,14 @@ pub enum PipelineEvent {
     ContextUpdated {
         node_id: String,
         keys: Vec<String>,
+    },
+    /// HEAD moved during a stage attempt (spec File Change 5). `commits` is
+    /// `git log old..new`, newest first, and never empty.
+    CommitsCreated {
+        node_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        commits: Vec<CommitRef>,
     },
 }
 
@@ -121,6 +129,15 @@ impl PipelineEvent {
             }
             Self::CheckpointSaved { node_id } => EventData::CheckpointSaved { node_id },
             Self::ContextUpdated { node_id, keys } => EventData::ContextUpdated { node_id, keys },
+            Self::CommitsCreated {
+                node_id,
+                task_id,
+                commits,
+            } => EventData::CommitsCreated {
+                node_id,
+                task_id,
+                commits,
+            },
         }
     }
 }
@@ -294,6 +311,34 @@ mod tests {
             PipelineEvent::ContextUpdated {
                 node_id: "n".into(),
                 keys: vec!["k1".into(), "k2".into()],
+            },
+            PipelineEvent::CommitsCreated {
+                node_id: "n".into(),
+                task_id: Some("e.1".into()),
+                commits: vec![
+                    CommitRef {
+                        sha: "bbb".into(),
+                        subject: "two".into(),
+                        author: "Ann".into(),
+                        ts: "2026-09-25T10:00:01+00:00".into(),
+                    },
+                    CommitRef {
+                        sha: "aaa".into(),
+                        subject: "one".into(),
+                        author: "Ann".into(),
+                        ts: "2026-09-25T10:00:00+00:00".into(),
+                    },
+                ],
+            },
+            PipelineEvent::CommitsCreated {
+                node_id: "n".into(),
+                task_id: None,
+                commits: vec![CommitRef {
+                    sha: "aaa".into(),
+                    subject: "one".into(),
+                    author: "Ann".into(),
+                    ts: "2026-09-25T10:00:00+00:00".into(),
+                }],
             },
         ];
 

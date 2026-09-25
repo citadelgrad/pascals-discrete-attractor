@@ -21,6 +21,7 @@ use crate::goal_gate::enforce_goal_gates;
 use crate::graph::PipelineGraph;
 use crate::handler::{default_registry, HandlerExecutionContext, HandlerRegistry};
 use crate::retry::retry_delay;
+use crate::run_commits;
 use crate::run_configuration::{
     is_reserved_key, ClaudeExecutionOptions, ExecutionOptions, RunConfiguration,
 };
@@ -184,6 +185,24 @@ pub fn open_journal(run_dir: &Path, run_id: &str, attempt: u32) -> Result<Journa
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Context key naming the claimed Task. `beads.select` sets it and
+/// `beads.close` clears it (spec File Change 7).
+const TASK_ID_KEY: &str = "task.id";
+
+/// The claimed Task ID in `context`, if any.
+async fn claimed_task(context: &Context) -> Option<String> {
+    task_id_value(context.get(TASK_ID_KEY).await.as_ref())
+}
+
+/// A `task.id` value as a Task ID; empty strings and non-strings are no Task.
+fn task_id_value(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
 
 /// Map a `StageStatus` to the lowercase string used in edge conditions.
 fn status_to_string(status: StageStatus) -> String {
@@ -501,6 +520,9 @@ impl PipelineExecutor {
             progress.active_node_attempts = attempt + 1;
             checkpoint.save(&node.id, progress).await?;
 
+            let workdir = configured.controls().workdir().value();
+            let head_before = run_commits::head(workdir).await;
+            let task_before = claimed_task(checkpoint.context).await;
             self.emit(PipelineEvent::StageStarted {
                 node_id: node.id.clone(),
                 handler_type: handler_type.to_string(),
@@ -523,6 +545,18 @@ impl PipelineExecutor {
             } else {
                 execution.await
             };
+
+            // Before StageCompleted/StageFailed/StageRetrying, whatever the
+            // attempt's result, so an attempt that is retried keeps its commits.
+            let task_id = match &result {
+                Ok(outcome) if outcome.context_updates.contains_key(TASK_ID_KEY) => {
+                    task_id_value(outcome.context_updates.get(TASK_ID_KEY))
+                }
+                _ => claimed_task(checkpoint.context).await,
+            }
+            .or(task_before);
+            self.emit_run_commits(&node.id, workdir, head_before, task_id)
+                .await;
 
             let has_more_attempts = attempt + 1 < max_attempts;
             match result {
@@ -588,6 +622,46 @@ impl PipelineExecutor {
             node: node.id.clone(),
             attempts: max_attempts,
         })
+    }
+
+    /// Emit one `CommitsCreated` when HEAD moved from `before` during a stage
+    /// attempt. Outside a repository, with an unborn HEAD before the stage,
+    /// or when git fails, nothing is emitted and the Run goes on.
+    async fn emit_run_commits(
+        &self,
+        node_id: &str,
+        workdir: &Path,
+        before: Option<String>,
+        task_id: Option<String>,
+    ) {
+        let Some(before) = before else {
+            return;
+        };
+        let Some(after) = run_commits::head(workdir).await else {
+            return;
+        };
+        if after == before {
+            return;
+        }
+        let commits = match run_commits::commits_between(workdir, &before, &after).await {
+            Ok(commits) => commits,
+            Err(error) => {
+                tracing::warn!(
+                    node = %node_id,
+                    error = %error,
+                    "cannot list Run Commits; skipping CommitsCreated"
+                );
+                return;
+            }
+        };
+        if commits.is_empty() {
+            return;
+        }
+        self.emit(PipelineEvent::CommitsCreated {
+            node_id: node_id.to_string(),
+            task_id,
+            commits,
+        });
     }
 
     /// Core execution loop. When `logs_root` is `Some`, checkpoints are

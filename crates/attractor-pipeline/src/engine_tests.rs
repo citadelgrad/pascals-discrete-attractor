@@ -995,6 +995,7 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::GoalGateChecked { .. } => "goal_gate_checked",
             PipelineEvent::CheckpointSaved { .. } => "checkpoint_saved",
             PipelineEvent::ContextUpdated { .. } => "context_updated",
+            PipelineEvent::CommitsCreated { .. } => "commits_created",
         });
     }
 
@@ -2789,4 +2790,545 @@ async fn fresh_run_with_journal_records_run_id_in_checkpoint() {
         .unwrap()
         .expect("checkpoint kept");
     assert_eq!(checkpoint.run_id.as_deref(), Some(JOURNAL_RUN_ID));
+}
+
+// ---------------------------------------------------------------------------
+// T2-1: Run Commits around each stage (spec File Change 5)
+// ---------------------------------------------------------------------------
+
+/// `git` in `dir`, independent of the caller's `GIT_DIR` and git config.
+fn git(dir: &Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap()
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> String {
+    let output = git(dir, args);
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// A fresh repository in `dir`, with one commit when `with_commit`.
+fn init_repo(dir: &Path, with_commit: bool) {
+    git_ok(dir, &["init", "-q"]);
+    if with_commit {
+        git_ok(dir, &["commit", "--allow-empty", "-qm", "initial"]);
+    }
+}
+
+/// A shell command that makes one empty commit per subject.
+fn commit_command(subjects: &[&str]) -> String {
+    let commits = subjects
+        .iter()
+        .map(|subject| {
+            format!(
+                "git -c user.name=T -c user.email=t@example.com -c commit.gpgsign=false \
+                 -c core.hooksPath=/dev/null commit --allow-empty -qm {subject}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" && ");
+    format!("unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; {commits}")
+}
+
+/// A Run in `workdir` whose journal lives in a separate temp dir, so the Run
+/// folder is never inside the repository.
+struct CommitRun {
+    journal_dir: tempfile::TempDir,
+    result: Result<PipelineResult>,
+    broadcast: Vec<PipelineEvent>,
+}
+
+impl CommitRun {
+    async fn start(registry: HandlerRegistry, graph: &PipelineGraph, workdir: &Path) -> Self {
+        let journal_dir = tempfile::tempdir().unwrap();
+        let journal = JournalWriter::open(journal_dir.path(), JOURNAL_RUN_ID, 1).unwrap();
+        let emitter = EventEmitter::new(256);
+        let mut receiver = emitter.subscribe();
+        let context = Context::new();
+        context
+            .set(
+                "workdir",
+                serde_json::Value::String(workdir.display().to_string()),
+            )
+            .await;
+        let result = PipelineExecutor::new(registry)
+            .with_event_emitter(emitter)
+            .with_journal(journal)
+            .run_with_context(graph, context)
+            .await;
+        let mut broadcast = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            broadcast.push(event);
+        }
+        Self {
+            journal_dir,
+            result,
+            broadcast,
+        }
+    }
+
+    fn journal(&self) -> Vec<attractor_journal::JournalEvent> {
+        attractor_journal::read_all(self.journal_dir.path().join(EVENTS_FILE)).unwrap()
+    }
+
+    /// `(node_id, task_id, commits)` of each journaled `CommitsCreated`.
+    fn commits_created(&self) -> Vec<(String, Option<String>, Vec<attractor_journal::CommitRef>)> {
+        self.journal()
+            .into_iter()
+            .filter_map(|event| match event.data {
+                EventData::CommitsCreated {
+                    node_id,
+                    task_id,
+                    commits,
+                } => Some((node_id, task_id, commits)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Raw JSON of each journaled `CommitsCreated` line.
+    fn raw_commits_created(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.journal_dir.path().join(EVENTS_FILE))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|line| line["type"] == "CommitsCreated")
+            .collect()
+    }
+}
+
+fn tool_registry() -> HandlerRegistry {
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(crate::handlers::ToolHandler);
+    registry
+}
+
+fn tool_graph(stages: &[(&str, &str)]) -> PipelineGraph {
+    let nodes = stages
+        .iter()
+        .map(|(id, command)| format!(r#"{id} [shape="parallelogram", tool_command="{command}"]"#))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let chain = stages
+        .iter()
+        .map(|(id, _)| *id)
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    parse_graph(&format!(
+        r#"digraph G {{
+            start [shape="Mdiamond"]
+            {nodes}
+            done [shape="Msquare"]
+            start -> {chain} -> done
+        }}"#
+    ))
+}
+
+/// A `codergen` stand-in that sets or clears `task.id` and can commit.
+struct TaskStage {
+    task_updates: HashMap<String, serde_json::Value>,
+    commit_in: HashMap<String, PathBuf>,
+}
+
+#[async_trait]
+impl NodeHandler for TaskStage {
+    fn handler_type(&self) -> &str {
+        "codergen"
+    }
+
+    async fn execute(
+        &self,
+        node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        if let Some(dir) = self.commit_in.get(&node.id) {
+            git_ok(dir, &["commit", "--allow-empty", "-qm", &node.id]);
+        }
+        let mut outcome = Outcome::success("task stage");
+        if let Some(value) = self.task_updates.get(&node.id) {
+            outcome
+                .context_updates
+                .insert("task.id".into(), value.clone());
+        }
+        Ok(outcome)
+    }
+}
+
+// AC1: 2 commits in one stage → exactly one CommitsCreated whose SHAs equal
+// `git log --format=%H old..new`, in the same order.
+#[tokio::test]
+async fn stage_with_two_commits_emits_one_commits_created() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+    let old = git_ok(repo.path(), &["rev-parse", "HEAD"]);
+    let command = commit_command(&["one", "two"]);
+
+    let run = CommitRun::start(
+        tool_registry(),
+        &tool_graph(&[("work", &command)]),
+        repo.path(),
+    )
+    .await;
+    run.result.as_ref().unwrap();
+
+    let new = git_ok(repo.path(), &["rev-parse", "HEAD"]);
+    let expected: Vec<String> = git_ok(
+        repo.path(),
+        &["log", "--format=%H", &format!("{old}..{new}")],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect();
+    assert_eq!(expected.len(), 2);
+
+    let created = run.commits_created();
+    assert_eq!(created.len(), 1, "{created:?}");
+    let (node_id, task_id, commits) = &created[0];
+    assert_eq!(node_id, "work");
+    assert_eq!(task_id, &None);
+    let shas: Vec<String> = commits.iter().map(|commit| commit.sha.clone()).collect();
+    assert_eq!(shas, expected);
+    let subjects: Vec<&str> = commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["two", "one"]);
+    for commit in commits {
+        assert_eq!(commit.author, "T");
+        chrono::DateTime::parse_from_rfc3339(&commit.ts).unwrap();
+    }
+
+    // Between the stage's StageStarted and StageCompleted.
+    let types: Vec<(String, Option<String>)> = run
+        .journal()
+        .into_iter()
+        .map(|event| {
+            let node = match &event.data {
+                EventData::StageStarted { node_id, .. }
+                | EventData::StageCompleted { node_id, .. }
+                | EventData::CommitsCreated { node_id, .. } => Some(node_id.clone()),
+                _ => None,
+            };
+            (event.data.type_name().to_string(), node)
+        })
+        .filter(|(_, node)| node.as_deref() == Some("work"))
+        .collect();
+    let names: Vec<&str> = types.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["StageStarted", "CommitsCreated", "StageCompleted"]);
+
+    // Journaled before broadcast: the broadcast stream carries the same Event.
+    let broadcast: Vec<EventData> = run
+        .broadcast
+        .iter()
+        .map(PipelineEvent::to_journal_data)
+        .collect();
+    let journaled: Vec<EventData> = run.journal().into_iter().map(|e| e.data).collect();
+    assert_eq!(broadcast, journaled);
+}
+
+// AC2: no commit → no CommitsCreated.
+#[tokio::test]
+async fn stage_without_commit_emits_no_commits_created() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+
+    let run = CommitRun::start(
+        tool_registry(),
+        &tool_graph(&[("look", "git status --short"), ("idle", "true")]),
+        repo.path(),
+    )
+    .await;
+
+    run.result.as_ref().unwrap();
+    assert!(run.commits_created().is_empty());
+    assert!(run
+        .journal()
+        .iter()
+        .any(|e| e.data.type_name() == "StageCompleted"));
+}
+
+// AC3: the claimed Task's ID is recorded; a stage before any claim has none,
+// and the key is absent from the journal line.
+#[tokio::test]
+async fn commits_created_carries_claimed_task_id() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+    let mut registry = tool_registry();
+    registry.register(TaskStage {
+        task_updates: HashMap::from([("claim".into(), serde_json::json!("epic.1"))]),
+        commit_in: HashMap::new(),
+    });
+    let before_claim = commit_command(&["early"]);
+    let after_claim = commit_command(&["late"]);
+    let graph = parse_graph(&format!(
+        r#"digraph G {{
+            start [shape="Mdiamond"]
+            early [shape="parallelogram", tool_command="{before_claim}"]
+            claim [shape="box", prompt="claim", llm_provider="claude"]
+            late  [shape="parallelogram", tool_command="{after_claim}"]
+            done  [shape="Msquare"]
+            start -> early -> claim -> late -> done
+        }}"#
+    ));
+
+    let run = CommitRun::start(registry, &graph, repo.path()).await;
+    run.result.as_ref().unwrap();
+
+    let created = run.commits_created();
+    let tasks: Vec<(&str, Option<&str>)> = created
+        .iter()
+        .map(|(node, task, _)| (node.as_str(), task.as_deref()))
+        .collect();
+    assert_eq!(tasks, [("early", None), ("late", Some("epic.1"))]);
+
+    let raw = run.raw_commits_created();
+    assert_eq!(raw.len(), 2);
+    let early = raw[0]["data"].as_object().unwrap();
+    assert!(!early.contains_key("task_id"), "{early:?}");
+    assert_eq!(raw[1]["data"]["task_id"], "epic.1");
+}
+
+// AC3: a stage that claims a Task and commits attributes to the new Task; a
+// stage that clears `task.id` (beads.close) attributes to the Task it closed;
+// after that, commits have no Task.
+#[tokio::test]
+async fn commits_are_attributed_to_the_task_active_during_the_stage() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+    let mut registry = tool_registry();
+    registry.register(TaskStage {
+        task_updates: HashMap::from([
+            ("claim".into(), serde_json::json!("epic.2")),
+            ("close".into(), serde_json::Value::Null),
+        ]),
+        commit_in: HashMap::from([
+            ("claim".into(), repo.path().to_path_buf()),
+            ("close".into(), repo.path().to_path_buf()),
+        ]),
+    });
+    let after = commit_command(&["after"]);
+    let graph = parse_graph(&format!(
+        r#"digraph G {{
+            start [shape="Mdiamond"]
+            claim [shape="box", prompt="claim", llm_provider="claude"]
+            close [shape="box", prompt="close", llm_provider="claude"]
+            after [shape="parallelogram", tool_command="{after}"]
+            done  [shape="Msquare"]
+            start -> claim -> close -> after -> done
+        }}"#
+    ));
+
+    let run = CommitRun::start(registry, &graph, repo.path()).await;
+    run.result.as_ref().unwrap();
+
+    let tasks: Vec<(String, Option<String>)> = run
+        .commits_created()
+        .into_iter()
+        .map(|(node, task, _)| (node, task))
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("claim".to_string(), Some("epic.2".to_string())),
+            ("close".to_string(), Some("epic.2".to_string())),
+            ("after".to_string(), None),
+        ]
+    );
+}
+
+#[test]
+fn only_non_empty_string_task_ids_are_tasks() {
+    assert_eq!(task_id_value(None), None);
+    assert_eq!(task_id_value(Some(&serde_json::Value::Null)), None);
+    assert_eq!(task_id_value(Some(&serde_json::json!(""))), None);
+    assert_eq!(task_id_value(Some(&serde_json::json!("  "))), None);
+    assert_eq!(task_id_value(Some(&serde_json::json!(7))), None);
+    assert_eq!(
+        task_id_value(Some(&serde_json::json!("e.1"))),
+        Some("e.1".to_string())
+    );
+}
+
+// AC4: outside a git repository the Run completes with no CommitsCreated.
+#[tokio::test]
+async fn run_outside_git_repo_emits_no_commits_created() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        !git(dir.path(), &["rev-parse", "--git-dir"])
+            .status
+            .success(),
+        "temp dir {} is inside a git repository; the test would be vacuous",
+        dir.path().display()
+    );
+    // A git command in a stage fails there, but the Run does not.
+    let run = CommitRun::start(
+        tool_registry(),
+        &tool_graph(&[("idle", "true"), ("try", "git log -1 || true")]),
+        dir.path(),
+    )
+    .await;
+
+    run.result.as_ref().unwrap();
+    assert!(run.commits_created().is_empty());
+    assert!(run
+        .journal()
+        .iter()
+        .any(|e| e.data.type_name() == "PipelineCompleted"));
+}
+
+// AC5: with an unborn HEAD, the stage that makes the first commit does not
+// fail the Run (and emits nothing, as the spec skips unborn HEAD); the next
+// stage's commit is recorded.
+#[tokio::test]
+async fn first_commit_in_unborn_repo_does_not_fail_run() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), false);
+    assert!(
+        !git(repo.path(), &["rev-parse", "--verify", "--quiet", "HEAD"])
+            .status
+            .success()
+    );
+    let first = commit_command(&["first"]);
+    let second = commit_command(&["second"]);
+
+    let run = CommitRun::start(
+        tool_registry(),
+        &tool_graph(&[("first", &first), ("second", &second)]),
+        repo.path(),
+    )
+    .await;
+
+    let result = run.result.as_ref().unwrap();
+    assert_eq!(result.completed_nodes, ["start", "first", "second", "done"]);
+    let created = run.commits_created();
+    assert_eq!(created.len(), 1, "{created:?}");
+    assert_eq!(created[0].0, "second");
+    let head = git_ok(repo.path(), &["rev-parse", "HEAD"]);
+    let shas: Vec<&str> = created[0].2.iter().map(|c| c.sha.as_str()).collect();
+    assert_eq!(shas, [head.as_str()]);
+}
+
+// A retried attempt keeps its own commits: one CommitsCreated per attempt,
+// each before that attempt's StageRetrying / StageCompleted.
+#[tokio::test]
+async fn each_attempt_reports_its_own_commits() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CommitThenRetry {
+        dir: PathBuf,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl NodeHandler for CommitThenRetry {
+        fn handler_type(&self) -> &str {
+            "codergen"
+        }
+
+        async fn execute(
+            &self,
+            _node: &crate::graph::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            git_ok(
+                &self.dir,
+                &["commit", "--allow-empty", "-qm", &format!("attempt {call}")],
+            );
+            let mut outcome = Outcome::success("attempt");
+            if call == 0 {
+                outcome.status = StageStatus::Retry;
+            }
+            Ok(outcome)
+        }
+    }
+
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+    let mut registry = tool_registry();
+    registry.register(CommitThenRetry {
+        dir: repo.path().to_path_buf(),
+        calls: AtomicUsize::new(0),
+    });
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", llm_provider="claude", max_retries=1]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#,
+    );
+
+    let run = CommitRun::start(registry, &graph, repo.path()).await;
+    run.result.as_ref().unwrap();
+
+    let types: Vec<String> = run
+        .journal()
+        .into_iter()
+        .map(|event| event.data.type_name().to_string())
+        .filter(|name| {
+            matches!(
+                name.as_str(),
+                "CommitsCreated" | "StageRetrying" | "StageCompleted"
+            )
+        })
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "StageCompleted", // start
+            "CommitsCreated",
+            "StageRetrying",
+            "CommitsCreated",
+            "StageCompleted", // work
+            "StageCompleted", // done
+        ]
+    );
+    let subjects: Vec<Vec<String>> = run
+        .commits_created()
+        .into_iter()
+        .map(|(_, _, commits)| commits.into_iter().map(|c| c.subject).collect())
+        .collect();
+    assert_eq!(subjects, [["attempt 0"], ["attempt 1"]]);
+}
+
+// HEAD moving backwards (reset) lists no commits and emits nothing.
+#[tokio::test]
+async fn head_moving_backwards_emits_no_commits_created() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path(), true);
+    git_ok(repo.path(), &["commit", "--allow-empty", "-qm", "second"]);
+
+    let run = CommitRun::start(
+        tool_registry(),
+        &tool_graph(&[("undo", "git reset -q --soft HEAD~1")]),
+        repo.path(),
+    )
+    .await;
+
+    run.result.as_ref().unwrap();
+    assert!(run.commits_created().is_empty());
 }

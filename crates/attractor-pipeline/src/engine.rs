@@ -63,6 +63,7 @@ struct CheckpointData<'a> {
     quality_last_footprint: &'a HashMap<String, String>,
     previous_node_id: Option<&'a str>,
     execution_fingerprint: Option<&'a str>,
+    run_id: Option<&'a str>,
     events: Option<&'a EventEmitter>,
 }
 
@@ -83,6 +84,7 @@ impl CheckpointData<'_> {
             self.previous_node_id.map(str::to_string),
             self.execution_fingerprint.map(str::to_string),
         );
+        checkpoint.run_id = self.run_id.map(str::to_string);
         checkpoint.total_handler_attempts = progress.total_handler_attempts;
         checkpoint.active_node_id = progress.active_node_id.clone();
         checkpoint.active_node_attempts = progress.active_node_attempts;
@@ -555,6 +557,8 @@ impl PipelineExecutor {
         let mut quality_last_footprint: HashMap<String, String> = HashMap::new();
         // Tracks the node we came from (upstream) for loop-key construction
         let mut prev_node_id: Option<String> = None;
+        // Run identity recorded in the checkpoint; carried through every save.
+        let mut run_id: Option<String> = None;
 
         // Phase 4: Execute — check for checkpoint to resume from
         let start = graph
@@ -599,6 +603,7 @@ impl PipelineExecutor {
                 quality_loop_counters = cp.quality_loop_counters;
                 quality_last_footprint = cp.quality_last_footprint;
                 prev_node_id = cp.previous_node_id;
+                run_id = cp.run_id;
                 // Jump to the node that was about to execute
                 current_node = graph.node(&cp.current_node_id).ok_or_else(|| {
                     AttractorError::Other(format!(
@@ -669,6 +674,7 @@ impl PipelineExecutor {
                             quality_last_footprint: &quality_last_footprint,
                             previous_node_id: prev_node_id.as_deref(),
                             execution_fingerprint: Some(&execution_fingerprint),
+                            run_id: run_id.as_deref(),
                             events: self.events.as_ref(),
                         },
                     )
@@ -760,6 +766,7 @@ impl PipelineExecutor {
                         quality_last_footprint: &quality_last_footprint,
                         previous_node_id: prev_node_id.as_deref(),
                         execution_fingerprint: Some(&execution_fingerprint),
+                        run_id: run_id.as_deref(),
                         events: self.events.as_ref(),
                     },
                 )
@@ -875,6 +882,7 @@ impl PipelineExecutor {
                         quality_last_footprint: &quality_last_footprint,
                         previous_node_id: Some(&just_completed),
                         execution_fingerprint: Some(&execution_fingerprint),
+                        run_id: run_id.as_deref(),
                         events: self.events.as_ref(),
                     }
                     .save(&current_node.id, &progress)

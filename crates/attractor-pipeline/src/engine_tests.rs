@@ -2136,6 +2136,80 @@ async fn future_schema_version_rejects_resume() {
     }
 }
 
+// Resuming must carry the checkpoint's run_id through the engine's own
+// re-saves (it rewrites checkpoint.json before every attempt), so the
+// resumed Run keeps its identity.
+#[tokio::test]
+async fn resume_preserves_checkpoint_run_id() {
+    use std::sync::{Arc, Mutex};
+
+    struct RunIdProbe {
+        logs: std::path::PathBuf,
+        seen: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    #[async_trait]
+    impl NodeHandler for RunIdProbe {
+        fn handler_type(&self) -> &str {
+            "run_id_probe"
+        }
+        async fn execute(
+            &self,
+            _node: &crate::graph::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            let cp = load_checkpoint(&self.logs)
+                .await?
+                .expect("checkpoint saved before attempt");
+            self.seen.lock().unwrap().push(cp.run_id);
+            Ok(Outcome::success("probed"))
+        }
+    }
+
+    const RUN_ID: &str = "0192f3c4-5a6b-7c8d-9e0f-1a2b3c4d5e6f";
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            probe [type="run_id_probe"]
+            done  [shape="Msquare"]
+            start -> probe -> done
+        }"#,
+    );
+    let logs = tempfile::tempdir().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = test_registry();
+    registry.register(RunIdProbe {
+        logs: logs.path().to_path_buf(),
+        seen: Arc::clone(&seen),
+    });
+
+    let plan =
+        crate::execution_plan::ExecutionPlan::compile_with_registry(graph.clone(), &registry)
+            .unwrap();
+    let mut checkpoint = PipelineCheckpoint::new(
+        "probe".into(),
+        vec!["start".into()],
+        HashMap::new(),
+        HashMap::new(),
+    );
+    checkpoint.previous_node_id = Some("start".into());
+    checkpoint.execution_fingerprint = Some(plan.fingerprint());
+    checkpoint.run_id = Some(RUN_ID.into());
+    save_checkpoint(&checkpoint, logs.path()).await.unwrap();
+
+    PipelineExecutor::new(registry)
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .expect("resume should complete");
+
+    assert_eq!(*seen.lock().unwrap(), vec![Some(RUN_ID.to_string())]);
+    assert!(
+        load_checkpoint(logs.path()).await.unwrap().is_none(),
+        "checkpoint is still cleared after a successful Run"
+    );
+}
+
 // Atomic persistence: a saved checkpoint leaves no stray temp file and
 // round-trips; a second save cleanly replaces the first.
 #[tokio::test]

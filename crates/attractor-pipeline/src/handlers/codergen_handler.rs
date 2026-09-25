@@ -20,11 +20,13 @@ use super::provider_stream::{run_streaming, Transcript};
 mod provider;
 #[cfg(test)]
 use provider::{
-    build_cli_command, parse_claude_output, parse_codex_output, parse_gemini_output, LlmCliProvider,
+    build_cli_command, claude_result_line, parse_claude_output, parse_codex_output,
+    parse_gemini_output, parse_gemini_stream_output, summarize_stream, InvocationUsage,
+    LlmCliProvider,
 };
 use provider::{
-    build_cli_command_with_program, claude_result_line, parse_cli_output, ClaudeCliConfig,
-    CliRunConfig,
+    build_cli_command_with_program, gemini_output_format, has_final_result, parse_cli_output,
+    ClaudeCliConfig, CliRunConfig, GeminiOutputFormat,
 };
 
 // ---------------------------------------------------------------------------
@@ -218,6 +220,11 @@ impl CodergenHandler {
             .program
             .clone()
             .unwrap_or_else(|| PathBuf::from(provider.binary_name()));
+        let gemini_format = if provider == LlmProvider::Gemini {
+            gemini_output_format(&program).await
+        } else {
+            GeminiOutputFormat::Json
+        };
         let mut cmd = build_cli_command_with_program(
             &CliRunConfig {
                 provider,
@@ -229,6 +236,7 @@ impl CodergenHandler {
                 claude: controls.claude,
             },
             program.as_os_str(),
+            gemini_format,
         );
         cmd.kill_on_drop(true);
         process_group::configure(&mut cmd);
@@ -309,11 +317,9 @@ impl CodergenHandler {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        // A Claude stream that ends without its final `result` line carries
-        // no answer; report the exit like an empty stdout, as before streaming.
-        let no_final_result = stdout.is_empty()
-            || (provider == LlmProvider::Claude && claude_result_line(&stdout).is_none());
-        if !output.status.success() && no_final_result {
+        // A stream that ends without its final `result` line carries no
+        // answer; report the exit like an empty stdout, as before streaming.
+        if !output.status.success() && !has_final_result(provider, &stdout) {
             return Err(AttractorError::HandlerError {
                 handler: "codergen".into(),
                 node: node.id.clone(),
@@ -334,6 +340,10 @@ impl CodergenHandler {
             provider = provider.display_name(),
             is_error = cli_result.is_error,
             has_cost = cli_result.cost_usd.is_some(),
+            model_actual = cli_result.usage.model_actual.as_deref(),
+            input_tokens = cli_result.usage.input_tokens,
+            output_tokens = cli_result.usage.output_tokens,
+            usage_cost_usd = cli_result.usage.cost_usd,
             "{} completed",
             provider.display_name()
         );

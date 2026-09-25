@@ -102,6 +102,26 @@ If a pipeline contains a `quality` node but no `pas.toml` is found in the workin
 
 To suppress the warning, run `pas init` in your project root to generate a `pas.toml`.
 
+#### Provider CLI versions
+
+`codergen` nodes read each provider's streaming output. These are the minimum
+supported provider CLI versions:
+
+| Provider CLI | Minimum supported version | Output flag PAS passes | What PAS reads from the stream |
+|--------------|---------------------------|------------------------|--------------------------------|
+| Claude Code (`claude`) | 2.1.282 | `--output-format stream-json --verbose` | Final text, actual model, input and output tokens, cost |
+| Codex CLI (`codex`) | 0.151.0 | `exec --json` | Final text, input and output tokens. Codex reports no model name and no cost. |
+| Gemini CLI (`gemini`) | 0.11.0 for `stream-json`; older versions use `json` | `--output-format stream-json`, or `--output-format json` when `gemini --help` does not list `stream-json` | Final text, actual model, input and output tokens. Gemini reports no cost. |
+
+- The Claude Code and Codex CLI minimums are the versions PAS was verified
+  against. Older versions may work but are not supported.
+- Gemini CLI 0.11.0 is the first release with `--output-format stream-json`.
+  PAS runs `gemini --help` once per `pas` process to check for it. If the check
+  fails for any reason, PAS uses `--output-format json`.
+- Input tokens include cached prompt tokens for every provider.
+- A value the provider does not report is recorded as unknown. A missing value
+  never fails the stage.
+
 #### Claude settings isolation for `codergen`
 
 Claude-backed `codergen` nodes run in PAS-controlled isolation by default. PAS passes Claude Code `--safe-mode`, `--strict-mcp-config`, and `--disable-slash-commands` so subscription auth still works while personal hooks, skills, plugins, MCP servers, and other ambient Claude Code customizations are suppressed as much as Claude allows without literal bare mode.

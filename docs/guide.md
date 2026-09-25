@@ -917,7 +917,7 @@ Each provider has different CLI flags and output formats. PAS handles this autom
 
 - **Claude**: Uses `--output-format stream-json --verbose` and `-p` for the prompt. Returns streaming JSON events; PAS uses the final `result` event.
 - **Codex**: Uses `codex exec --json --yolo` with the prompt as a positional argument. Returns streaming JSONL events; PAS extracts the last completed agent-message item.
-- **Gemini**: Uses `--output-format json --approval-mode yolo` with the prompt as a positional argument. PAS does not pass a `--sandbox` flag to Gemini. Returns structured JSON.
+- **Gemini**: Uses `--output-format json --approval-mode yolo` with the prompt as a positional argument. When `gemini --help` lists `stream-json` (Gemini CLI 0.11.0 and later), PAS passes `--output-format stream-json` in place of `json`. PAS does not pass a `--sandbox` flag to Gemini. Returns structured JSON, or streaming JSON events from which PAS joins the assistant messages.
 
 During `pas run`, every provider invocation's raw stdout is also copied, line by line as it arrives, to a Transcript at `runs/<run-id>/transcripts/<invocation-id>.jsonl` in the Pipeline's log folder.
 

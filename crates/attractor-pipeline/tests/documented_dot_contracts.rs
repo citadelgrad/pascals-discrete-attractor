@@ -891,3 +891,30 @@ fn documented_unprompted_diamond_exception_matches_compiled_semantics() {
         assert_eq!(resolved.provider, provider, "provider for {name}");
     }
 }
+
+#[test]
+fn cli_reference_lists_minimum_provider_cli_versions() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let source = std::fs::read_to_string(workspace.join("docs/cli-reference.md")).unwrap();
+
+    let section = source
+        .split("#### Provider CLI versions")
+        .nth(1)
+        .and_then(|rest| rest.split("\n#### ").next())
+        .expect("cli-reference must have a Provider CLI versions section");
+    assert!(section.contains("| Minimum supported version |"));
+    for row in [
+        "| Claude Code (`claude`) | 2.1.282 |",
+        "| Codex CLI (`codex`) | 0.151.0 |",
+        "| Gemini CLI (`gemini`) | 0.11.0 for `stream-json`; older versions use `json` |",
+    ] {
+        assert!(section.contains(row), "missing provider version row: {row}");
+    }
+    assert!(
+        section.contains("`--output-format json` when `gemini --help` does not list `stream-json`"),
+        "cli-reference must document the Gemini json fallback"
+    );
+}

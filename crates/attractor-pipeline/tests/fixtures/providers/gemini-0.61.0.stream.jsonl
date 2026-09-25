@@ -1,0 +1,8 @@
+{"type":"init","timestamp":"2026-09-25T08:30:00.000Z","session_id":"00000000-0000-4000-8000-000000000001","model":"auto-gemini-2.5"}
+{"type":"message","timestamp":"2026-09-25T08:30:00.000Z","role":"user","content":"Read notes.txt and reply with OK"}
+{"type":"message","timestamp":"2026-09-25T08:30:01.000Z","role":"assistant","content":"Checked the file.\n","delta":true}
+{"type":"tool_use","timestamp":"2026-09-25T08:30:01.000Z","tool_name":"read_file","tool_id":"read_file-1","parameters":{"file_path":"notes.txt"}}
+{"type":"tool_result","timestamp":"2026-09-25T08:30:01.000Z","tool_id":"read_file-1","status":"success","output":""}
+{"type":"message","timestamp":"2026-09-25T08:30:02.000Z","role":"assistant","content":"O","delta":true}
+{"type":"message","timestamp":"2026-09-25T08:30:02.000Z","role":"assistant","content":"K","delta":true}
+{"type":"result","timestamp":"2026-09-25T08:30:02.000Z","status":"success","stats":{"total_tokens":8982,"input_tokens":8900,"output_tokens":70,"cached":4000,"input":4900,"duration_ms":1500,"tool_calls":1,"models":{"gemini-2.5-flash-lite":{"total_tokens":820,"input_tokens":800,"output_tokens":20,"cached":0,"input":800},"gemini-2.5-pro":{"total_tokens":8162,"input_tokens":8100,"output_tokens":50,"cached":4000,"input":4100}}}}

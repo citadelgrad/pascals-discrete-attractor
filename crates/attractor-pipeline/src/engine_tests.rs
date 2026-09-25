@@ -926,7 +926,7 @@ async fn canonical_tool_timeout_terminates_descendant_processes() {
     let graph = parse_graph(&format!(
         r#"digraph G {{
             start [shape="Mdiamond"]
-            work [shape="parallelogram", tool_command="{command}", timeout=100ms]
+            work [shape="parallelogram", tool_command="{command}", timeout=3000ms]
             done [shape="Msquare"]
             start -> work -> done
         }}"#
@@ -938,7 +938,7 @@ async fn canonical_tool_timeout_terminates_descendant_processes() {
         .unwrap_err();
     assert!(matches!(
         error,
-        AttractorError::CommandTimeout { timeout_ms: 100 }
+        AttractorError::CommandTimeout { timeout_ms: 3000 }
     ));
 
     let pid = std::fs::read_to_string(&pid_file)

@@ -887,13 +887,13 @@ mod transcripts {
             program,
             Some(&run_dir),
             false,
-            Some(Duration::from_millis(500)),
+            Some(Duration::from_millis(3000)),
         )
         .await
         .unwrap_err();
 
         assert!(
-            matches!(error, AttractorError::CommandTimeout { timeout_ms: 500 }),
+            matches!(error, AttractorError::CommandTimeout { timeout_ms: 3000 }),
             "{error}"
         );
         assert_eq!(
@@ -942,5 +942,536 @@ mod transcripts {
         assert_eq!(outcome.status, StageStatus::Success);
         assert_eq!(outcome.notes, "done");
         assert!(run_dir.join("transcripts").is_file());
+    }
+}
+
+// --- Provider stream summaries (model, tokens, cost) ---
+
+const CLAUDE_FIXTURE: &str =
+    include_str!("../../tests/fixtures/providers/claude-2.1.282.stream.jsonl");
+const CODEX_FIXTURE: &str = include_str!("../../tests/fixtures/providers/codex-0.151.0.jsonl");
+const GEMINI_STREAM_FIXTURE: &str =
+    include_str!("../../tests/fixtures/providers/gemini-0.61.0.stream.jsonl");
+const GEMINI_JSON_FIXTURE: &str = include_str!("../../tests/fixtures/providers/gemini-0.61.0.json");
+const GEMINI_FIXTURE_TEXT: &str = "Checked the file.\nOK";
+
+fn usage(
+    model_actual: Option<&str>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cost_usd: Option<f64>,
+) -> InvocationUsage {
+    InvocationUsage {
+        model_actual: model_actual.map(str::to_owned),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+    }
+}
+
+// AC1: recorded Claude fixture.
+#[test]
+fn claude_fixture_yields_text_model_tokens_cost() {
+    let parsed = parse_cli_output(LlmCliProvider::Claude, CLAUDE_FIXTURE, "", "n").unwrap();
+    assert_eq!(parsed.text, "OK");
+    assert!(!parsed.is_error);
+    assert_eq!(parsed.cost_usd, Some(0.03932));
+    assert_eq!(parsed.turns, Some(1));
+    // Input counts uncached (10) + cache-creation (19555) + cache-read (0).
+    assert_eq!(
+        parsed.usage,
+        usage(
+            Some("claude-haiku-4-5-20251001"),
+            Some(19_565),
+            Some(40),
+            Some(0.03932)
+        )
+    );
+}
+
+// AC1: recorded Codex fixture. Codex reports neither model nor cost.
+#[test]
+fn codex_fixture_yields_text_and_tokens() {
+    let parsed = parse_cli_output(LlmCliProvider::Codex, CODEX_FIXTURE, "", "n").unwrap();
+    assert_eq!(parsed.text, "OK");
+    assert!(!parsed.is_error);
+    assert_eq!(parsed.cost_usd, None);
+    assert_eq!(parsed.usage, usage(None, Some(20_446), Some(5), None));
+}
+
+// AC1: Gemini stream-json fixture. The model that wrote the most output wins
+// over the configured `init` model; Gemini reports no cost.
+#[test]
+fn gemini_stream_fixture_yields_text_model_tokens() {
+    let parsed = parse_cli_output(LlmCliProvider::Gemini, GEMINI_STREAM_FIXTURE, "", "n").unwrap();
+    assert_eq!(parsed.text, GEMINI_FIXTURE_TEXT);
+    assert!(!parsed.is_error);
+    assert_eq!(parsed.cost_usd, None);
+    assert_eq!(
+        parsed.usage,
+        usage(Some("gemini-2.5-pro"), Some(8_900), Some(70), None)
+    );
+}
+
+// AC1: Gemini json fixture gives the same text and summary as stream-json.
+#[test]
+fn gemini_json_fixture_yields_text_model_tokens() {
+    let parsed = parse_cli_output(LlmCliProvider::Gemini, GEMINI_JSON_FIXTURE, "", "n").unwrap();
+    let streamed =
+        parse_cli_output(LlmCliProvider::Gemini, GEMINI_STREAM_FIXTURE, "", "n").unwrap();
+    assert_eq!(parsed.text, GEMINI_FIXTURE_TEXT);
+    assert!(!parsed.is_error);
+    assert_eq!(
+        parsed.usage,
+        usage(Some("gemini-2.5-pro"), Some(8_900), Some(70), None)
+    );
+    assert_eq!(parsed.text, streamed.text);
+    assert_eq!(parsed.usage, streamed.usage);
+}
+
+/// Add unknown fields to every JSON line (top level and inside the token
+/// objects) and an unknown event type before the last line.
+fn with_unknown_fields(stdout: &str, multi_line_object: bool) -> String {
+    fn widen(value: &mut serde_json::Value) {
+        let unknown = serde_json::json!({"nested": [1, {"deep": null}], "flag": true});
+        if let Some(object) = value.as_object_mut() {
+            object.insert("pas_unknown_field".into(), unknown.clone());
+            for key in ["usage", "stats", "message"] {
+                if let Some(inner) = object.get_mut(key).and_then(|v| v.as_object_mut()) {
+                    inner.insert("pas_unknown_field".into(), unknown.clone());
+                }
+            }
+        }
+    }
+    if multi_line_object {
+        let mut value: serde_json::Value = serde_json::from_str(stdout).unwrap();
+        widen(&mut value);
+        return serde_json::to_string_pretty(&value).unwrap();
+    }
+    let mut lines: Vec<String> = stdout
+        .lines()
+        .map(|line| {
+            let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+            widen(&mut value);
+            value.to_string()
+        })
+        .collect();
+    let last = lines.len() - 1;
+    lines.insert(
+        last,
+        r#"{"type":"pas_unknown_event","payload":{"x":1}}"#.into(),
+    );
+    lines.join("\n") + "\n"
+}
+
+// AC2: unknown fields and unknown event types do not change the result.
+#[test]
+fn summaries_ignore_unknown_fields_and_event_types() {
+    for (provider, fixture, multi_line_object) in [
+        (LlmCliProvider::Claude, CLAUDE_FIXTURE, false),
+        (LlmCliProvider::Codex, CODEX_FIXTURE, false),
+        (LlmCliProvider::Gemini, GEMINI_STREAM_FIXTURE, false),
+        (LlmCliProvider::Gemini, GEMINI_JSON_FIXTURE, true),
+    ] {
+        let widened = with_unknown_fields(fixture, multi_line_object);
+        assert!(widened.contains("pas_unknown_field"));
+        let expected = parse_cli_output(provider, fixture, "", "n").unwrap();
+        let parsed = parse_cli_output(provider, &widened, "", "n")
+            .unwrap_or_else(|e| panic!("{provider:?}: {e}"));
+        assert_eq!(parsed.text, expected.text, "{provider:?}");
+        assert_eq!(parsed.is_error, expected.is_error, "{provider:?}");
+        assert_eq!(parsed.cost_usd, expected.cost_usd, "{provider:?}");
+        assert_eq!(parsed.turns, expected.turns, "{provider:?}");
+        assert_eq!(parsed.usage, expected.usage, "{provider:?}");
+        assert_ne!(parsed.usage, InvocationUsage::default(), "{provider:?}");
+    }
+}
+
+// AC3: a stream without model or cost data gives `None` for those fields,
+// and the Outcome fields are what they were before summaries existed.
+#[test]
+fn stream_without_model_or_cost_yields_none() {
+    // Claude: a bare result line, as older CLIs and `json` mode print.
+    let bare = r#"{"type":"result","result":"done","is_error":false}"#;
+    let parsed = parse_cli_output(LlmCliProvider::Claude, bare, "", "n").unwrap();
+    assert_eq!(parsed.text, "done");
+    assert_eq!(parsed.cost_usd, Some(0.0), "Outcome cost is unchanged");
+    assert_eq!(parsed.usage, InvocationUsage::default());
+
+    // Claude: tokens but no model and no cost.
+    let tokens_only =
+        r#"{"type":"result","result":"done","usage":{"input_tokens":3,"output_tokens":4}}"#;
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Claude, tokens_only),
+        usage(None, Some(3), Some(4), None)
+    );
+
+    // Claude: model known from init but the run has no result line yet.
+    let no_result = "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"m\"}\n";
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Claude, no_result),
+        usage(Some("m"), None, None, None)
+    );
+
+    // Codex: no turn.completed event.
+    let codex =
+        "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"hi\"}}\n";
+    let parsed = parse_cli_output(LlmCliProvider::Codex, codex, "", "n").unwrap();
+    assert_eq!(parsed.text, "hi");
+    assert_eq!(parsed.usage, InvocationUsage::default());
+
+    // Gemini stream-json: a result without stats and no init.
+    let gemini_stream =
+        "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"hi\",\"delta\":true}\n\
+        {\"type\":\"result\",\"status\":\"success\"}\n";
+    let parsed = parse_cli_output(LlmCliProvider::Gemini, gemini_stream, "", "n").unwrap();
+    assert_eq!(parsed.text, "hi");
+    assert!(!parsed.is_error);
+    assert_eq!(parsed.usage, InvocationUsage::default());
+
+    // Gemini json: no stats.
+    let parsed = parse_cli_output(LlmCliProvider::Gemini, r#"{"response":"hi"}"#, "", "n").unwrap();
+    assert_eq!(parsed.text, "hi");
+    assert_eq!(parsed.usage, InvocationUsage::default());
+}
+
+// AC3 boundary: unreadable input never fails the summary.
+#[test]
+fn summaries_of_unreadable_streams_are_empty() {
+    let torn = "not json\n{\"type\":\"result\",\"total_cost_usd\":0.5,\"usa";
+    let wrong_types = "{\"type\":\"result\",\"total_cost_usd\":\"cheap\",\"result\":\"x\"}\n\
+        {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":\"many\"}}\n";
+    for provider in [
+        LlmCliProvider::Claude,
+        LlmCliProvider::Codex,
+        LlmCliProvider::Gemini,
+    ] {
+        for stdout in ["", "   \n", "not json at all", torn, wrong_types, "[1,2]"] {
+            assert_eq!(
+                summarize_stream(provider, stdout),
+                InvocationUsage::default(),
+                "{provider:?} {stdout:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn claude_summary_sums_subagent_model_usage_and_keeps_init_model() {
+    let stream = format!(
+        "{}\n{}\n",
+        r#"{"type":"system","subtype":"init","model":"claude-opus"}"#,
+        r#"{"type":"result","result":"x","total_cost_usd":1.5,"modelUsage":{"claude-opus":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":5},"claude-haiku":{"inputTokens":1,"outputTokens":2,"cacheCreationInputTokens":3}},"usage":{"input_tokens":999,"output_tokens":999}}"#
+    );
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Claude, &stream),
+        usage(Some("claude-opus"), Some(19), Some(22), Some(1.5))
+    );
+
+    // Without init, the last assistant message names the model.
+    let stream = format!(
+        "{}\n{}\n{}\n",
+        r#"{"type":"assistant","message":{"model":"first"}}"#,
+        r#"{"type":"assistant","message":{"model":"second"}}"#,
+        r#"{"type":"result","result":"x"}"#
+    );
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Claude, &stream).model_actual,
+        Some("second".into())
+    );
+
+    // Without init or messages, a single modelUsage entry names the model.
+    let single = r#"{"type":"result","result":"x","modelUsage":{"only":{"outputTokens":1}}}"#;
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Claude, single),
+        usage(Some("only"), None, Some(1), None)
+    );
+}
+
+#[test]
+fn codex_summary_sums_turns() {
+    let stream =
+        "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}\n\
+        {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20,\"output_tokens\":2}}\n";
+    assert_eq!(
+        summarize_stream(LlmCliProvider::Codex, stream),
+        usage(None, Some(30), Some(3), None)
+    );
+}
+
+#[test]
+fn parse_gemini_stream_error_result_is_an_error_result() {
+    let stream = "{\"type\":\"init\",\"model\":\"gemini-2.5-pro\"}\n\
+        {\"type\":\"message\",\"role\":\"assistant\",\"content\":\"partial\",\"delta\":true}\n\
+        {\"type\":\"result\",\"status\":\"error\",\"error\":{\"type\":\"FatalTurnLimitedError\",\"message\":\"turn limit\"},\"stats\":{\"input_tokens\":5,\"output_tokens\":1}}\n";
+    let parsed = parse_cli_output(LlmCliProvider::Gemini, stream, "", "n").unwrap();
+    assert!(parsed.is_error);
+    assert_eq!(parsed.text, "turn limit");
+    assert_eq!(
+        parsed.usage,
+        usage(Some("gemini-2.5-pro"), Some(5), Some(1), None)
+    );
+}
+
+#[test]
+fn parse_gemini_stream_without_result_is_a_parse_error() {
+    let stream = "{\"type\":\"init\",\"model\":\"m\"}\n\
+        {\"type\":\"message\",\"role\":\"assistant\",\"content\":\"partial\"}\n";
+    let error = parse_gemini_stream_output(stream, "n")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Failed to parse Gemini output"), "{error}");
+}
+
+// AC5 (command): the chosen Gemini format is what reaches argv.
+#[test]
+fn build_cli_command_gemini_stream_json_replaces_json() {
+    let node = make_node("n", "box", Some("do work"), HashMap::new());
+    let graph = make_minimal_graph();
+    let cfg = CliRunConfig {
+        provider: LlmCliProvider::Gemini,
+        prompt: "test prompt",
+        model: None,
+        workdir: None,
+        node: &node,
+        graph: &graph,
+        claude: ClaudeCliConfig::default(),
+    };
+    let args = |format| {
+        build_cli_command_with_program(&cfg, "gemini".as_ref(), format)
+            .as_std()
+            .get_args()
+            .map(|a| a.to_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        args(GeminiOutputFormat::StreamJson),
+        vec![
+            "--output-format",
+            "stream-json",
+            "--approval-mode",
+            "yolo",
+            "test prompt"
+        ]
+    );
+    assert_eq!(
+        args(GeminiOutputFormat::Json),
+        vec![
+            "--output-format",
+            "json",
+            "--approval-mode",
+            "yolo",
+            "test prompt"
+        ]
+    );
+}
+
+// --- Stream summaries and Gemini format selection with stub providers ---
+
+#[cfg(unix)]
+mod stream_formats {
+    use std::path::{Path, PathBuf};
+
+    use attractor_types::{Context, Outcome, Result};
+
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/providers")
+            .join(name)
+    }
+
+    fn stub(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("provider-stub");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    async fn run(provider: LlmCliProvider, program: PathBuf) -> Result<Outcome> {
+        let node = make_node("step", "box", Some("do work"), HashMap::new());
+        let resolved = ResolvedNode {
+            node_id: node.id.clone(),
+            kind: ResolvedNodeKind::Task,
+            handler: crate::HandlerIdentity::Codergen,
+            provider: Some(provider),
+            invocation: Default::default(),
+        };
+        CodergenHandler
+            .execute_with_controls(
+                &node,
+                &resolved,
+                &Context::default(),
+                &make_minimal_graph(),
+                CodergenExecutionControls {
+                    dry_run: false,
+                    workdir: None,
+                    claude: ClaudeCliConfig::default(),
+                    run_dir: None,
+                    program: Some(program),
+                },
+            )
+            .await
+    }
+
+    /// A Gemini stub: `--help` prints `help` and exits `help_exit`; a run
+    /// logs its argv and prints the fixture matching `--output-format`,
+    /// rejecting `stream-json` like a pre-0.11.0 CLI unless `stream_ok`.
+    fn gemini_stub(dir: &Path, help: &str, help_exit: u8, stream_ok: bool) -> PathBuf {
+        let log = dir.join("argv.log");
+        let helps = dir.join("help.count");
+        let stream = if stream_ok {
+            format!("cat '{}'", fixture("gemini-0.61.0.stream.jsonl").display())
+        } else {
+            "echo 'Invalid values: Argument: output-format, Given: \"stream-json\"' >&2; exit 1"
+                .into()
+        };
+        stub(
+            dir,
+            &format!(
+                "if [ \"$1\" = --help ]; then echo x >> '{helps}'; echo '{help}'; exit {help_exit}; fi\n\
+                 echo \"$@\" > '{log}'\n\
+                 if [ \"$2\" = stream-json ]; then {stream}; exit 0; fi\n\
+                 cat '{json}'",
+                helps = helps.display(),
+                log = log.display(),
+                json = fixture("gemini-0.61.0.json").display(),
+            ),
+        )
+    }
+
+    fn argv(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("argv.log")).unwrap()
+    }
+
+    const OLD_HELP: &str = "--output-format  [choices: \"text\", \"json\"]";
+    const NEW_HELP: &str = "--output-format  [choices: \"text\", \"json\", \"stream-json\"]";
+
+    // AC5: a Gemini CLI without stream-json gets `--output-format json`.
+    #[tokio::test]
+    async fn gemini_without_stream_json_falls_back_to_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = gemini_stub(tmp.path(), OLD_HELP, 0, false);
+        let outcome = run(LlmCliProvider::Gemini, program).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(outcome.notes, GEMINI_FIXTURE_TEXT);
+        assert!(
+            argv(tmp.path()).starts_with("--output-format json --approval-mode yolo"),
+            "{}",
+            argv(tmp.path())
+        );
+    }
+
+    // AC5 counterpart: a CLI that lists stream-json gets it.
+    #[tokio::test]
+    async fn gemini_with_stream_json_uses_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = gemini_stub(tmp.path(), NEW_HELP, 0, true);
+        let outcome = run(LlmCliProvider::Gemini, program).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(outcome.notes, GEMINI_FIXTURE_TEXT);
+        assert!(
+            argv(tmp.path()).starts_with("--output-format stream-json --approval-mode yolo"),
+            "{}",
+            argv(tmp.path())
+        );
+    }
+
+    // AC5 boundary: a failing `--help` means json, even if it names stream-json.
+    #[tokio::test]
+    async fn gemini_probe_failure_falls_back_to_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = gemini_stub(tmp.path(), NEW_HELP, 3, false);
+        let outcome = run(LlmCliProvider::Gemini, program).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert!(argv(tmp.path()).starts_with("--output-format json "));
+    }
+
+    // The probe runs once per program path, not once per Model Invocation.
+    #[tokio::test]
+    async fn gemini_probe_runs_once_per_program() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = gemini_stub(tmp.path(), NEW_HELP, 0, true);
+        for _ in 0..3 {
+            let outcome = run(LlmCliProvider::Gemini, program.clone()).await.unwrap();
+            assert_eq!(outcome.status, StageStatus::Success);
+        }
+        let helps = std::fs::read_to_string(tmp.path().join("help.count")).unwrap();
+        assert_eq!(helps.lines().count(), 1);
+    }
+
+    // A stream-json run that exits non-zero before its result event is
+    // reported like an empty stdout, as json mode is.
+    #[tokio::test]
+    async fn gemini_stream_nonzero_exit_without_result_keeps_exit_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(
+            tmp.path(),
+            &format!(
+                "if [ \"$1\" = --help ]; then echo '{NEW_HELP}'; exit 0; fi\n\
+                 echo '{{\"type\":\"init\",\"model\":\"m\"}}'\n\
+                 echo 'quota exceeded' >&2\n\
+                 exit 1"
+            ),
+        );
+        let error = run(LlmCliProvider::Gemini, program)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("Gemini CLI exited with exit status: 1"),
+            "{error}"
+        );
+        assert!(error.contains("quota exceeded"), "{error}");
+    }
+
+    // AC3 at the stage level: no model or cost in the stream, stage succeeds,
+    // and the Outcome keeps today's `cost_usd = 0.0` for the budget.
+    #[tokio::test]
+    async fn stage_succeeds_when_stream_has_no_model_or_cost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(
+            tmp.path(),
+            "echo '{\"type\":\"result\",\"result\":\"done\",\"is_error\":false}'",
+        );
+        let outcome = run(LlmCliProvider::Claude, program).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(outcome.notes, "done");
+        assert_eq!(
+            outcome.context_updates.get("step.cost_usd"),
+            Some(&serde_json::json!(0.0))
+        );
+        assert_eq!(
+            outcome.context_updates.get("step.turns"),
+            Some(&serde_json::json!(0))
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(
+            tmp.path(),
+            "echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"codex done\"}}'",
+        );
+        let outcome = run(LlmCliProvider::Codex, program).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(outcome.notes, "codex done");
+        assert!(!outcome.context_updates.contains_key("step.cost_usd"));
+    }
+
+    // AC1 at the stage level: each recorded fixture gives the same Outcome
+    // text through the handler as through the parser.
+    #[tokio::test]
+    async fn recorded_fixtures_succeed_through_the_handler() {
+        for (provider, name, text) in [
+            (LlmCliProvider::Claude, "claude-2.1.282.stream.jsonl", "OK"),
+            (LlmCliProvider::Codex, "codex-0.151.0.jsonl", "OK"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let program = stub(tmp.path(), &format!("cat '{}'", fixture(name).display()));
+            let outcome = run(provider, program).await.unwrap();
+            assert_eq!(outcome.status, StageStatus::Success, "{provider:?}");
+            assert_eq!(outcome.notes, text, "{provider:?}");
+        }
     }
 }

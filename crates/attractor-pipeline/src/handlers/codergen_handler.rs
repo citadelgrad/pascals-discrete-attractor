@@ -14,12 +14,18 @@ use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
 
 use super::process_group::{self, ProcessGroupGuard};
+use super::provider_stream::{run_streaming, Transcript};
 
 #[path = "codergen_provider.rs"]
 mod provider;
-use provider::{build_cli_command, parse_cli_output, ClaudeCliConfig, CliRunConfig};
 #[cfg(test)]
-use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, LlmCliProvider};
+use provider::{
+    build_cli_command, parse_claude_output, parse_codex_output, parse_gemini_output, LlmCliProvider,
+};
+use provider::{
+    build_cli_command_with_program, claude_result_line, parse_cli_output, ClaudeCliConfig,
+    CliRunConfig,
+};
 
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)
@@ -37,6 +43,10 @@ use provider::{parse_claude_output, parse_codex_output, parse_gemini_output, Llm
 //   - timeout: Duration before the CLI invocation is killed (default: 10m)
 //
 // The pipeline context key "workdir" controls the working directory.
+//
+// When the executor has a Run folder, each provider process (Model Invocation)
+// gets a new Invocation ID and its raw stdout is streamed, line by line, to
+// `transcripts/<invocation-id>.jsonl` while it runs.
 // ---------------------------------------------------------------------------
 
 pub struct CodergenHandler;
@@ -45,6 +55,10 @@ struct CodergenExecutionControls {
     dry_run: bool,
     workdir: Option<String>,
     claude: ClaudeCliConfig,
+    /// Run folder that receives Transcripts; `None` writes no Transcript.
+    run_dir: Option<PathBuf>,
+    /// Executable to start instead of the provider's binary (test stubs).
+    program: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -200,39 +214,74 @@ impl CodergenHandler {
             });
 
         // Build the CLI command via the provider-specific builder
-        let mut cmd = build_cli_command(&CliRunConfig {
-            provider,
-            prompt: &full_prompt,
-            model,
-            workdir: controls.workdir.as_deref(),
-            node,
-            graph,
-            claude: controls.claude,
-        });
+        let program = controls
+            .program
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(provider.binary_name()));
+        let mut cmd = build_cli_command_with_program(
+            &CliRunConfig {
+                provider,
+                prompt: &full_prompt,
+                model,
+                workdir: controls.workdir.as_deref(),
+                node,
+                graph,
+                claude: controls.claude,
+            },
+            program.as_os_str(),
+        );
         cmd.kill_on_drop(true);
         process_group::configure(&mut cmd);
 
-        // Spawn the CLI process — detect missing binary
-        let child = cmd.spawn().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                AttractorError::CliNotFound {
-                    binary: provider.binary_name().to_string(),
-                }
-            } else {
-                AttractorError::HandlerError {
-                    handler: "codergen".into(),
-                    node: node.id.clone(),
-                    message: format!("Failed to spawn {}: {}", provider.display_name(), e),
-                }
+        // One Model Invocation per spawn. The Transcript exists before any
+        // output arrives, so a silent provider still leaves an empty file.
+        let invocation_id = attractor_journal::new_invocation_id();
+        let transcript = match &controls.run_dir {
+            Some(run_dir) => {
+                let path = attractor_journal::RunDir::from_path(run_dir).transcript(&invocation_id);
+                Transcript::create(path).await
             }
-        })?;
+            None => None,
+        };
+
+        // Spawn the CLI process — detect missing binary
+        let child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                // No Model Invocation happened, so no Transcript either.
+                if let Some(transcript) = transcript {
+                    transcript.discard().await;
+                }
+                return Err(if e.kind() == std::io::ErrorKind::NotFound {
+                    AttractorError::CliNotFound {
+                        binary: provider.binary_name().to_string(),
+                    }
+                } else {
+                    AttractorError::HandlerError {
+                        handler: "codergen".into(),
+                        node: node.id.clone(),
+                        message: format!("Failed to spawn {}: {}", provider.display_name(), e),
+                    }
+                });
+            }
+        };
+        tracing::debug!(
+            node = %node.id,
+            invocation_id = %invocation_id,
+            transcript = ?transcript.as_ref().map(Transcript::path),
+            "Started {}",
+            provider.display_name()
+        );
 
         // Apply timeout (default 10 minutes, configurable via node.timeout).
         // The guard owns process-tree cleanup even if the executor's outer
         // deadline drops this handler future before its local timeout fires.
+        // Every stdout line is flushed to the Transcript as it arrives, so a
+        // timeout or cancellation keeps the partial Transcript.
         let mut process_group = ProcessGroupGuard::new(child.id());
         let timeout_dur = node.timeout.unwrap_or(std::time::Duration::from_secs(600));
-        let output = match tokio::time::timeout(timeout_dur, child.wait_with_output()).await {
+        let output = match tokio::time::timeout(timeout_dur, run_streaming(child, transcript)).await
+        {
             Ok(Ok(output)) => {
                 process_group.disarm();
                 output
@@ -260,7 +309,11 @@ impl CodergenHandler {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        if !output.status.success() && stdout.is_empty() {
+        // A Claude stream that ends without its final `result` line carries
+        // no answer; report the exit like an empty stdout, as before streaming.
+        let no_final_result = stdout.is_empty()
+            || (provider == LlmProvider::Claude && claude_result_line(&stdout).is_none());
+        if !output.status.success() && no_final_result {
             return Err(AttractorError::HandlerError {
                 handler: "codergen".into(),
                 node: node.id.clone(),
@@ -374,6 +427,8 @@ impl ProviderNodeHandler for CodergenHandler {
                 dry_run,
                 workdir,
                 claude,
+                run_dir: None,
+                program: None,
             },
         )
         .await
@@ -417,6 +472,8 @@ impl ProviderNodeHandler for CodergenHandler {
                 dry_run: *config.dry_run().value(),
                 workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
                 claude,
+                run_dir: execution.run_dir().map(Path::to_path_buf),
+                program: None,
             },
         )
         .await

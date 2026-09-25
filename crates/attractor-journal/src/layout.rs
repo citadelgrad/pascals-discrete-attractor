@@ -32,6 +32,12 @@ pub fn new_run_id() -> String {
     Uuid::now_v7().hyphenated().to_string()
 }
 
+/// Mint a new Invocation ID for one Model Invocation. Same form as a Run ID,
+/// so Transcripts sort by start time and the ID cannot escape `transcripts/`.
+pub fn new_invocation_id() -> String {
+    Uuid::now_v7().hyphenated().to_string()
+}
+
 /// Validate a Run ID and normalize it to lowercase hyphenated form.
 ///
 /// Returns `None` for anything that is not a UUID, so a Run ID taken from the
@@ -150,6 +156,16 @@ mod tests {
         let u = Uuid::parse_str(&id).unwrap();
         assert_eq!(u.get_version_num(), 7);
         assert_eq!(parse_run_id(&id).as_deref(), Some(id.as_str()));
+    }
+
+    #[test]
+    fn new_invocation_id_is_lowercase_v7_and_unique() {
+        let a = new_invocation_id();
+        let b = new_invocation_id();
+        assert_ne!(a, b);
+        assert_eq!(a, a.to_lowercase());
+        assert_eq!(Uuid::parse_str(&a).unwrap().get_version_num(), 7);
+        assert_eq!(parse_run_id(&a).as_deref(), Some(a.as_str()));
     }
 
     #[test]

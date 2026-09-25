@@ -39,6 +39,8 @@ pub struct PipelineExecutor {
     observers: Observers,
     /// Run ID of the attached journal; recorded in every checkpoint.
     run_id: Option<String>,
+    /// Run folder of the attached journal; handed to handlers for Transcripts.
+    run_dir: Option<PathBuf>,
 }
 
 /// The result of a completed pipeline execution.
@@ -342,6 +344,7 @@ impl PipelineExecutor {
             registry,
             observers: Observers::default(),
             run_id: None,
+            run_dir: None,
         }
     }
 
@@ -351,6 +354,7 @@ impl PipelineExecutor {
             registry: default_registry(),
             observers: Observers::default(),
             run_id: None,
+            run_dir: None,
         }
     }
 
@@ -369,6 +373,7 @@ impl PipelineExecutor {
     pub fn with_journal(mut self, journal: impl Into<Arc<JournalWriter>>) -> Self {
         let journal: Arc<JournalWriter> = journal.into();
         self.run_id = Some(journal.run_id().to_string());
+        self.run_dir = journal.path().parent().map(Path::to_path_buf);
         self.observers.journal = Some(journal);
         self
     }
@@ -532,7 +537,11 @@ impl PipelineExecutor {
             let execution = handler.execute_configured(
                 node,
                 resolved,
-                HandlerExecutionContext::new(checkpoint.context, configured.controls()),
+                HandlerExecutionContext::new(
+                    checkpoint.context,
+                    configured.controls(),
+                    self.run_dir.as_deref(),
+                ),
                 configured.plan().graph(),
             );
             let result = if let Some(timeout) = resolved.invocation.timeout {

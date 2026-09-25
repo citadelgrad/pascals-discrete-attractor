@@ -872,7 +872,7 @@ These are set in the `.dot` file as node attributes and passed through to each `
 | Graph `model` | `--model` (fallback) | Default model when node doesn't specify one |
 
 Every node also gets:
-- `--output-format json` — for structured output parsing
+- `--output-format stream-json --verbose` — streamed JSON events; PAS parses the final `result` event
 - `--no-session-persistence` — each node is a fresh session
 - `--dangerously-skip-permissions` — allows file edits and bash execution
 

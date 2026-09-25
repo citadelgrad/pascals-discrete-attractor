@@ -3332,3 +3332,101 @@ async fn head_moving_backwards_emits_no_commits_created() {
     run.result.as_ref().unwrap();
     assert!(run.commits_created().is_empty());
 }
+
+/// Records the Run folder each provider stage receives.
+struct RunDirRecorder(Arc<std::sync::Mutex<Vec<Option<PathBuf>>>>);
+
+#[async_trait]
+impl NodeHandler for RunDirRecorder {
+    fn handler_type(&self) -> &str {
+        "codergen"
+    }
+
+    fn provider_handler(&self) -> Option<&dyn crate::handler::ProviderNodeHandler> {
+        Some(self)
+    }
+
+    async fn execute(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+}
+
+#[async_trait]
+impl crate::handler::ProviderNodeHandler for RunDirRecorder {
+    async fn execute_resolved(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _resolved: &crate::execution_plan::ResolvedNode,
+        _context: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+
+    async fn execute_configured(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _resolved: &crate::execution_plan::ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(execution.run_dir().map(Path::to_path_buf));
+        Ok(Outcome::success("recorded"))
+    }
+}
+
+fn run_dir_recorder_registry() -> (HandlerRegistry, Arc<std::sync::Mutex<Vec<Option<PathBuf>>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(RunDirRecorder(seen.clone()));
+    (registry, seen)
+}
+
+// T2-2: provider handlers get the journal's Run folder for Transcripts, and
+// no Run folder when the executor has no journal.
+#[tokio::test]
+async fn journaled_executor_passes_run_dir_to_provider_handlers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let (registry, seen) = run_dir_recorder_registry();
+
+    PipelineExecutor::new(registry)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            Context::new(),
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*seen.lock().unwrap(), vec![Some(run_dir); 3]);
+}
+
+#[tokio::test]
+async fn executor_without_journal_passes_no_run_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (registry, seen) = run_dir_recorder_registry();
+
+    PipelineExecutor::new(registry)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            Context::new(),
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*seen.lock().unwrap(), vec![None; 3]);
+}

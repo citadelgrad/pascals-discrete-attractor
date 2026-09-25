@@ -10,7 +10,8 @@ use crate::graph::{PipelineGraph, PipelineNode};
 // CLI output structs
 // ---------------------------------------------------------------------------
 
-/// Result shape from `claude -p --output-format json`
+/// Result shape from `claude -p --output-format json`, which is also the final
+/// `{"type":"result",...}` line of `--output-format stream-json`.
 #[derive(Deserialize)]
 pub(super) struct ClaudeOutput {
     #[serde(default)]
@@ -143,10 +144,20 @@ impl Default for ClaudeCliConfig {
     }
 }
 
+#[cfg(test)]
 pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Command {
+    build_cli_command_with_program(cfg, cfg.provider.binary_name().as_ref())
+}
+
+/// Like [`build_cli_command`], but starts `program` instead of the provider's
+/// binary (tests point this at a stub provider script).
+pub(super) fn build_cli_command_with_program(
+    cfg: &CliRunConfig<'_>,
+    program: &std::ffi::OsStr,
+) -> tokio::process::Command {
     let mut cmd = match cfg.provider {
         LlmCliProvider::Claude => {
-            let mut cmd = tokio::process::Command::new("claude");
+            let mut cmd = tokio::process::Command::new(program);
             match cfg.claude.settings_mode {
                 ClaudeSettingsMode::SubscriptionBare => {
                     cmd.arg("--safe-mode");
@@ -165,7 +176,8 @@ pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Comma
             cmd.arg("-p")
                 .arg(cfg.prompt)
                 .arg("--output-format")
-                .arg("json")
+                .arg("stream-json")
+                .arg("--verbose")
                 .arg("--no-session-persistence")
                 .arg("--dangerously-skip-permissions")
                 .arg("--strict-mcp-config")
@@ -197,7 +209,7 @@ pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Comma
             cmd
         }
         LlmCliProvider::Codex => {
-            let mut cmd = tokio::process::Command::new("codex");
+            let mut cmd = tokio::process::Command::new(program);
             cmd.arg("exec")
                 .arg("--json")
                 .arg("--yolo")
@@ -214,7 +226,7 @@ pub(super) fn build_cli_command(cfg: &CliRunConfig<'_>) -> tokio::process::Comma
             cmd
         }
         LlmCliProvider::Gemini => {
-            let mut cmd = tokio::process::Command::new("gemini");
+            let mut cmd = tokio::process::Command::new(program);
             cmd.arg("--output-format")
                 .arg("json")
                 .arg("--approval-mode")
@@ -276,9 +288,21 @@ pub(super) fn parse_cli_output(
     }
 }
 
+/// The last `{"type":"result",...}` line of a Claude `stream-json` stdout.
+pub(super) fn claude_result_line(stdout: &str) -> Option<&str> {
+    stdout.lines().rev().map(str::trim).find(|line| {
+        line.starts_with('{')
+            && serde_json::from_str::<serde_json::Value>(line)
+                .is_ok_and(|value| value.get("type").and_then(|t| t.as_str()) == Some("result"))
+    })
+}
+
+/// Parse Claude output: the final `result` line of a `stream-json` stream, or
+/// (for older CLIs and `json` mode) the whole stdout as one object.
 pub(super) fn parse_claude_output(stdout: &str, node_id: &str) -> Result<NormalizedCliResult> {
+    let final_result = claude_result_line(stdout).unwrap_or(stdout);
     let parsed: ClaudeOutput =
-        serde_json::from_str(stdout).map_err(|e| AttractorError::HandlerError {
+        serde_json::from_str(final_result).map_err(|e| AttractorError::HandlerError {
             handler: "codergen".into(),
             node: node_id.into(),
             message: format!(

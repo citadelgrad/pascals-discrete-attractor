@@ -1,6 +1,7 @@
 //! Node handler trait, dynamic dispatch wrapper, and handler registry.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use async_trait::async_trait;
 
@@ -15,15 +16,30 @@ use crate::run_configuration::ResolvedConfig;
 pub struct HandlerExecutionContext<'a> {
     workflow: &'a Context,
     config: &'a ResolvedConfig,
+    run_dir: Option<&'a Path>,
 }
 
 impl<'a> HandlerExecutionContext<'a> {
-    pub(crate) fn new(workflow: &'a Context, config: &'a ResolvedConfig) -> Self {
-        Self { workflow, config }
+    pub(crate) fn new(
+        workflow: &'a Context,
+        config: &'a ResolvedConfig,
+        run_dir: Option<&'a Path>,
+    ) -> Self {
+        Self {
+            workflow,
+            config,
+            run_dir,
+        }
     }
 
     pub fn config(self) -> &'a ResolvedConfig {
         self.config
+    }
+
+    /// The Run folder (`runs/<run-id>`) when the executor has a Run Journal;
+    /// `None` for library use without one.
+    pub fn run_dir(self) -> Option<&'a Path> {
+        self.run_dir
     }
 
     pub async fn get(self, key: &str) -> Option<serde_json::Value> {
@@ -183,8 +199,11 @@ impl DynHandler {
         // state.
         let isolated_workflow = execution.workflow().clone_isolated().await;
         let before = isolated_workflow.snapshot().await;
-        let isolated_execution =
-            HandlerExecutionContext::new(&isolated_workflow, execution.config());
+        let isolated_execution = HandlerExecutionContext::new(
+            &isolated_workflow,
+            execution.config(),
+            execution.run_dir(),
+        );
         let mut outcome = match self.0.provider_handler() {
             Some(handler) => {
                 handler

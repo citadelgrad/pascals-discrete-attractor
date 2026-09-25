@@ -1,5 +1,6 @@
 //! Additional node handlers beyond the basic start/exit/conditional.
 
+pub mod beads;
 pub mod codergen_handler;
 pub mod manager;
 pub mod parallel;
@@ -9,6 +10,7 @@ pub mod quality_handler;
 pub mod tool_handler;
 pub mod wait_human;
 
+pub use beads::BeadsSelectHandler;
 pub use codergen_handler::CodergenHandler;
 pub use manager::ManagerLoopHandler;
 pub use parallel::{FanInHandler, ParallelHandler};

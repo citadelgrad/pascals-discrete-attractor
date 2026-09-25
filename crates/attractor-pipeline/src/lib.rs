@@ -26,7 +26,7 @@ pub mod transforms;
 pub mod validation;
 
 pub use attractor_quality::{ClaudeSettingSource, ClaudeSettingsMode};
-pub use beads_adapter::{BeadsAdapter, BeadsError, BeadsIssue, NewIssue};
+pub use beads_adapter::{BeadsAdapter, BeadsDependency, BeadsError, BeadsIssue, NewIssue};
 pub use checkpoint::{clear_checkpoint, load_checkpoint, save_checkpoint, PipelineCheckpoint};
 pub use condition::{evaluate_condition, parse_condition, Clause, ConditionExpr, Operator};
 pub use edge_selection::select_edge;
@@ -46,7 +46,8 @@ pub use handler::{
 };
 pub use handlers::wait_human::WaitHumanHandler;
 pub use handlers::{
-    CodergenHandler, FanInHandler, ManagerLoopHandler, ParallelHandler, QualityHandler, ToolHandler,
+    BeadsSelectHandler, CodergenHandler, FanInHandler, ManagerLoopHandler, ParallelHandler,
+    QualityHandler, ToolHandler,
 };
 pub use interviewer::{
     Answer, AutoApproveInterviewer, ConsoleInterviewer, Interviewer, Question, RecordingInterviewer,

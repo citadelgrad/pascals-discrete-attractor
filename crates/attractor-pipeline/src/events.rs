@@ -4,7 +4,9 @@
 //! external observers (loggers, metrics collectors, UI, etc.) can subscribe to
 //! pipeline execution progress without coupling to the engine internals.
 
-use attractor_journal::{CommitRef, EventData};
+use std::collections::BTreeMap;
+
+use attractor_journal::{CommitRef, EventData, TaskSummary};
 use serde::{Deserialize, Serialize};
 
 /// Events emitted during pipeline execution.
@@ -83,6 +85,26 @@ pub enum PipelineEvent {
         duration_ms: u64,
         transcript: String,
         status: String,
+    },
+    /// `beads.select` read the Epic and all of its children (spec C3).
+    EpicSnapshot {
+        epic_id: String,
+        title: String,
+        tasks: Vec<TaskSummary>,
+    },
+    /// `beads.select` claimed `task_id` in Beads.
+    TaskClaimed {
+        task_id: String,
+        title: String,
+        epic_id: String,
+        node_id: String,
+    },
+    /// `beads.select` found open children but none it could claim.
+    /// `blocked_by` maps each open Task to the open issues blocking it.
+    TaskSelectionBlocked {
+        epic_id: String,
+        open: Vec<String>,
+        blocked_by: BTreeMap<String, Vec<String>>,
     },
 }
 
@@ -182,6 +204,35 @@ impl PipelineEvent {
                 duration_ms,
                 transcript,
                 status,
+            },
+            Self::EpicSnapshot {
+                epic_id,
+                title,
+                tasks,
+            } => EventData::EpicSnapshot {
+                epic_id,
+                title,
+                tasks,
+            },
+            Self::TaskClaimed {
+                task_id,
+                title,
+                epic_id,
+                node_id,
+            } => EventData::TaskClaimed {
+                task_id,
+                title,
+                epic_id,
+                node_id,
+            },
+            Self::TaskSelectionBlocked {
+                epic_id,
+                open,
+                blocked_by,
+            } => EventData::TaskSelectionBlocked {
+                epic_id,
+                open,
+                blocked_by,
             },
         }
     }
@@ -410,6 +461,29 @@ mod tests {
                 duration_ms: 3000,
                 transcript: "transcripts/inv.jsonl".into(),
                 status: "timeout".into(),
+            },
+            PipelineEvent::EpicSnapshot {
+                epic_id: "e".into(),
+                title: "Epic".into(),
+                tasks: vec![TaskSummary {
+                    id: "e.1".into(),
+                    title: "one".into(),
+                    status: "open".into(),
+                }],
+            },
+            PipelineEvent::TaskClaimed {
+                task_id: "e.1".into(),
+                title: "one".into(),
+                epic_id: "e".into(),
+                node_id: "pick".into(),
+            },
+            PipelineEvent::TaskSelectionBlocked {
+                epic_id: "e".into(),
+                open: vec!["e.2".into(), "e.3".into()],
+                blocked_by: BTreeMap::from([
+                    ("e.2".into(), vec!["x".into()]),
+                    ("e.3".into(), vec![]),
+                ]),
             },
         ];
 

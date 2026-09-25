@@ -997,6 +997,9 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::ContextUpdated { .. } => "context_updated",
             PipelineEvent::CommitsCreated { .. } => "commits_created",
             PipelineEvent::LlmInvoked { .. } => "llm_invoked",
+            PipelineEvent::EpicSnapshot { .. } => "epic_snapshot",
+            PipelineEvent::TaskClaimed { .. } => "task_claimed",
+            PipelineEvent::TaskSelectionBlocked { .. } => "task_selection_blocked",
         });
     }
 

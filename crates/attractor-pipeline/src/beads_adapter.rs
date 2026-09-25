@@ -50,6 +50,22 @@ pub struct BeadsIssue {
     pub assignee: Option<String>,
     #[serde(default)]
     pub close_reason: Option<String>,
+    /// Absent from `bd ready`; `bd show` and `bd children` use different
+    /// shapes, both accepted by [`BeadsDependency`].
+    #[serde(default)]
+    pub dependencies: Vec<BeadsDependency>,
+}
+
+/// One dependency of a [`BeadsIssue`]. `bd children` / `bd list` report
+/// `{depends_on_id, type}`; `bd show` reports the depended-on issue itself as
+/// `{id, dependency_type, …}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BeadsDependency {
+    #[serde(alias = "id")]
+    pub depends_on_id: String,
+    /// `blocks`, `parent-child`, … (empty when bd omits it).
+    #[serde(default, rename = "type", alias = "dependency_type")]
+    pub dep_type: String,
 }
 
 /// Fields for `bd create`.
@@ -272,18 +288,16 @@ impl BeadsAdapter {
     }
 }
 
+/// Shared by every module whose tests need a real Beads workspace.
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
-    use std::collections::BTreeSet;
-    use std::ffi::OsStr;
-    use std::path::Path;
 
-    const TEST_ACTOR: &str = "pas-test";
+    pub(crate) const TEST_ACTOR: &str = "pas-test";
 
     /// A temporary, isolated Beads workspace, or `None` when `bd` is missing
     /// (panics instead under `PAS_REQUIRE_BD=1`).
-    async fn workspace() -> Option<(tempfile::TempDir, BeadsAdapter)> {
+    pub(crate) async fn workspace() -> Option<(tempfile::TempDir, BeadsAdapter)> {
         match BeadsAdapter::new().run(&["--version"]).await {
             Err(BeadsError::BdNotFound { .. }) => {
                 assert!(
@@ -327,6 +341,25 @@ mod tests {
         Some((dir, adapter))
     }
 
+    /// An executable shell script standing in for `bd`.
+    pub(crate) fn stub(dir: &std::path::Path, name: &str, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    use super::test_support::{stub, workspace, TEST_ACTOR};
+
     async fn raw(adapter: &BeadsAdapter, args: &[&str]) -> Vec<serde_json::Value> {
         serde_json::from_slice(&adapter.run(args).await.unwrap()).unwrap()
     }
@@ -366,14 +399,6 @@ mod tests {
         }
     }
 
-    fn stub(dir: &Path, name: &str, script: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
-    }
-
     // AC1 + AC2 + AC3 against a real workspace. One workspace per test
     // function because `bd init` takes ~9 s.
     #[tokio::test]
@@ -396,6 +421,21 @@ mod tests {
         let c = bd.create(&task("Task C", "2", Some(&epic))).await.unwrap();
         let x = bd.create(&task("Unrelated X", "3", None)).await.unwrap();
         bd.add_dependency(&c, &b).await.unwrap();
+
+        // Dependencies parse from both the `children` and the `show` shape.
+        let blocks_b = BeadsDependency {
+            depends_on_id: b.clone(),
+            dep_type: "blocks".into(),
+        };
+        let c_child = bd
+            .children(&epic)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == c)
+            .unwrap();
+        assert!(c_child.dependencies.contains(&blocks_b), "{c_child:?}");
+        assert!(bd.show(&c).await.unwrap().dependencies.contains(&blocks_b));
 
         // AC1: the Epic matches `bd show`.
         let shown = bd.show(&epic).await.unwrap();
@@ -599,6 +639,37 @@ mod tests {
             BeadsAdapter::new().with_program(&program).show("t-1").await,
             Err(BeadsError::InvalidOutput { .. })
         ));
+    }
+
+    #[test]
+    fn dependencies_parse_from_children_and_show_shapes() {
+        let children: BeadsIssue = serde_json::from_str(
+            r#"{"id":"e.2","title":"T","status":"open","dependencies":[
+                {"issue_id":"e.2","depends_on_id":"e.1","type":"blocks","metadata":"{}"},
+                {"issue_id":"e.2","depends_on_id":"e","type":"parent-child"}]}"#,
+        )
+        .unwrap();
+        let shown: BeadsIssue = serde_json::from_str(
+            r#"{"id":"e.2","title":"T","status":"open","dependencies":[
+                {"id":"e.1","title":"A","status":"open","dependency_type":"blocks"},
+                {"id":"e","title":"E","status":"open","dependency_type":"parent-child"}]}"#,
+        )
+        .unwrap();
+        let expected = vec![
+            BeadsDependency {
+                depends_on_id: "e.1".into(),
+                dep_type: "blocks".into(),
+            },
+            BeadsDependency {
+                depends_on_id: "e".into(),
+                dep_type: "parent-child".into(),
+            },
+        ];
+        assert_eq!(children.dependencies, expected);
+        assert_eq!(shown.dependencies, expected);
+        let ready: BeadsIssue =
+            serde_json::from_str(r#"{"id":"e.2","title":"T","status":"open"}"#).unwrap();
+        assert!(ready.dependencies.is_empty());
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@
 //! handler dispatch, edge selection, goal gate enforcement, checkpoint/resume,
 //! and canonical semantic compilation followed by nine structural checks.
 
+pub mod beads_adapter;
 pub mod checkpoint;
 pub mod condition;
 pub mod edge_selection;
@@ -25,6 +26,7 @@ pub mod transforms;
 pub mod validation;
 
 pub use attractor_quality::{ClaudeSettingSource, ClaudeSettingsMode};
+pub use beads_adapter::{BeadsAdapter, BeadsError, BeadsIssue, NewIssue};
 pub use checkpoint::{clear_checkpoint, load_checkpoint, save_checkpoint, PipelineCheckpoint};
 pub use condition::{evaluate_condition, parse_condition, Clause, ConditionExpr, Operator};
 pub use edge_selection::select_edge;

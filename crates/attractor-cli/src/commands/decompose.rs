@@ -170,84 +170,48 @@ pub async fn cmd_decompose(spec_path: &std::path::Path, dry_run: bool) -> anyhow
         return Ok(());
     }
 
+    let beads = attractor_pipeline::BeadsAdapter::new();
+
     // Create the epic
-    let epic_output = tokio::process::Command::new("bd")
-        .args([
-            "create",
-            "--title",
-            &decompose.epic.title,
-            "--type",
-            "epic",
-            "--description",
-            &decompose.epic.description,
-            "--silent",
-        ])
-        .output()
-        .await?;
-
-    if !epic_output.status.success() {
-        let stderr = String::from_utf8_lossy(&epic_output.stderr);
-        anyhow::bail!("Failed to create epic: {}", stderr);
-    }
-
-    let epic_id = String::from_utf8(epic_output.stdout)?.trim().to_string();
+    let epic_id = beads
+        .create(&attractor_pipeline::NewIssue {
+            title: &decompose.epic.title,
+            issue_type: "epic",
+            description: &decompose.epic.description,
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create epic: {}", e))?;
 
     // Create tasks and collect their IDs
     let mut task_ids: Vec<String> = Vec::with_capacity(decompose.tasks.len());
 
     for task in &decompose.tasks {
-        let mut args = vec![
-            "create".to_string(),
-            "--title".to_string(),
-            task.title.clone(),
-            "--type".to_string(),
-            task.r#type.clone(),
-            "--priority".to_string(),
-            task.priority.clone(),
-            "--description".to_string(),
-            task.description.clone(),
-        ];
-
-        if let Some(ref acceptance) = task.acceptance {
-            args.push("--acceptance".to_string());
-            args.push(acceptance.clone());
-        }
-        if let Some(ref design) = task.design {
-            args.push("--design".to_string());
-            args.push(design.clone());
-        }
-        if let Some(ref notes) = task.notes {
-            args.push("--notes".to_string());
-            args.push(notes.clone());
-        }
-        args.push("--silent".to_string());
-
-        let task_output = tokio::process::Command::new("bd")
-            .args(&args)
-            .output()
-            .await?;
-
-        if !task_output.status.success() {
-            let stderr = String::from_utf8_lossy(&task_output.stderr);
-            anyhow::bail!("Failed to create task '{}': {}", task.title, stderr);
-        }
-
-        let task_id = String::from_utf8(task_output.stdout)?.trim().to_string();
+        let task_id = beads
+            .create(&attractor_pipeline::NewIssue {
+                title: &task.title,
+                issue_type: &task.r#type,
+                priority: Some(&task.priority),
+                description: &task.description,
+                acceptance: task.acceptance.as_deref(),
+                design: task.design.as_deref(),
+                notes: task.notes.as_deref(),
+                parent: None,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create task '{}': {}", task.title, e))?;
         task_ids.push(task_id);
     }
 
     // Add all tasks as children of the epic
     for task_id in &task_ids {
-        let dep_output = tokio::process::Command::new("bd")
-            .args(["dep", "add", &epic_id, task_id])
-            .output()
-            .await?;
-
-        if !dep_output.status.success() {
-            let stderr = String::from_utf8_lossy(&dep_output.stderr);
+        if let Err(e) = beads.add_dependency(&epic_id, task_id).await {
+            if !matches!(e, attractor_pipeline::BeadsError::CommandFailed { .. }) {
+                return Err(e.into());
+            }
             eprintln!(
                 "Warning: failed to add epic dependency for {}: {}",
-                task_id, stderr
+                task_id, e
             );
         }
     }
@@ -256,19 +220,16 @@ pub async fn cmd_decompose(spec_path: &std::path::Path, dry_run: bool) -> anyhow
     let mut dep_count = 0;
     for dep in &decompose.dependencies {
         if dep.blocked < task_ids.len() && dep.blocker < task_ids.len() {
-            let dep_output = tokio::process::Command::new("bd")
-                .args(["dep", "add", &task_ids[dep.blocked], &task_ids[dep.blocker]])
-                .output()
-                .await?;
-
-            if !dep_output.status.success() {
-                let stderr = String::from_utf8_lossy(&dep_output.stderr);
-                eprintln!(
+            match beads
+                .add_dependency(&task_ids[dep.blocked], &task_ids[dep.blocker])
+                .await
+            {
+                Ok(()) => dep_count += 1,
+                Err(e @ attractor_pipeline::BeadsError::CommandFailed { .. }) => eprintln!(
                     "Warning: failed to add dependency [{} -> {}]: {}",
-                    task_ids[dep.blocked], task_ids[dep.blocker], stderr
-                );
-            } else {
-                dep_count += 1;
+                    task_ids[dep.blocked], task_ids[dep.blocker], e
+                ),
+                Err(e) => return Err(e.into()),
             }
         } else {
             eprintln!(

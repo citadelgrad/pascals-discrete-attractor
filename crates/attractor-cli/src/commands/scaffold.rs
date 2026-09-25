@@ -7,30 +7,13 @@ pub async fn cmd_scaffold(epic_id: &str, output: Option<&std::path::Path>) -> an
     let template = include_str!("../../../../templates/epic-runner.dot");
 
     // Get epic details via bd show --json
-    let mut cmd = tokio::process::Command::new("bd");
-    cmd.arg("show").arg(epic_id).arg("--json");
+    let epic = attractor_pipeline::BeadsAdapter::new()
+        .show(epic_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("bd show failed: {}", e))?;
 
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let output_result = cmd.output().await?;
-
-    if !output_result.status.success() {
-        let stderr = String::from_utf8_lossy(&output_result.stderr);
-        anyhow::bail!("bd show failed: {}", stderr);
-    }
-
-    let json_output = String::from_utf8(output_result.stdout)?;
-    let epic_array: serde_json::Value = serde_json::from_str(&json_output)?;
-
-    // bd show --json returns an array with one element
-    let epic_data = epic_array
-        .as_array()
-        .and_then(|arr| arr.first())
-        .ok_or_else(|| anyhow::anyhow!("bd show returned empty array"))?;
-
-    let title = epic_data["title"].as_str().unwrap_or("Unknown Epic");
-    let description = epic_data["description"].as_str().unwrap_or("");
+    let title = epic.title.as_str();
+    let description = epic.description.as_deref().unwrap_or("");
 
     // First, update the goal attribute BEFORE replacing EPIC_ID
     let goal_text = format!(

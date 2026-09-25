@@ -178,26 +178,20 @@ pub async fn validate_decomposition(
     };
 
     // Fetch all child tickets
-    let list_output = tokio::process::Command::new("bd")
-        .args(["list", "--parent", epic_id, "--json", "--limit", "0"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await?;
-
-    if !list_output.status.success() {
-        let stderr = String::from_utf8_lossy(&list_output.stderr);
-        println!("\nValidation: skipped (bd list failed: {})", stderr.trim());
-        return Ok(());
-    }
-
-    let json_str = String::from_utf8(list_output.stdout)?;
-    let tickets: Vec<serde_json::Value> = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => {
+    let tickets = match attractor_pipeline::BeadsAdapter::new()
+        .list_open_children(epic_id)
+        .await
+    {
+        Ok(tickets) => tickets,
+        Err(attractor_pipeline::BeadsError::CommandFailed { stderr, .. }) => {
+            println!("\nValidation: skipped (bd list failed: {})", stderr);
+            return Ok(());
+        }
+        Err(attractor_pipeline::BeadsError::InvalidOutput { .. }) => {
             println!("\nValidation: skipped (could not parse ticket JSON)");
             return Ok(());
         }
+        Err(e) => return Err(e.into()),
     };
 
     if tickets.is_empty() {
@@ -211,18 +205,16 @@ pub async fn validate_decomposition(
     let mut complete_count = 0;
 
     for ticket in &tickets {
-        let id = ticket["id"].as_str().unwrap_or("?");
-        let title = ticket["title"].as_str().unwrap_or("?");
         let missing: Vec<&str> = check_fields
             .iter()
-            .filter(|&&field| ticket[field].as_str().is_none_or(|v| v.trim().is_empty()))
+            .filter(|&&field| ticket_field(ticket, field).is_none_or(|v| v.trim().is_empty()))
             .copied()
             .collect();
 
         if missing.is_empty() {
             complete_count += 1;
         } else {
-            incomplete.push((id.to_string(), title.to_string(), missing));
+            incomplete.push((ticket.id.clone(), ticket.title.clone(), missing));
         }
     }
 
@@ -232,7 +224,7 @@ pub async fn validate_decomposition(
         .map(|t| {
             let mut combined = String::new();
             for field in &["description", "acceptance_criteria", "design", "notes"] {
-                if let Some(v) = t[*field].as_str() {
+                if let Some(v) = ticket_field(t, field) {
                     combined.push_str(v);
                     combined.push('\n');
                 }
@@ -302,4 +294,47 @@ pub async fn validate_decomposition(
     }
 
     Ok(())
+}
+
+/// The ticket text field that `bd` reports under `field`.
+fn ticket_field<'a>(ticket: &'a attractor_pipeline::BeadsIssue, field: &str) -> Option<&'a str> {
+    match field {
+        "description" => ticket.description.as_deref(),
+        "acceptance_criteria" => ticket.acceptance_criteria.as_deref(),
+        "design" => ticket.design.as_deref(),
+        "notes" => ticket.notes.as_deref(),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ticket_field;
+
+    #[test]
+    fn ticket_field_reads_the_same_fields_as_bd_json() {
+        let ticket: attractor_pipeline::BeadsIssue = serde_json::from_value(serde_json::json!({
+            "id": "t-1",
+            "title": "T",
+            "status": "open",
+            "description": "desc",
+            "acceptance_criteria": "ac",
+            "design": "",
+            "notes": "n"
+        }))
+        .unwrap();
+        assert_eq!(ticket_field(&ticket, "description"), Some("desc"));
+        assert_eq!(ticket_field(&ticket, "acceptance_criteria"), Some("ac"));
+        assert_eq!(ticket_field(&ticket, "design"), Some(""));
+        assert_eq!(ticket_field(&ticket, "notes"), Some("n"));
+        assert_eq!(ticket_field(&ticket, "title"), None);
+
+        let bare: attractor_pipeline::BeadsIssue = serde_json::from_value(
+            serde_json::json!({"id": "t-2", "title": "U", "status": "open"}),
+        )
+        .unwrap();
+        for field in ["description", "acceptance_criteria", "design", "notes"] {
+            assert_eq!(ticket_field(&bare, field), None);
+        }
+    }
 }

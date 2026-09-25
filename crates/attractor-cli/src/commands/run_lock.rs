@@ -90,6 +90,15 @@ impl RunLock {
     }
 }
 
+impl Drop for RunLock {
+    /// Unlock explicitly: closing our descriptor alone does not release the
+    /// `flock` while a child forked by another thread still holds a copy of
+    /// it (until that child's `exec` closes it).
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 /// The holder named in a lock file. Missing, empty, or partly written files
 /// give an all-`None` holder.
 pub(crate) fn read_holder(path: &Path) -> LockHolder {
@@ -183,6 +192,19 @@ mod tests {
         assert_eq!(again.path(), path);
         // The file and its old contents stay; only the flock is the truth.
         assert!(path.exists());
+    }
+
+    #[test]
+    fn drop_releases_lock_while_a_duplicate_descriptor_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.lock");
+        let lock = RunLock::try_acquire(&path).unwrap();
+        // Stands in for a child forked by another thread and not yet exec'd:
+        // it shares the open file description that holds the flock.
+        let _inherited = lock.file.try_clone().unwrap();
+        drop(lock);
+
+        RunLock::try_acquire(&path).expect("lock released on drop");
     }
 
     #[test]

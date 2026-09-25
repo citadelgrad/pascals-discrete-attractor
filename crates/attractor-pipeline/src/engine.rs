@@ -19,7 +19,7 @@ use crate::events::{EventEmitter, PipelineEvent};
 use crate::execution_plan::{ExecutionPlan, HandlerIdentity};
 use crate::goal_gate::enforce_goal_gates;
 use crate::graph::PipelineGraph;
-use crate::handler::{default_registry, HandlerExecutionContext, HandlerRegistry};
+use crate::handler::{default_registry, EventSink, HandlerExecutionContext, HandlerRegistry};
 use crate::retry::retry_delay;
 use crate::run_commits;
 use crate::run_configuration::{
@@ -170,6 +170,12 @@ impl Observers {
         if let Some(events) = &self.events {
             events.emit(event);
         }
+    }
+}
+
+impl EventSink for Observers {
+    fn emit(&self, event: PipelineEvent) {
+        Observers::emit(self, event);
     }
 }
 
@@ -541,6 +547,7 @@ impl PipelineExecutor {
                     checkpoint.context,
                     configured.controls(),
                     self.run_dir.as_deref(),
+                    Some(&self.observers),
                 ),
                 configured.plan().graph(),
             );

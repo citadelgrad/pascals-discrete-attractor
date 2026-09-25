@@ -38,6 +38,12 @@ pub fn new_invocation_id() -> String {
     Uuid::now_v7().hyphenated().to_string()
 }
 
+/// `transcripts/<invocation-id>.jsonl`: a Transcript's path relative to its
+/// Run folder, as recorded in `LlmInvoked.transcript` (spec C1, C3).
+pub fn transcript_rel_path(invocation_id: &str) -> String {
+    format!("{TRANSCRIPTS_DIR}/{invocation_id}.jsonl")
+}
+
 /// Validate a Run ID and normalize it to lowercase hyphenated form.
 ///
 /// Returns `None` for anything that is not a UUID, so a Run ID taken from the
@@ -114,8 +120,7 @@ impl RunDir {
     }
 
     pub fn transcript(&self, invocation_id: &str) -> PathBuf {
-        self.transcripts_dir()
-            .join(format!("{invocation_id}.jsonl"))
+        self.0.join(transcript_rel_path(invocation_id))
     }
 
     pub fn answers_dir(&self) -> PathBuf {
@@ -207,6 +212,18 @@ mod tests {
             p.run("../../etc").unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
+    }
+
+    // T2-4: `LlmInvoked.transcript` names the same file as `RunDir::transcript`.
+    #[test]
+    fn transcript_rel_path_is_relative_and_matches_run_dir_transcript() {
+        let id = "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b";
+        let rel = transcript_rel_path(id);
+        assert_eq!(rel, format!("transcripts/{id}.jsonl"));
+        assert!(Path::new(&rel).is_relative());
+        let r = RunDir::from_path("/r/runs/x");
+        assert_eq!(r.transcript(id), r.path().join(&rel));
+        assert_eq!(r.transcript(id).parent().unwrap(), r.transcripts_dir());
     }
 
     #[test]

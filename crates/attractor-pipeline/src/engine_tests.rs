@@ -996,6 +996,7 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::CheckpointSaved { .. } => "checkpoint_saved",
             PipelineEvent::ContextUpdated { .. } => "context_updated",
             PipelineEvent::CommitsCreated { .. } => "commits_created",
+            PipelineEvent::LlmInvoked { .. } => "llm_invoked",
         });
     }
 
@@ -3429,4 +3430,277 @@ async fn executor_without_journal_passes_no_run_dir() {
         .unwrap();
 
     assert_eq!(*seen.lock().unwrap(), vec![None; 3]);
+}
+
+/// A provider handler that reports one Model Invocation per stage through
+/// the engine's Event path, as the codergen handler does.
+struct InvokingProvider;
+
+#[async_trait]
+impl NodeHandler for InvokingProvider {
+    fn handler_type(&self) -> &str {
+        "codergen"
+    }
+
+    fn provider_handler(&self) -> Option<&dyn crate::handler::ProviderNodeHandler> {
+        Some(self)
+    }
+
+    async fn execute(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+}
+
+#[async_trait]
+impl crate::handler::ProviderNodeHandler for InvokingProvider {
+    async fn execute_resolved(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _resolved: &crate::execution_plan::ResolvedNode,
+        _context: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &crate::graph::PipelineNode,
+        _resolved: &crate::execution_plan::ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        let events = execution.events().expect("engine passes its Event path");
+        events.emit(PipelineEvent::LlmInvoked {
+            invocation_id: format!("inv-{}", node.id),
+            node_id: node.id.clone(),
+            provider: "claude".into(),
+            model_requested: None,
+            model_actual: Some("claude-haiku-4-5".into()),
+            input_tokens: Some(1),
+            output_tokens: Some(2),
+            cost_usd: None,
+            duration_ms: 5,
+            transcript: attractor_journal::transcript_rel_path(&format!("inv-{}", node.id)),
+            status: "success".into(),
+        });
+        Ok(Outcome::success("invoked"))
+    }
+}
+
+// T2-4: a handler's LlmInvoked goes through the engine's Event path: it is
+// journaled between StageStarted and StageCompleted, and broadcast after.
+#[tokio::test]
+async fn handler_llm_invoked_is_journaled_inside_its_stage_and_broadcast() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(InvokingProvider);
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+
+    PipelineExecutor::new(registry)
+        .with_event_emitter(emitter)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            Context::new(),
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    let journal = attractor_journal::read_all(run_dir.join(EVENTS_FILE)).unwrap();
+    let stage_events: Vec<(String, String)> = journal
+        .iter()
+        .filter_map(|event| match &event.data {
+            EventData::StageStarted { node_id, .. } => Some(("StageStarted", node_id)),
+            EventData::LlmInvoked { node_id, .. } => Some(("LlmInvoked", node_id)),
+            EventData::StageCompleted { node_id, .. } => Some(("StageCompleted", node_id)),
+            _ => None,
+        })
+        .map(|(kind, node)| (kind.to_owned(), node.clone()))
+        .collect();
+    let mut expected = Vec::new();
+    for node in ["start", "plan", "implement", "review", "done"] {
+        expected.push(("StageStarted".to_owned(), node.to_owned()));
+        if !matches!(node, "start" | "done") {
+            expected.push(("LlmInvoked".to_owned(), node.to_owned()));
+        }
+        expected.push(("StageCompleted".to_owned(), node.to_owned()));
+    }
+    assert_eq!(stage_events, expected);
+
+    let invoked = journal
+        .iter()
+        .find_map(|event| match &event.data {
+            EventData::LlmInvoked {
+                invocation_id,
+                transcript,
+                model_requested,
+                ..
+            } => Some((
+                invocation_id.clone(),
+                transcript.clone(),
+                model_requested.clone(),
+            )),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        invoked,
+        ("inv-plan".into(), "transcripts/inv-plan.jsonl".into(), None)
+    );
+
+    let mut broadcast = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        if let PipelineEvent::LlmInvoked { node_id, .. } = event {
+            broadcast.push(node_id);
+        }
+    }
+    assert_eq!(broadcast, vec!["plan", "implement", "review"]);
+}
+
+/// The real codergen handler, reached through the engine's canonical path,
+/// with a stub provider executable in place of the `claude` binary.
+struct StubbedCodergen(PathBuf);
+
+#[async_trait]
+impl NodeHandler for StubbedCodergen {
+    fn handler_type(&self) -> &str {
+        "codergen"
+    }
+
+    fn provider_handler(&self) -> Option<&dyn crate::handler::ProviderNodeHandler> {
+        Some(self)
+    }
+
+    async fn execute(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _ctx: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+}
+
+#[async_trait]
+impl crate::handler::ProviderNodeHandler for StubbedCodergen {
+    async fn execute_resolved(
+        &self,
+        _node: &crate::graph::PipelineNode,
+        _resolved: &crate::execution_plan::ResolvedNode,
+        _context: &Context,
+        _graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        unreachable!("canonical execution uses execute_configured")
+    }
+
+    async fn execute_configured(
+        &self,
+        node: &crate::graph::PipelineNode,
+        resolved: &crate::execution_plan::ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        crate::handlers::CodergenHandler
+            .execute_configured_with_program(node, resolved, execution, graph, Some(self.0.clone()))
+            .await
+    }
+}
+
+// T2-4: a real codergen Model Invocation run by the engine writes LlmInvoked
+// to the Run Journal inside its stage, naming a Transcript that exists.
+#[tokio::test]
+async fn codergen_stage_journals_llm_invoked_with_existing_transcript() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let program = tmp.path().join("claude-stub");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\necho '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\",\"total_cost_usd\":0.01,\"num_turns\":1}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(StubbedCodergen(program));
+
+    PipelineExecutor::new(registry)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &parse_graph(
+                r#"digraph G {
+                    node [llm_provider="claude"]
+                    start [shape="Mdiamond"]
+                    work  [shape="box", prompt="work"]
+                    done  [shape="Msquare"]
+                    start -> work -> done
+                }"#,
+            ),
+            Context::new(),
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    let journal = attractor_journal::read_all(run_dir.join(EVENTS_FILE)).unwrap();
+    let work_events: Vec<&str> = journal
+        .iter()
+        .filter_map(|event| match &event.data {
+            EventData::StageStarted { node_id, .. } if node_id == "work" => Some("StageStarted"),
+            EventData::LlmInvoked { node_id, .. } if node_id == "work" => Some("LlmInvoked"),
+            EventData::StageCompleted { node_id, .. } if node_id == "work" => {
+                Some("StageCompleted")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        work_events,
+        ["StageStarted", "LlmInvoked", "StageCompleted"]
+    );
+
+    let (invocation_id, provider, transcript, status) = journal
+        .iter()
+        .find_map(|event| match &event.data {
+            EventData::LlmInvoked {
+                invocation_id,
+                provider,
+                transcript,
+                status,
+                ..
+            } => Some((
+                invocation_id.clone(),
+                provider.clone(),
+                transcript.clone(),
+                status.clone(),
+            )),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(provider, "claude");
+    assert_eq!(status, "success");
+    assert_eq!(
+        transcript,
+        attractor_journal::transcript_rel_path(&invocation_id)
+    );
+    assert!(Path::new(&transcript).is_relative());
+    assert!(
+        run_dir.join(&transcript).is_file(),
+        "Transcript {transcript} missing"
+    );
 }

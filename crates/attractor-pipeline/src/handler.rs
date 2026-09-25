@@ -7,9 +7,16 @@ use async_trait::async_trait;
 
 use attractor_types::{Context, Outcome, Result};
 
+use crate::events::PipelineEvent;
 use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
 use crate::run_configuration::ResolvedConfig;
+
+/// Where a handler sends Events it emits itself (e.g. `LlmInvoked`). The
+/// engine's implementation journals the Event, then broadcasts it.
+pub(crate) trait EventSink: Send + Sync {
+    fn emit(&self, event: PipelineEvent);
+}
 
 /// Read-only workflow data plus immutable typed controls for canonical execution.
 #[derive(Clone, Copy)]
@@ -17,6 +24,7 @@ pub struct HandlerExecutionContext<'a> {
     workflow: &'a Context,
     config: &'a ResolvedConfig,
     run_dir: Option<&'a Path>,
+    events: Option<&'a dyn EventSink>,
 }
 
 impl<'a> HandlerExecutionContext<'a> {
@@ -24,11 +32,13 @@ impl<'a> HandlerExecutionContext<'a> {
         workflow: &'a Context,
         config: &'a ResolvedConfig,
         run_dir: Option<&'a Path>,
+        events: Option<&'a dyn EventSink>,
     ) -> Self {
         Self {
             workflow,
             config,
             run_dir,
+            events,
         }
     }
 
@@ -40,6 +50,12 @@ impl<'a> HandlerExecutionContext<'a> {
     /// `None` for library use without one.
     pub fn run_dir(self) -> Option<&'a Path> {
         self.run_dir
+    }
+
+    /// The engine's Event path (journal, then broadcast); `None` outside
+    /// the engine.
+    pub(crate) fn events(self) -> Option<&'a dyn EventSink> {
+        self.events
     }
 
     pub async fn get(self, key: &str) -> Option<serde_json::Value> {
@@ -203,6 +219,7 @@ impl DynHandler {
             &isolated_workflow,
             execution.config(),
             execution.run_dir(),
+            execution.events(),
         );
         let mut outcome = match self.0.provider_handler() {
             Some(handler) => {

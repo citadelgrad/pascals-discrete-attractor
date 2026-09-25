@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use attractor_dot::AttributeValue;
@@ -9,9 +10,10 @@ use attractor_quality::{
 };
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
+use crate::events::PipelineEvent;
 use crate::execution_plan::{HandlerIdentity, LlmProvider, ResolvedNode, ResolvedNodeKind};
 use crate::graph::{PipelineGraph, PipelineNode};
-use crate::handler::{HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
+use crate::handler::{EventSink, HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
 
 use super::process_group::{self, ProcessGroupGuard};
 use super::provider_stream::{run_streaming, Transcript};
@@ -21,12 +23,11 @@ mod provider;
 #[cfg(test)]
 use provider::{
     build_cli_command, claude_result_line, parse_claude_output, parse_codex_output,
-    parse_gemini_output, parse_gemini_stream_output, summarize_stream, InvocationUsage,
-    LlmCliProvider,
+    parse_gemini_output, parse_gemini_stream_output, LlmCliProvider,
 };
 use provider::{
     build_cli_command_with_program, gemini_output_format, has_final_result, parse_cli_output,
-    ClaudeCliConfig, CliRunConfig, GeminiOutputFormat,
+    summarize_stream, ClaudeCliConfig, CliRunConfig, GeminiOutputFormat, InvocationUsage,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,12 +49,14 @@ use provider::{
 //
 // When the executor has a Run folder, each provider process (Model Invocation)
 // gets a new Invocation ID and its raw stdout is streamed, line by line, to
-// `transcripts/<invocation-id>.jsonl` while it runs.
+// `transcripts/<invocation-id>.jsonl` while it runs. When the engine also
+// passes its Event path, each Model Invocation emits exactly one `LlmInvoked`
+// once the provider exits, fails, or times out.
 // ---------------------------------------------------------------------------
 
 pub struct CodergenHandler;
 
-struct CodergenExecutionControls {
+struct CodergenExecutionControls<'a> {
     dry_run: bool,
     workdir: Option<String>,
     claude: ClaudeCliConfig,
@@ -61,6 +64,72 @@ struct CodergenExecutionControls {
     run_dir: Option<PathBuf>,
     /// Executable to start instead of the provider's binary (test stubs).
     program: Option<PathBuf>,
+    /// Receives `LlmInvoked`; `None` emits nothing.
+    events: Option<&'a dyn EventSink>,
+}
+
+/// `LlmInvoked.status` values (spec C3).
+const INVOKED_SUCCESS: &str = "success";
+const INVOKED_FAILED: &str = "failed";
+const INVOKED_TIMEOUT: &str = "timeout";
+
+/// The one `LlmInvoked` Event of a Model Invocation, armed once the provider
+/// process has started. [`Self::finish`] emits it; if the handler future is
+/// dropped first (its own timeout, or the engine's outer deadline) `Drop`
+/// emits it with status `timeout`, so either timer yields exactly one Event.
+struct LlmInvocation<'a> {
+    events: &'a dyn EventSink,
+    run_dir: PathBuf,
+    invocation_id: String,
+    node_id: String,
+    provider: LlmProvider,
+    model_requested: Option<String>,
+    started: Instant,
+    emitted: bool,
+}
+
+impl LlmInvocation<'_> {
+    fn finish(mut self, status: &str, usage: InvocationUsage) {
+        self.emit(status, usage);
+    }
+
+    /// Usage read back from the Transcript, which holds the provider's stdout
+    /// so far. Missing or unreadable → all `None`.
+    fn transcript_usage(&self) -> InvocationUsage {
+        let path =
+            attractor_journal::RunDir::from_path(&self.run_dir).transcript(&self.invocation_id);
+        std::fs::read(path)
+            .map(|bytes| summarize_stream(self.provider, &String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default()
+    }
+
+    fn emit(&mut self, status: &str, usage: InvocationUsage) {
+        if std::mem::replace(&mut self.emitted, true) {
+            return;
+        }
+        self.events.emit(PipelineEvent::LlmInvoked {
+            invocation_id: self.invocation_id.clone(),
+            node_id: self.node_id.clone(),
+            provider: self.provider.as_str().to_owned(),
+            model_requested: self.model_requested.clone(),
+            model_actual: usage.model_actual,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost_usd: usage.cost_usd,
+            duration_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            transcript: attractor_journal::transcript_rel_path(&self.invocation_id),
+            status: status.to_owned(),
+        });
+    }
+}
+
+impl Drop for LlmInvocation<'_> {
+    fn drop(&mut self) {
+        if !self.emitted {
+            let usage = self.transcript_usage();
+            self.emit(INVOKED_TIMEOUT, usage);
+        }
+    }
 }
 
 #[async_trait]
@@ -109,7 +178,7 @@ impl CodergenHandler {
         resolved: &ResolvedNode,
         context: &Context,
         graph: &PipelineGraph,
-        controls: CodergenExecutionControls,
+        controls: CodergenExecutionControls<'_>,
     ) -> Result<Outcome> {
         let prompt = node.prompt.as_deref().unwrap_or("No prompt specified");
         let label = node.label.clone();
@@ -280,6 +349,26 @@ impl CodergenHandler {
             "Started {}",
             provider.display_name()
         );
+        // `LlmInvoked` needs a Run folder: its `transcript` is relative to it.
+        let invocation = match (controls.events, &controls.run_dir) {
+            (Some(events), Some(run_dir)) => Some(LlmInvocation {
+                events,
+                run_dir: run_dir.clone(),
+                invocation_id: invocation_id.clone(),
+                node_id: node.id.clone(),
+                provider,
+                model_requested: model.map(str::to_owned),
+                started: Instant::now(),
+                emitted: false,
+            }),
+            _ => None,
+        };
+        let finish =
+            |invocation: Option<LlmInvocation<'_>>, status: &str, usage: InvocationUsage| {
+                if let Some(invocation) = invocation {
+                    invocation.finish(status, usage);
+                }
+            };
 
         // Apply timeout (default 10 minutes, configurable via node.timeout).
         // The guard owns process-tree cleanup even if the executor's outer
@@ -295,6 +384,10 @@ impl CodergenHandler {
                 output
             }
             Ok(Err(error)) => {
+                if let Some(invocation) = invocation {
+                    let usage = invocation.transcript_usage();
+                    invocation.finish(INVOKED_FAILED, usage);
+                }
                 return Err(AttractorError::HandlerError {
                     handler: "codergen".into(),
                     node: node.id.clone(),
@@ -308,6 +401,8 @@ impl CodergenHandler {
                     "Killing timed-out {} process group",
                     provider.display_name()
                 );
+                // Dropping `invocation` emits `LlmInvoked` with status `timeout`.
+                drop(invocation);
                 return Err(AttractorError::CommandTimeout {
                     timeout_ms: timeout_dur.as_millis() as u64,
                 });
@@ -320,6 +415,11 @@ impl CodergenHandler {
         // A stream that ends without its final `result` line carries no
         // answer; report the exit like an empty stdout, as before streaming.
         if !output.status.success() && !has_final_result(provider, &stdout) {
+            finish(
+                invocation,
+                INVOKED_FAILED,
+                summarize_stream(provider, &stdout),
+            );
             return Err(AttractorError::HandlerError {
                 handler: "codergen".into(),
                 node: node.id.clone(),
@@ -333,7 +433,26 @@ impl CodergenHandler {
         }
 
         // Parse output via the provider-specific parser
-        let cli_result = parse_cli_output(provider, &stdout, &stderr, &node.id)?;
+        let cli_result = match parse_cli_output(provider, &stdout, &stderr, &node.id) {
+            Ok(cli_result) => cli_result,
+            Err(error) => {
+                finish(
+                    invocation,
+                    INVOKED_FAILED,
+                    summarize_stream(provider, &stdout),
+                );
+                return Err(error);
+            }
+        };
+        finish(
+            invocation,
+            if cli_result.is_error {
+                INVOKED_FAILED
+            } else {
+                INVOKED_SUCCESS
+            },
+            cli_result.usage.clone(),
+        );
 
         tracing::info!(
             node = %node.id,
@@ -439,6 +558,7 @@ impl ProviderNodeHandler for CodergenHandler {
                 claude,
                 run_dir: None,
                 program: None,
+                events: None,
             },
         )
         .await
@@ -450,6 +570,22 @@ impl ProviderNodeHandler for CodergenHandler {
         resolved: &ResolvedNode,
         execution: HandlerExecutionContext<'_>,
         graph: &PipelineGraph,
+    ) -> Result<Outcome> {
+        self.execute_configured_with_program(node, resolved, execution, graph, None)
+            .await
+    }
+}
+
+impl CodergenHandler {
+    /// `execute_configured`, starting `program` instead of the provider's
+    /// binary when given (engine-level tests with stub providers).
+    pub(crate) async fn execute_configured_with_program(
+        &self,
+        node: &PipelineNode,
+        resolved: &ResolvedNode,
+        execution: HandlerExecutionContext<'_>,
+        graph: &PipelineGraph,
+        program: Option<PathBuf>,
     ) -> Result<Outcome> {
         let config = execution.config();
         let claude = ClaudeCliConfig {
@@ -483,7 +619,8 @@ impl ProviderNodeHandler for CodergenHandler {
                 workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
                 claude,
                 run_dir: execution.run_dir().map(Path::to_path_buf),
-                program: None,
+                program,
+                events: execution.events(),
             },
         )
         .await

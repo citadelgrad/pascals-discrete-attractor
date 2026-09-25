@@ -921,6 +921,8 @@ Each provider has different CLI flags and output formats. PAS handles this autom
 
 During `pas run`, every provider invocation's raw stdout is also copied, line by line as it arrives, to a Transcript at `runs/<run-id>/transcripts/<invocation-id>.jsonl` in the Pipeline's log folder.
 
+When the provider process exits, fails, or times out, PAS appends one `LlmInvoked` Event for that invocation to the Run Journal (`runs/<run-id>/events.jsonl`). It records the provider (`claude`, `codex` or `gemini`), the requested model (the node's `llm_model`, else the graph's `model`; left out when neither is set), the model, input and output tokens, and cost that the provider's output reported (each left out when unknown), `duration_ms`, the Transcript path relative to the Run folder, and a `status` of `success`, `failed` or `timeout`. A dry run, or a provider CLI that cannot be started, records no `LlmInvoked`.
+
 ### CLI not found
 
 If a provider's CLI binary isn't installed, the pipeline will fail with a `CliNotFound` error identifying the missing binary. Install the required CLI before running:

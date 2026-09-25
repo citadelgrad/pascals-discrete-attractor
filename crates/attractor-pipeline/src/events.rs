@@ -64,6 +64,26 @@ pub enum PipelineEvent {
         task_id: Option<String>,
         commits: Vec<CommitRef>,
     },
+    /// One provider process (Model Invocation) exited, failed, or timed out
+    /// (spec C3). `transcript` is relative to the Run folder.
+    LlmInvoked {
+        invocation_id: String,
+        node_id: String,
+        provider: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_requested: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_actual: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
+        duration_ms: u64,
+        transcript: String,
+        status: String,
+    },
 }
 
 impl PipelineEvent {
@@ -137,6 +157,31 @@ impl PipelineEvent {
                 node_id,
                 task_id,
                 commits,
+            },
+            Self::LlmInvoked {
+                invocation_id,
+                node_id,
+                provider,
+                model_requested,
+                model_actual,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                duration_ms,
+                transcript,
+                status,
+            } => EventData::LlmInvoked {
+                invocation_id,
+                node_id,
+                provider,
+                model_requested,
+                model_actual,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                duration_ms,
+                transcript,
+                status,
             },
         }
     }
@@ -339,6 +384,32 @@ mod tests {
                     author: "Ann".into(),
                     ts: "2026-09-25T10:00:00+00:00".into(),
                 }],
+            },
+            PipelineEvent::LlmInvoked {
+                invocation_id: "inv".into(),
+                node_id: "n".into(),
+                provider: "claude".into(),
+                model_requested: Some("sonnet".into()),
+                model_actual: Some("claude-sonnet-4-5".into()),
+                input_tokens: Some(10),
+                output_tokens: Some(3),
+                cost_usd: Some(0.25),
+                duration_ms: 1200,
+                transcript: "transcripts/inv.jsonl".into(),
+                status: "success".into(),
+            },
+            PipelineEvent::LlmInvoked {
+                invocation_id: "inv".into(),
+                node_id: "n".into(),
+                provider: "codex".into(),
+                model_requested: None,
+                model_actual: None,
+                input_tokens: None,
+                output_tokens: None,
+                cost_usd: None,
+                duration_ms: 3000,
+                transcript: "transcripts/inv.jsonl".into(),
+                status: "timeout".into(),
             },
         ];
 

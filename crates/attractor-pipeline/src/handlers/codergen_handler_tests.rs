@@ -612,6 +612,7 @@ mod transcripts {
                     claude: ClaudeCliConfig::default(),
                     run_dir: run_dir.map(Path::to_path_buf),
                     program: Some(program),
+                    events: None,
                 },
             )
             .await
@@ -942,6 +943,500 @@ mod transcripts {
         assert_eq!(outcome.status, StageStatus::Success);
         assert_eq!(outcome.notes, "done");
         assert!(run_dir.join("transcripts").is_file());
+    }
+
+    // --- T2-4: one `LlmInvoked` per Model Invocation ---
+
+    const CLAUDE_INIT_LINE: &str =
+        r#"{"type":"system","subtype":"init","model":"claude-haiku-4-5"}"#;
+    const CLAUDE_USAGE_RESULT_LINE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.25,"num_turns":1,"usage":{"input_tokens":10,"cache_read_input_tokens":5,"output_tokens":7}}"#;
+
+    #[derive(Default)]
+    struct EventLog(std::sync::Mutex<Vec<crate::events::PipelineEvent>>);
+
+    impl crate::handler::EventSink for EventLog {
+        fn emit(&self, event: crate::events::PipelineEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    impl EventLog {
+        /// The payload of every Event received; each must be `LlmInvoked`.
+        fn llm_invoked(&self) -> Vec<serde_json::Value> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|event| {
+                    let value = serde_json::to_value(event).unwrap();
+                    value
+                        .get("LlmInvoked")
+                        .cloned()
+                        .unwrap_or_else(|| panic!("not LlmInvoked: {value}"))
+                })
+                .collect()
+        }
+
+        fn only(&self) -> serde_json::Value {
+            let events = self.llm_invoked();
+            assert_eq!(events.len(), 1, "expected one LlmInvoked: {events:?}");
+            events.into_iter().next().unwrap()
+        }
+    }
+
+    fn step_node(timeout: Option<Duration>) -> PipelineNode {
+        let mut node = make_node("step", "box", Some("do work"), HashMap::new());
+        node.timeout = timeout;
+        node
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_observed(
+        provider: LlmCliProvider,
+        program: PathBuf,
+        run_dir: Option<&Path>,
+        node: &PipelineNode,
+        graph: &PipelineGraph,
+        dry_run: bool,
+        events: &EventLog,
+    ) -> Result<Outcome> {
+        let resolved = ResolvedNode {
+            node_id: node.id.clone(),
+            kind: ResolvedNodeKind::Task,
+            handler: crate::HandlerIdentity::Codergen,
+            provider: Some(provider),
+            invocation: Default::default(),
+        };
+        CodergenHandler
+            .execute_with_controls(
+                node,
+                &resolved,
+                &Context::default(),
+                graph,
+                CodergenExecutionControls {
+                    dry_run,
+                    workdir: None,
+                    claude: ClaudeCliConfig::default(),
+                    run_dir: run_dir.map(Path::to_path_buf),
+                    program: Some(program),
+                    events: Some(events),
+                },
+            )
+            .await
+    }
+
+    async fn run_claude_observed(
+        program: PathBuf,
+        run_dir: &Path,
+        timeout: Option<Duration>,
+        events: &EventLog,
+    ) -> Result<Outcome> {
+        run_observed(
+            LlmCliProvider::Claude,
+            program,
+            Some(run_dir),
+            &step_node(timeout),
+            &make_minimal_graph(),
+            false,
+            events,
+        )
+        .await
+    }
+
+    fn transcript_stem(path: &Path) -> String {
+        path.file_stem().unwrap().to_str().unwrap().to_owned()
+    }
+
+    // AC1: exactly one LlmInvoked per provider process, sharing the
+    // Transcript's Invocation ID, with the usage the stream reported.
+    #[tokio::test]
+    async fn each_invocation_emits_one_llm_invoked_matching_its_transcript() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(
+            tmp.path(),
+            &format!("echo '{CLAUDE_INIT_LINE}'; echo '{CLAUDE_USAGE_RESULT_LINE}'"),
+        );
+        let events = EventLog::default();
+
+        for _ in 0..3 {
+            let outcome = run_claude_observed(program.clone(), &run_dir, None, &events)
+                .await
+                .unwrap();
+            assert_eq!(outcome.status, StageStatus::Success);
+            assert_eq!(
+                outcome.context_updates.get("step.cost_usd"),
+                Some(&serde_json::json!(0.25))
+            );
+        }
+
+        let invoked = events.llm_invoked();
+        assert_eq!(invoked.len(), 3, "{invoked:?}");
+        let mut ids: Vec<String> = invoked
+            .iter()
+            .map(|event| event["invocation_id"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        let mut stems: Vec<String> = transcripts(&run_dir)
+            .iter()
+            .map(|path| transcript_stem(path))
+            .collect();
+        stems.sort();
+        assert_eq!(ids, stems);
+        ids.dedup();
+        assert_eq!(ids.len(), 3);
+        for event in &invoked {
+            assert_eq!(event["node_id"], "step");
+            assert_eq!(event["provider"], "claude");
+            assert_eq!(event["status"], "success");
+            assert_eq!(event["model_actual"], "claude-haiku-4-5");
+            assert_eq!(event["input_tokens"], 15);
+            assert_eq!(event["output_tokens"], 7);
+            assert_eq!(event["cost_usd"], 0.25);
+            assert!(event["duration_ms"].is_u64(), "{event}");
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_and_gemini_emit_one_llm_invoked_each() {
+        let tmp = tempfile::tempdir().unwrap();
+        let codex_out = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"codex done\"}}\n\
+            {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\n";
+        let gemini_out = "{\"response\":\"gemini done\",\"stats\":{\"models\":{\"gemini-2.5-pro\":{\"tokens\":{\"prompt\":8,\"candidates\":3}}}}}";
+        for (provider, out, name) in [
+            (LlmCliProvider::Codex, codex_out, "codex"),
+            (LlmCliProvider::Gemini, gemini_out, "gemini"),
+        ] {
+            let run_dir = tmp.path().join(name);
+            let program = stub(tmp.path(), &format!("printf '%s' '{out}'"));
+            let events = EventLog::default();
+
+            let outcome = run_observed(
+                provider,
+                program,
+                Some(&run_dir),
+                &step_node(None),
+                &make_minimal_graph(),
+                false,
+                &events,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(outcome.status, StageStatus::Success, "{name}");
+            let event = events.only();
+            assert_eq!(event["provider"], name);
+            assert_eq!(event["status"], "success");
+            assert_eq!(
+                event["invocation_id"].as_str().unwrap(),
+                transcript_stem(&only_transcript(&run_dir))
+            );
+            assert!(event["input_tokens"].is_u64(), "{name}: {event}");
+            assert!(event.get("cost_usd").is_none(), "{name}: {event}");
+        }
+    }
+
+    // AC1 boundary: no provider process → no Model Invocation → no Event.
+    #[tokio::test]
+    async fn no_llm_invoked_without_a_model_invocation_or_run_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_RESULT_LINE}'"));
+        let graph = make_minimal_graph();
+        let node = step_node(None);
+
+        let dry = EventLog::default();
+        let provider = LlmCliProvider::Claude;
+        run_observed(
+            provider,
+            program.clone(),
+            Some(&run_dir),
+            &node,
+            &graph,
+            true,
+            &dry,
+        )
+        .await
+        .unwrap();
+        assert!(dry.llm_invoked().is_empty());
+
+        let missing = EventLog::default();
+        let error = run_observed(
+            provider,
+            tmp.path().join("no-such-provider"),
+            Some(&run_dir),
+            &node,
+            &graph,
+            false,
+            &missing,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, AttractorError::CliNotFound { .. }),
+            "{error}"
+        );
+        assert!(missing.llm_invoked().is_empty());
+
+        let no_run_dir = EventLog::default();
+        let outcome = run_observed(provider, program, None, &node, &graph, false, &no_run_dir)
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert!(no_run_dir.llm_invoked().is_empty());
+    }
+
+    // AC2: node llm_model, then graph `model`, else the field is absent.
+    #[tokio::test]
+    async fn model_requested_prefers_node_then_graph_then_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_RESULT_LINE}'"));
+        let mut with_graph_model = make_minimal_graph();
+        with_graph_model
+            .attrs
+            .insert("model".into(), AttributeValue::String("opus".into()));
+        let mut with_node_model = step_node(None);
+        with_node_model.llm_model = Some("sonnet".into());
+
+        let cases = [
+            (&with_node_model, &with_graph_model, Some("sonnet")),
+            (&with_node_model, &make_minimal_graph(), Some("sonnet")),
+            (&step_node(None), &with_graph_model, Some("opus")),
+            (&step_node(None), &make_minimal_graph(), None),
+        ];
+        for (i, (node, graph, expected)) in cases.into_iter().enumerate() {
+            let run_dir = tmp.path().join(format!("run-{i}"));
+            let events = EventLog::default();
+            run_observed(
+                LlmCliProvider::Claude,
+                program.clone(),
+                Some(&run_dir),
+                node,
+                graph,
+                false,
+                &events,
+            )
+            .await
+            .unwrap();
+
+            let event = events.only();
+            match expected {
+                Some(model) => assert_eq!(event["model_requested"], model, "case {i}"),
+                None => assert!(
+                    event.get("model_requested").is_none(),
+                    "case {i}: key must be absent: {event}"
+                ),
+            }
+            // The journal line leaves the key out too.
+            let journal =
+                serde_json::to_value(events.0.lock().unwrap()[0].to_journal_data()).unwrap();
+            assert_eq!(
+                journal.to_string().contains("model_requested"),
+                expected.is_some(),
+                "case {i}: {journal}"
+            );
+        }
+    }
+
+    // AC3: `transcript` is relative to the Run folder and names the file.
+    #[tokio::test]
+    async fn llm_invoked_transcript_is_relative_and_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_RESULT_LINE}'"));
+        let events = EventLog::default();
+
+        run_claude_observed(program, &run_dir, None, &events)
+            .await
+            .unwrap();
+
+        let event = events.only();
+        let transcript = event["transcript"].as_str().unwrap();
+        let id = event["invocation_id"].as_str().unwrap();
+        assert_eq!(transcript, format!("transcripts/{id}.jsonl"));
+        assert!(Path::new(transcript).is_relative());
+        assert!(run_dir.join(transcript).is_file());
+        assert_eq!(run_dir.join(transcript), only_transcript(&run_dir));
+    }
+
+    // AC3 boundary: a Transcript that cannot be written keeps the stage
+    // and the Event; the path is still the relative one.
+    #[tokio::test]
+    async fn transcript_write_failure_still_emits_llm_invoked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("transcripts"), "").unwrap();
+        let program = stub(
+            tmp.path(),
+            &format!("echo '{CLAUDE_INIT_LINE}'; echo '{CLAUDE_USAGE_RESULT_LINE}'"),
+        );
+        let events = EventLog::default();
+
+        let outcome = run_claude_observed(program, &run_dir, None, &events)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, StageStatus::Success);
+        let event = events.only();
+        assert_eq!(event["status"], "success");
+        assert_eq!(event["model_actual"], "claude-haiku-4-5");
+        assert!(event["transcript"]
+            .as_str()
+            .unwrap()
+            .starts_with("transcripts/"));
+    }
+
+    // AC4: the handler's own timeout.
+    #[tokio::test]
+    async fn handler_timeout_emits_timeout_with_measured_duration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_INIT_LINE}'; sleep 10"));
+        let events = EventLog::default();
+
+        let error = run_claude_observed(
+            program,
+            &run_dir,
+            Some(Duration::from_millis(3000)),
+            &events,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, AttractorError::CommandTimeout { timeout_ms: 3000 }),
+            "{error}"
+        );
+        let event = events.only();
+        assert_eq!(event["status"], "timeout");
+        let duration = event["duration_ms"].as_u64().unwrap();
+        assert!((3000..10_000).contains(&duration), "duration_ms {duration}");
+        // Usage comes from the partial Transcript.
+        assert_eq!(event["model_actual"], "claude-haiku-4-5");
+        assert_eq!(
+            event["invocation_id"].as_str().unwrap(),
+            transcript_stem(&only_transcript(&run_dir))
+        );
+    }
+
+    // AC4: the engine's outer deadline drops the handler future first.
+    #[tokio::test]
+    async fn dropped_handler_emits_timeout_with_measured_duration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_INIT_LINE}'; sleep 10"));
+        let events = EventLog::default();
+
+        let before = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_millis(3000),
+            run_claude_observed(program, &run_dir, Some(Duration::from_secs(60)), &events),
+        )
+        .await;
+        let elapsed = u64::try_from(before.elapsed().as_millis()).unwrap();
+
+        assert!(result.is_err(), "the outer deadline must win");
+        let event = events.only();
+        assert_eq!(event["status"], "timeout");
+        // Measured from spawn, so up to the outer deadline's time, which
+        // also covers the work before spawn.
+        let duration = event["duration_ms"].as_u64().unwrap();
+        assert!(
+            (1000..=elapsed).contains(&duration),
+            "duration_ms {duration}, outer elapsed {elapsed}"
+        );
+        assert_eq!(event["model_actual"], "claude-haiku-4-5");
+    }
+
+    // AC5: a provider that exits non-zero without a final result.
+    #[tokio::test]
+    async fn nonzero_exit_without_result_emits_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(
+            tmp.path(),
+            &format!("echo '{CLAUDE_INIT_LINE}'; echo 'crashed' >&2; exit 3"),
+        );
+        let events = EventLog::default();
+
+        let error = run_claude_observed(program, &run_dir, None, &events)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            handler_error("Claude Code exited with exit status: 3: crashed")
+        );
+        let event = events.only();
+        assert_eq!(event["status"], "failed");
+        assert_eq!(event["model_actual"], "claude-haiku-4-5");
+        assert!(run_dir
+            .join(event["transcript"].as_str().unwrap())
+            .is_file());
+    }
+
+    // AC5: the provider reports an error result.
+    #[tokio::test]
+    async fn error_result_emits_failed_with_usage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let result = r#"{"type":"result","subtype":"error","is_error":true,"result":"budget exceeded","total_cost_usd":0.5,"num_turns":1,"usage":{"input_tokens":3,"output_tokens":1}}"#;
+        let program = stub(tmp.path(), &format!("echo '{result}'"));
+        let events = EventLog::default();
+
+        let outcome = run_claude_observed(program, &run_dir, None, &events)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, StageStatus::Fail);
+        assert_eq!(
+            outcome.failure_reason.as_deref(),
+            Some("Claude Code returned an error")
+        );
+        let event = events.only();
+        assert_eq!(event["status"], "failed");
+        assert_eq!(event["cost_usd"], 0.5);
+        assert_eq!(event["input_tokens"], 3);
+        assert_eq!(event["output_tokens"], 1);
+    }
+
+    // AC5: output that cannot be parsed, and no output at all.
+    #[tokio::test]
+    async fn unparseable_or_empty_output_emits_failed() {
+        for (body, expected) in [
+            ("echo 'not json'", "Failed to parse Claude output"),
+            ("echo boom >&2", "Claude Code produced no output"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let run_dir = tmp.path().join("run");
+            let program = stub(tmp.path(), body);
+            let events = EventLog::default();
+
+            let error = run_claude_observed(program, &run_dir, None, &events)
+                .await
+                .unwrap_err();
+
+            assert!(error.to_string().contains(expected), "{body}: {error}");
+            assert_eq!(events.only()["status"], "failed", "{body}");
+        }
+    }
+
+    // A non-zero exit with a final result is used as the result (T2-2), so
+    // the invocation succeeded.
+    #[tokio::test]
+    async fn nonzero_exit_with_successful_result_emits_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = tmp.path().join("run");
+        let program = stub(tmp.path(), &format!("echo '{CLAUDE_RESULT_LINE}'; exit 1"));
+        let events = EventLog::default();
+
+        let outcome = run_claude_observed(program, &run_dir, None, &events)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(events.only()["status"], "success");
     }
 }
 
@@ -1311,6 +1806,7 @@ mod stream_formats {
                     claude: ClaudeCliConfig::default(),
                     run_dir: None,
                     program: Some(program),
+                    events: None,
                 },
             )
             .await

@@ -4,6 +4,7 @@
 //! external observers (loggers, metrics collectors, UI, etc.) can subscribe to
 //! pipeline execution progress without coupling to the engine internals.
 
+use attractor_journal::EventData;
 use serde::{Deserialize, Serialize};
 
 /// Events emitted during pipeline execution.
@@ -55,6 +56,73 @@ pub enum PipelineEvent {
         node_id: String,
         keys: Vec<String>,
     },
+}
+
+impl PipelineEvent {
+    /// The Run Journal form of this Event (spec C3). Names and fields are
+    /// unchanged; the match is exhaustive so a new variant cannot be added
+    /// without a journal mapping.
+    pub fn to_journal_data(&self) -> EventData {
+        match self.clone() {
+            Self::PipelineStarted {
+                pipeline_name,
+                node_count,
+            } => EventData::PipelineStarted {
+                pipeline_name,
+                node_count,
+            },
+            Self::PipelineCompleted {
+                pipeline_name,
+                completed_nodes,
+                duration_ms,
+            } => EventData::PipelineCompleted {
+                pipeline_name,
+                completed_nodes,
+                duration_ms,
+            },
+            Self::PipelineFailed {
+                pipeline_name,
+                error,
+            } => EventData::PipelineFailed {
+                pipeline_name,
+                error,
+            },
+            Self::StageStarted {
+                node_id,
+                handler_type,
+            } => EventData::StageStarted {
+                node_id,
+                handler_type,
+            },
+            Self::StageCompleted {
+                node_id,
+                status,
+                duration_ms,
+            } => EventData::StageCompleted {
+                node_id,
+                status,
+                duration_ms,
+            },
+            Self::StageFailed { node_id, error } => EventData::StageFailed { node_id, error },
+            Self::StageRetrying { node_id, attempt } => {
+                EventData::StageRetrying { node_id, attempt }
+            }
+            Self::EdgeSelected {
+                from_node,
+                to_node,
+                edge_label,
+            } => EventData::EdgeSelected {
+                from_node,
+                to_node,
+                edge_label,
+            },
+            Self::GoalGateChecked { node_id, satisfied } => {
+                EventData::GoalGateChecked { node_id, satisfied }
+            }
+            Self::CheckpointSaved { node_id } => EventData::CheckpointSaved { node_id },
+            Self::ContextUpdated { node_id, keys } => EventData::ContextUpdated { node_id, keys },
+        }
+    }
 }
 
 /// Event emitter wrapping a broadcast sender.
@@ -167,6 +235,81 @@ mod tests {
                 assert_eq!(duration_ms, 123);
             }
             other => panic!("unexpected variant after round-trip: {:?}", other),
+        }
+    }
+
+    /// C3: existing engine Events keep their names and fields in the journal.
+    #[test]
+    fn journal_data_matches_pipeline_event_serialization() {
+        use attractor_journal::JournalEvent;
+
+        let events = vec![
+            PipelineEvent::PipelineStarted {
+                pipeline_name: "p".into(),
+                node_count: 5,
+            },
+            PipelineEvent::PipelineCompleted {
+                pipeline_name: "p".into(),
+                completed_nodes: vec!["start".into(), "done".into()],
+                duration_ms: 42,
+            },
+            PipelineEvent::PipelineFailed {
+                pipeline_name: "p".into(),
+                error: "boom".into(),
+            },
+            PipelineEvent::StageStarted {
+                node_id: "n".into(),
+                handler_type: "codergen".into(),
+            },
+            PipelineEvent::StageCompleted {
+                node_id: "n".into(),
+                status: "success".into(),
+                duration_ms: 7,
+            },
+            PipelineEvent::StageFailed {
+                node_id: "n".into(),
+                error: "bad".into(),
+            },
+            PipelineEvent::StageRetrying {
+                node_id: "n".into(),
+                attempt: 2,
+            },
+            PipelineEvent::EdgeSelected {
+                from_node: "a".into(),
+                to_node: "b".into(),
+                edge_label: Some("yes".into()),
+            },
+            PipelineEvent::EdgeSelected {
+                from_node: "a".into(),
+                to_node: "b".into(),
+                edge_label: None,
+            },
+            PipelineEvent::GoalGateChecked {
+                node_id: "n".into(),
+                satisfied: true,
+            },
+            PipelineEvent::CheckpointSaved {
+                node_id: "n".into(),
+            },
+            PipelineEvent::ContextUpdated {
+                node_id: "n".into(),
+                keys: vec!["k1".into(), "k2".into()],
+            },
+        ];
+
+        for event in events {
+            let serde_json::Value::Object(tagged) = serde_json::to_value(&event).unwrap() else {
+                panic!("PipelineEvent is externally tagged");
+            };
+            let (name, payload) = tagged.into_iter().next().unwrap();
+
+            let data = event.to_journal_data();
+            assert_eq!(data.type_name(), name);
+            let line =
+                serde_json::to_value(JournalEvent::new(1, chrono::Utc::now(), "run", 1, data))
+                    .unwrap();
+            assert_eq!(line["type"], serde_json::Value::String(name.clone()));
+            assert_eq!(line["data"], payload, "fields of {name}");
         }
     }
 }

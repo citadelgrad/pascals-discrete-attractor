@@ -233,6 +233,7 @@ version = "0.10.0"
 dependencies = [
  "async-trait",
  "attractor-dot",
+ "attractor-journal",
  "attractor-llm",
  "attractor-quality",
  "attractor-tools",
@@ -248,6 +249,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

@@ -5,8 +5,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Instant;
 
+use attractor_journal::{EventData, JournalWriter, EVENTS_FILE};
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
 
 use crate::checkpoint::{
@@ -33,7 +35,7 @@ pub const DEFAULT_MAX_BUDGET_USD: f64 = 200.0;
 /// The core pipeline executor. Owns a handler registry and drives graph traversal.
 pub struct PipelineExecutor {
     registry: HandlerRegistry,
-    events: Option<EventEmitter>,
+    observers: Observers,
 }
 
 /// The result of a completed pipeline execution.
@@ -64,7 +66,7 @@ struct CheckpointData<'a> {
     previous_node_id: Option<&'a str>,
     execution_fingerprint: Option<&'a str>,
     run_id: Option<&'a str>,
-    events: Option<&'a EventEmitter>,
+    observers: &'a Observers,
 }
 
 impl CheckpointData<'_> {
@@ -89,13 +91,92 @@ impl CheckpointData<'_> {
         checkpoint.active_node_id = progress.active_node_id.clone();
         checkpoint.active_node_attempts = progress.active_node_attempts;
         save_checkpoint(&checkpoint, logs_root).await?;
-        if let Some(events) = self.events {
-            events.emit(PipelineEvent::CheckpointSaved {
-                node_id: current_node_id.to_string(),
-            });
-        }
+        self.observers.emit(PipelineEvent::CheckpointSaved {
+            node_id: current_node_id.to_string(),
+        });
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Observers: Run Journal, then broadcast
+// ---------------------------------------------------------------------------
+
+/// Where the engine appends Run Journal Events. Implemented by
+/// [`JournalWriter`]; tests substitute a sink that fails on demand.
+pub(crate) trait JournalSink: Send + Sync {
+    fn append(&self, data: EventData) -> std::io::Result<()>;
+    fn path(&self) -> &Path;
+}
+
+impl JournalSink for JournalWriter {
+    fn append(&self, data: EventData) -> std::io::Result<()> {
+        JournalWriter::append(self, data).map(|_| ())
+    }
+
+    fn path(&self) -> &Path {
+        JournalWriter::path(self)
+    }
+}
+
+/// Everything that observes a Run. Every Event goes through here so the
+/// journal append always happens before the broadcast (ADR 0001).
+#[derive(Default)]
+struct Observers {
+    journal: Option<Arc<dyn JournalSink>>,
+    events: Option<EventEmitter>,
+}
+
+impl Observers {
+    /// Journal the Event, then broadcast it. A journal failure is logged and
+    /// never stops the Run; the next Event is appended again.
+    fn emit(&self, event: PipelineEvent) {
+        if let Some(journal) = &self.journal {
+            let data = event.to_journal_data();
+            let event_type = data.type_name().to_string();
+            if let Err(error) = journal.append(data) {
+                tracing::error!(
+                    path = %journal.path().display(),
+                    event = %event_type,
+                    error = %error,
+                    "failed to append Event to Run Journal; continuing"
+                );
+            }
+        }
+        self.broadcast(event);
+    }
+
+    /// Like [`Self::emit`], but a journal failure is returned and the Event
+    /// is not broadcast. Used for the first Event of a Run.
+    fn emit_required(&self, event: PipelineEvent) -> Result<()> {
+        if let Some(journal) = &self.journal {
+            journal.append(event.to_journal_data()).map_err(|error| {
+                AttractorError::Other(format!(
+                    "cannot write Run Journal {}: {error}",
+                    journal.path().display()
+                ))
+            })?;
+        }
+        self.broadcast(event);
+        Ok(())
+    }
+
+    fn broadcast(&self, event: PipelineEvent) {
+        if let Some(events) = &self.events {
+            events.emit(event);
+        }
+    }
+}
+
+/// Open `<run_dir>/events.jsonl` for an Attempt of a Run. The error names the
+/// journal path.
+pub fn open_journal(run_dir: &Path, run_id: &str, attempt: u32) -> Result<JournalWriter> {
+    JournalWriter::open(run_dir, run_id, attempt).map_err(|error| {
+        AttractorError::Other(format!(
+            "cannot open Run Journal {}: {error}",
+            run_dir.join(EVENTS_FILE).display()
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -231,16 +312,14 @@ async fn legacy_options(context: Context) -> Result<(ExecutionOptions, Context)>
 
 impl PipelineExecutor {
     fn emit(&self, event: PipelineEvent) {
-        if let Some(events) = &self.events {
-            events.emit(event);
-        }
+        self.observers.emit(event);
     }
 
     /// Create an executor with the given handler registry.
     pub fn new(registry: HandlerRegistry) -> Self {
         Self {
             registry,
-            events: None,
+            observers: Observers::default(),
         }
     }
 
@@ -248,13 +327,31 @@ impl PipelineExecutor {
     pub fn with_default_registry() -> Self {
         Self {
             registry: default_registry(),
-            events: None,
+            observers: Observers::default(),
         }
     }
 
     /// Observe execution events without making delivery part of pipeline state.
     pub fn with_event_emitter(mut self, events: EventEmitter) -> Self {
-        self.events = Some(events);
+        self.observers.events = Some(events);
+        self
+    }
+
+    /// Append every Event to the Run Journal before it is broadcast.
+    ///
+    /// Accepts a shared writer so the caller can journal its own Events
+    /// (Run and Attempt lifecycle, heartbeat) through the same writer. If the
+    /// first Event cannot be written the Run fails before any stage; later
+    /// write failures are logged and the Run continues.
+    pub fn with_journal(mut self, journal: impl Into<Arc<JournalWriter>>) -> Self {
+        let journal: Arc<JournalWriter> = journal.into();
+        self.observers.journal = Some(journal);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_journal_sink(mut self, journal: Arc<dyn JournalSink>) -> Self {
+        self.observers.journal = Some(journal);
         self
     }
 
@@ -538,10 +635,20 @@ impl PipelineExecutor {
         }
 
         let pipeline_started = Instant::now();
-        self.emit(PipelineEvent::PipelineStarted {
-            pipeline_name: graph.name.clone(),
-            node_count: graph.all_nodes().count(),
-        });
+        if let Err(error) = self
+            .observers
+            .emit_required(PipelineEvent::PipelineStarted {
+                pipeline_name: graph.name.clone(),
+                node_count: graph.all_nodes().count(),
+            })
+        {
+            // The journal is known to be broken; broadcast only.
+            self.observers.broadcast(PipelineEvent::PipelineFailed {
+                pipeline_name: graph.name.clone(),
+                error: error.to_string(),
+            });
+            return Err(error);
+        }
 
         let execution_result: Result<PipelineResult> = async {
 
@@ -675,7 +782,7 @@ impl PipelineExecutor {
                             previous_node_id: prev_node_id.as_deref(),
                             execution_fingerprint: Some(&execution_fingerprint),
                             run_id: run_id.as_deref(),
-                            events: self.events.as_ref(),
+                            observers: &self.observers,
                         },
                     )
                     .await?;
@@ -767,7 +874,7 @@ impl PipelineExecutor {
                         previous_node_id: prev_node_id.as_deref(),
                         execution_fingerprint: Some(&execution_fingerprint),
                         run_id: run_id.as_deref(),
-                        events: self.events.as_ref(),
+                        observers: &self.observers,
                     },
                 )
                 .await?;
@@ -883,7 +990,7 @@ impl PipelineExecutor {
                         previous_node_id: Some(&just_completed),
                         execution_fingerprint: Some(&execution_fingerprint),
                         run_id: run_id.as_deref(),
-                        events: self.events.as_ref(),
+                        observers: &self.observers,
                     }
                     .save(&current_node.id, &progress)
                     .await?;

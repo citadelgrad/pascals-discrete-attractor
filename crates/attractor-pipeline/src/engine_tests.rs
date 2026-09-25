@@ -2242,3 +2242,486 @@ fn retry_warning_reason_distinguishes_quality_failure_from_review_fixup() {
     );
     assert!(!after_review_fixup.contains("Quality stage failed"));
 }
+
+// ---------------------------------------------------------------------------
+// Run Journal tests (attractor-ino.3 [T1-3])
+// ---------------------------------------------------------------------------
+
+use attractor_journal::{EventData, JournalWriter, EVENTS_FILE};
+
+const JOURNAL_RUN_ID: &str = "0192f3c4-5a6b-7c8d-9e0f-1a2b3c4d5e6f";
+
+/// A dry-run Pipeline with 3 stages between start and exit.
+fn three_stage_graph() -> PipelineGraph {
+    parse_graph(
+        r#"digraph G {
+            node [llm_provider="claude"]
+            start     [shape="Mdiamond"]
+            plan      [shape="box", prompt="plan"]
+            implement [shape="box", prompt="implement"]
+            review    [shape="box", prompt="review"]
+            done      [shape="Msquare"]
+            start -> plan -> implement -> review -> done
+        }"#,
+    )
+}
+
+async fn dry_run_context(workdir: &Path) -> Context {
+    let context = Context::new();
+    context.set("dry_run", serde_json::Value::Bool(true)).await;
+    context
+        .set(
+            "workdir",
+            serde_json::Value::String(workdir.display().to_string()),
+        )
+        .await;
+    context
+}
+
+fn drain_types(receiver: &mut tokio::sync::broadcast::Receiver<PipelineEvent>) -> Vec<String> {
+    let mut types = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        types.push(event.to_journal_data().type_name().to_string());
+    }
+    types
+}
+
+fn journal_types(path: &Path) -> Vec<String> {
+    attractor_journal::read_all(path)
+        .unwrap()
+        .into_iter()
+        .map(|event| event.data.type_name().to_string())
+        .collect()
+}
+
+/// A journal whose appends fail on demand, and which can record how many
+/// broadcast Events were already queued when each append ran.
+struct ScriptedSink {
+    path: PathBuf,
+    fails: Box<dyn Fn(usize) -> bool + Send + Sync>,
+    calls: AtomicUsize,
+    written: std::sync::Mutex<Vec<EventData>>,
+    probe: Option<std::sync::Mutex<tokio::sync::broadcast::Receiver<PipelineEvent>>>,
+    queued_at_append: std::sync::Mutex<Vec<usize>>,
+}
+
+impl ScriptedSink {
+    /// `fails(n)` decides whether the n-th append (1-based) fails.
+    fn new(fails: impl Fn(usize) -> bool + Send + Sync + 'static) -> Self {
+        Self {
+            path: PathBuf::from("/scripted/runs/r/events.jsonl"),
+            fails: Box::new(fails),
+            calls: AtomicUsize::new(0),
+            written: std::sync::Mutex::new(Vec::new()),
+            probe: None,
+            queued_at_append: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn written_types(&self) -> Vec<String> {
+        self.written
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|data| data.type_name().to_string())
+            .collect()
+    }
+}
+
+impl JournalSink for ScriptedSink {
+    fn append(&self, data: EventData) -> std::io::Result<()> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(probe) = &self.probe {
+            self.queued_at_append
+                .lock()
+                .unwrap()
+                .push(probe.lock().unwrap().len());
+        }
+        if (self.fails)(n) {
+            return Err(std::io::Error::other("disk full"));
+        }
+        self.written.lock().unwrap().push(data);
+        Ok(())
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Captures `tracing` output for the current thread.
+#[derive(Clone, Default)]
+struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl CapturedLog {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+thread_local! {
+    static LOG_CAPTURE: std::cell::RefCell<Option<CapturedLog>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Writes to the calling thread's capture buffer, if any.
+struct ThreadLog;
+
+impl std::io::Write for ThreadLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        LOG_CAPTURE.with(|capture| {
+            if let Some(log) = capture.borrow_mut().as_mut() {
+                log.write_all(buf)?;
+            }
+            Ok(buf.len())
+        })
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Capture `tracing` output emitted on the current thread.
+///
+/// A global subscriber is used instead of `set_default`: with a single scoped
+/// dispatcher, tracing-core caches a callsite's interest from whichever
+/// thread first hits it, so a parallel test hitting the same callsite with no
+/// subscriber would silence it here.
+fn capture_log() -> CapturedLog {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| ThreadLog)
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("no other global subscriber in this test binary");
+    });
+    let log = CapturedLog::default();
+    LOG_CAPTURE.with(|capture| *capture.borrow_mut() = Some(log.clone()));
+    log
+}
+
+// AC1: every broadcast Event is in events.jsonl with the same type, in the
+// same order (including CheckpointSaved, which is saved outside `emit`).
+#[tokio::test]
+async fn journal_records_every_broadcast_event_in_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+
+    let result = PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.completed_nodes,
+        vec!["start", "plan", "implement", "review", "done"]
+    );
+
+    let broadcast = drain_types(&mut receiver);
+    let journal_path = run_dir.join(EVENTS_FILE);
+    assert_eq!(journal_types(&journal_path), broadcast);
+    assert_eq!(
+        broadcast.first().map(String::as_str),
+        Some("PipelineStarted")
+    );
+    assert_eq!(
+        broadcast.last().map(String::as_str),
+        Some("PipelineCompleted")
+    );
+    assert_eq!(broadcast.iter().filter(|t| *t == "StageStarted").count(), 5);
+    assert!(broadcast.iter().any(|t| t == "CheckpointSaved"));
+
+    let journal = attractor_journal::read_all(&journal_path).unwrap();
+    for (index, event) in journal.iter().enumerate() {
+        assert_eq!(event.seq, index as u64 + 1);
+        assert_eq!(event.run_id, JOURNAL_RUN_ID);
+        assert_eq!(event.attempt, 1);
+    }
+}
+
+// AC2: a subscriber that reads the journal as soon as it receives an Event
+// always finds that Event already on disk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscriber_finds_event_in_journal_on_receipt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let journal_path = run_dir.join(EVENTS_FILE);
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+
+    let subscriber = tokio::spawn({
+        let journal_path = journal_path.clone();
+        async move {
+            let mut received = 0usize;
+            loop {
+                let event = receiver.recv().await.expect("no lag, no close");
+                received += 1;
+                let on_disk = attractor_journal::read_all(&journal_path).unwrap();
+                assert!(
+                    on_disk.len() >= received,
+                    "event {received} broadcast before it was journaled"
+                );
+                assert_eq!(
+                    on_disk[received - 1].data.type_name(),
+                    event.to_journal_data().type_name()
+                );
+                if matches!(event, PipelineEvent::PipelineCompleted { .. }) {
+                    return received;
+                }
+            }
+        }
+    });
+
+    PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    let received = subscriber.await.unwrap();
+    assert_eq!(received, journal_types(&journal_path).len());
+}
+
+// AC2 (deterministic): when the k-th Event is appended, only k-1 Events have
+// been broadcast. Swapping the two steps in `emit` fails this every time.
+#[tokio::test]
+async fn journal_append_happens_before_broadcast() {
+    let tmp = tempfile::tempdir().unwrap();
+    let emitter = EventEmitter::new(256);
+    let mut sink = ScriptedSink::new(|_| false);
+    sink.probe = Some(std::sync::Mutex::new(emitter.subscribe()));
+    let sink = Arc::new(sink);
+
+    PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .with_journal_sink(sink.clone())
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    let queued = sink.queued_at_append.lock().unwrap().clone();
+    assert!(queued.len() > 10, "expected a full Run, got {queued:?}");
+    let expected: Vec<usize> = (0..queued.len()).collect();
+    assert_eq!(queued, expected);
+}
+
+fn find_named(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.file_name().is_some_and(|n| n == name) {
+            found.push(path.clone());
+        }
+        if path.is_dir() {
+            find_named(&path, name, found);
+        }
+    }
+}
+
+// AC3: without `with_journal` the Run behaves as before and writes no journal.
+#[tokio::test]
+async fn executor_without_journal_writes_no_journal_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+
+    let result = PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.completed_nodes,
+        vec!["start", "plan", "implement", "review", "done"]
+    );
+    let broadcast = drain_types(&mut receiver);
+    assert_eq!(
+        broadcast.last().map(String::as_str),
+        Some("PipelineCompleted")
+    );
+
+    let mut found = Vec::new();
+    find_named(tmp.path(), EVENTS_FILE, &mut found);
+    find_named(tmp.path(), attractor_journal::RUNS_DIR, &mut found);
+    assert!(found.is_empty(), "unexpected journal files: {found:?}");
+}
+
+// AC4: a journal that becomes unwritable mid-Run is logged, and the Run still
+// reaches its exit node with the full broadcast stream.
+#[tokio::test]
+async fn journal_write_failure_mid_run_is_logged_and_run_completes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = capture_log();
+
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+    let sink = Arc::new(ScriptedSink::new(|n| n > 3));
+
+    let result = PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .with_journal_sink(sink.clone())
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .expect("a mid-Run journal failure must not stop the Run");
+
+    assert_eq!(
+        result.completed_nodes.last().map(String::as_str),
+        Some("done")
+    );
+    let broadcast = drain_types(&mut receiver);
+    assert_eq!(
+        broadcast.last().map(String::as_str),
+        Some("PipelineCompleted")
+    );
+    assert_eq!(sink.written_types(), broadcast[..3].to_vec());
+    assert_eq!(sink.calls.load(Ordering::SeqCst), broadcast.len());
+
+    let text = log.text();
+    assert!(text.contains("ERROR"), "{text}");
+    assert!(text.contains("Run Journal"), "{text}");
+    assert!(text.contains(&sink.path.display().to_string()), "{text}");
+    assert!(text.contains("disk full"), "{text}");
+}
+
+// AC4: after a single failed write the next Event is journaled again.
+#[tokio::test]
+async fn journal_recovers_after_transient_write_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let emitter = EventEmitter::new(256);
+    let mut receiver = emitter.subscribe();
+    let sink = Arc::new(ScriptedSink::new(|n| n == 4));
+
+    PipelineExecutor::with_default_registry()
+        .with_event_emitter(emitter)
+        .with_journal_sink(sink.clone())
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &tmp.path().join("logs"),
+        )
+        .await
+        .unwrap();
+
+    let mut expected = drain_types(&mut receiver);
+    expected.remove(3);
+    assert_eq!(sink.written_types(), expected);
+}
+
+// AC5 (open): a journal that cannot be opened is an error naming its path.
+#[test]
+fn open_journal_error_names_the_journal_path() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // The Run folder is an existing regular file.
+    let file_run_dir = tmp.path().join("not-a-dir");
+    std::fs::write(&file_run_dir, b"x").unwrap();
+    let error = open_journal(&file_run_dir, JOURNAL_RUN_ID, 1).unwrap_err();
+    let expected = file_run_dir.join(EVENTS_FILE).display().to_string();
+    assert!(error.to_string().contains(&expected), "{error}");
+
+    // events.jsonl is a directory.
+    let run_dir = tmp.path().join("run");
+    std::fs::create_dir_all(run_dir.join(EVENTS_FILE)).unwrap();
+    let error = open_journal(&run_dir, JOURNAL_RUN_ID, 1).unwrap_err();
+    let expected = run_dir.join(EVENTS_FILE).display().to_string();
+    assert!(error.to_string().contains(&expected), "{error}");
+
+    // A usable Run folder opens.
+    let ok_dir = tmp.path().join("ok");
+    let journal = open_journal(&ok_dir, JOURNAL_RUN_ID, 1).unwrap();
+    assert_eq!(journal.path(), ok_dir.join(EVENTS_FILE));
+}
+
+// AC5 (engine): a journal that cannot be written at start fails the Run
+// before any stage runs, with an error that names the journal path.
+#[tokio::test]
+async fn unwritable_journal_at_start_fails_run_before_first_stage() {
+    struct Counting(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl NodeHandler for Counting {
+        fn handler_type(&self) -> &str {
+            "counting"
+        }
+        async fn execute(
+            &self,
+            _node: &crate::graph::PipelineNode,
+            _ctx: &Context,
+            _graph: &PipelineGraph,
+        ) -> Result<Outcome> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Outcome::success("counted"))
+        }
+    }
+
+    let graph = parse_graph(
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            one   [type="counting"]
+            two   [type="counting"]
+            done  [shape="Msquare"]
+            start -> one -> two -> done
+        }"#,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = test_registry();
+    registry.register(Counting(Arc::clone(&calls)));
+    let emitter = EventEmitter::new(64);
+    let mut receiver = emitter.subscribe();
+    let sink = Arc::new(ScriptedSink::new(|_| true));
+    let logs = tempfile::tempdir().unwrap();
+
+    let error = PipelineExecutor::new(registry)
+        .with_event_emitter(emitter)
+        .with_journal_sink(sink.clone())
+        .run_with_checkpoint(&graph, Context::new(), logs.path())
+        .await
+        .expect_err("an unwritable journal at start must fail the Run");
+
+    assert!(
+        error.to_string().contains(&sink.path.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sink.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(drain_types(&mut receiver), vec!["PipelineFailed"]);
+    assert!(!logs.path().join("checkpoint.json").exists());
+}

@@ -198,6 +198,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "attractor-journal"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "uuid",
+]
+
+[[package]]
 name = "attractor-llm"
 version = "0.10.0"
 dependencies = [

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/attractor-types",
+    "crates/attractor-journal",
     "crates/attractor-dot",
     "crates/attractor-llm",
     "crates/attractor-tools",

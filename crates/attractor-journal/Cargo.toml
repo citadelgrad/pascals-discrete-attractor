@@ -1,0 +1,19 @@
+[package]
+name = "attractor-journal"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Run Journal, Run Index, and Run-folder layout for PAS Runs"
+
+# Must never depend on another attractor-* crate: the Monitor depends on this
+# crate alone to observe Runs (ADR 0001).
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

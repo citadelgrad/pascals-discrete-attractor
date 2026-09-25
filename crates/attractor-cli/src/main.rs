@@ -173,6 +173,11 @@ enum Commands {
         /// Output file path (default: pipelines/<epic-id>.dot)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Print one JSON object: `{"v":1,"ok":true,"pipeline_path":..}`,
+        /// or `{"v":1,"ok":false,"error":{"code","message"}}` and exit 1 (C6)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Generate pipeline .dot files from spec (and optional PRD) files.
@@ -356,7 +361,9 @@ async fn run_cli() -> anyhow::Result<()> {
     // `--json` modes keep stdout for their JSON.
     if matches!(
         cli.command,
-        Commands::Run { json: true, .. } | Commands::Runs { json: true, .. }
+        Commands::Run { json: true, .. }
+            | Commands::Runs { json: true, .. }
+            | Commands::Scaffold { json: true, .. }
     ) {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
@@ -472,8 +479,12 @@ async fn run_cli() -> anyhow::Result<()> {
                 cmd_decompose(&spec_path, dry_run).await?;
             }
         }
-        Commands::Scaffold { epic_id, output } => {
-            cmd_scaffold(&epic_id, output.as_deref()).await?;
+        Commands::Scaffold {
+            epic_id,
+            output,
+            json,
+        } => {
+            cmd_scaffold(&epic_id, output.as_deref(), json).await?;
         }
         Commands::Generate {
             files,

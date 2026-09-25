@@ -665,7 +665,7 @@ pas validate pipelines/<EPIC_ID>.dot
 pas run pipelines/<EPIC_ID>.dot -w .
 ```
 
-The scaffold command uses the `epic-runner` template, which loops through all child tasks of the epic: pick task → investigate → implement → test → verify → close → next task.
+The scaffold command uses the `epic-runner` template, which loops through all child tasks of the epic: pick task → investigate → implement → test → verify → commit and push → close → next task. PAS claims and closes each Task through its `beads.select` and `beads.close` nodes; see [`scaffold`](cli-reference.md#scaffold--generate-pipeline-from-beads-epic).
 
 ### Meta-pipeline (fully automated)
 
@@ -737,8 +737,10 @@ pas run pipelines/my-epic-id.dot -w .
 
 The generated pipeline follows this loop for each task:
 ```
-pick_task → investigate → implement → run_tests → verify → close_task → check_remaining → pick_task (loop)
+pick_task → investigate → implement → run_tests → verify → publish → close_task → pick_task (loop)
 ```
+
+`pick_task` (`beads.select`) routes `MORE` to `investigate`, `DONE` to `done`, and `BLOCKED` (open Tasks remain but none are ready) to `blocked`, which ends the Run. `close_task` (`beads.close`) closes the Task only once `publish` has pushed its commits, and routes back to `publish` otherwise.
 
 See `templates/epic-runner.dot` for the full template.
 

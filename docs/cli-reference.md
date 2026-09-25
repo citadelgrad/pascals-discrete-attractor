@@ -466,11 +466,41 @@ pas scaffold <EPIC_ID> [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--output <PATH>` | `pipelines/<EPIC_ID>.dot` | Output file path |
+| `--output <PATH>` | `pipelines/<EPIC_ID>.dot` | Output file path (overwritten if it exists) |
+| `--json` | off | Print one JSON object instead of text (see below) |
 
 #### Output
 
-Generates a DOT pipeline file from the `epic-runner` template with the epic ID substituted. Validates the result and prints node count and validation status.
+Generates a DOT pipeline file from the `epic-runner` template. `bd show <EPIC_ID>` supplies the goal text, and the `beads.select` node gets `epic="<id>"` using the ID `bd show` returned. The result is validated exactly as `pas validate` does (including the check that `bd` is on PATH), then the node count and validation status are printed.
+
+The scaffolded Pipeline loops over the Epic's child Tasks:
+
+```
+pick_task (beads.select) --MORE--> investigate → implement → run_tests → verify --PASS--> publish → close_task (beads.close) → pick_task
+                         --DONE--> done
+                         --BLOCKED--> blocked → done
+```
+
+PAS claims and closes each Task itself; no prompt runs `bd`. `publish` is a prompt that commits the Task's files and pushes. `close_task` closes the Task only once its Run Commits are on the upstream branch; otherwise it fails and routes back to `publish`, bounded by `--max-steps`. A repository without an upstream branch therefore cannot close Tasks. `BLOCKED` (open Tasks remain but none are ready) ends the Run normally; the Run Journal records `TaskSelectionBlocked`.
+
+With `--json`, stdout carries exactly one object and nothing else (notices and diagnostics go to stderr):
+
+```json
+{"v":1,"ok":true,"pipeline_path":"/abs/path/pipelines/e-1.dot"}
+{"v":1,"ok":false,"error":{"code":"epic_not_found","message":"bd show failed: ..."}}
+```
+
+`pipeline_path` is the absolute path of the written file. On failure the exit code is 1. Error codes:
+
+| Code | Meaning |
+|------|---------|
+| `bd_not_found` | `bd` is not on PATH |
+| `epic_not_found` | `bd show <EPIC_ID>` exited non-zero; `message` carries its stderr |
+| `bd_failed` | `bd` could not be run or its output could not be read |
+| `write_failed` | The output file or its directory could not be written |
+| `invalid_pipeline` | The scaffolded Pipeline did not compile or has validation errors (the file is left on disk) |
+
+Without `--json`, validation errors are printed as a warning and the command still exits 0.
 
 #### Examples
 
@@ -480,6 +510,9 @@ pas scaffold attractor-asr
 
 # Scaffold to a custom path
 pas scaffold attractor-asr --output pipelines/auth-feature.dot
+
+# Machine-readable result
+pas scaffold attractor-asr --json
 
 # Then run it
 pas run pipelines/attractor-asr.dot -w .

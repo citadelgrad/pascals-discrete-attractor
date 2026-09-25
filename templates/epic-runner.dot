@@ -7,27 +7,20 @@ digraph EpicRunner {
     done  [shape="Msquare"]
 
     // --- Pick the next task ---
+    // PAS claims the next ready child Task through Beads, writes
+    // .pas/current_task.md, and routes MORE / DONE / BLOCKED.
     pick_task [
         shape="diamond"
+        type="beads.select"
         label="Pick Next Task"
-        node_type="conditional"
-        llm_provider="claude"
-        llm_model="haiku"
-        timeout="120s"
-        allowed_tools="Bash(bd:*)"
-        prompt="Run: bd show EPIC_ID
-Look at the BLOCKS section to see child tasks.
+        epic="EPIC_ID"
+    ]
 
-Then run: bd ready
-Find the first ready (unblocked, open) child task of epic EPIC_ID.
-
-If you find one:
-- Run: bd update <task-id> --status=in_progress
-- Write the task ID and full description to .pas/current_task.md
-- Respond with MORE on the last line
-
-If all child tasks are closed (no more ready tasks for this epic):
-- Respond with DONE on the last line"
+    // Open Tasks remain but none are ready. pick_task already recorded
+    // TaskSelectionBlocked, so the Run ends without another Model Invocation.
+    blocked [
+        shape="diamond"
+        label="Blocked: open Tasks remain but none are ready"
     ]
 
     // --- Investigate ---
@@ -36,9 +29,8 @@ If all child tasks are closed (no more ready tasks for this epic):
         label="Investigate"
         llm_provider="claude"
         timeout="900s"
-        allowed_tools="Read,Grep,Glob,Bash(bd:*)"
-        prompt="Read .pas/current_task.md to get the current task ID and description.
-Run bd show <task-id> to get full details.
+        allowed_tools="Read,Grep,Glob"
+        prompt="Read .pas/current_task.md for the current task ID, description, and acceptance criteria.
 
 Investigate the codebase to understand what needs to change:
 - Find the relevant files and functions
@@ -103,37 +95,28 @@ The verification step found problems. Fix any failing tests, lint errors, or unm
 Re-run tests after fixing."
     ]
 
-    // --- Close this task ---
-    close_task [
+    // --- Publish this task's commits (the engine only observes them) ---
+    publish [
         shape="box"
-        label="Close Task"
+        label="Commit and Push"
         llm_provider="claude"
         timeout="300s"
-        allowed_tools="Bash(bd:*),Bash(git:*)"
+        allowed_tools="Bash(git:*)"
         prompt="Read .pas/current_task.md to get the task ID.
-1. Stage changes: git add -A
+1. Stage only the files this task changed (never git add -A)
 2. Commit with a descriptive message referencing the task ID
-3. Close the task: bd close <task-id> --reason='Implemented successfully'
-4. Run: bd sync --flush-only"
+3. Run: git pull --rebase
+4. Run: git push
+5. Confirm HEAD is on its upstream branch (git status shows up to date)"
     ]
 
-    // --- Check if more tasks remain ---
-    check_remaining [
-        shape="diamond"
-        label="More Tasks?"
-        node_type="conditional"
-        llm_provider="claude"
-        llm_model="haiku"
-        timeout="120s"
-        allowed_tools="Bash(bd:*)"
-        prompt="Run: bd show EPIC_ID
-Look at the BLOCKS section. Count how many child tasks are still open.
-
-Run: bd ready
-Check if any remaining child tasks of this epic are ready (unblocked, open).
-
-If there are more ready tasks, respond with MORE on the last line.
-If all tasks are closed or remaining tasks are blocked, respond with DONE on the last line."
+    // --- Close this task ---
+    // PAS closes the Task only after its Run Commits are on the upstream branch.
+    close_task [
+        shape="box"
+        type="beads.close"
+        label="Close Task"
+        require_upstream=true
     ]
 
     // --- Edges ---
@@ -141,15 +124,17 @@ If all tasks are closed or remaining tasks are blocked, respond with DONE on the
 
     pick_task -> investigate [label="MORE", condition="preferred_label=MORE"]
     pick_task -> done        [label="DONE", condition="preferred_label=DONE"]
+    pick_task -> blocked     [label="BLOCKED", condition="preferred_label=BLOCKED"]
+    blocked   -> done
 
     investigate -> implement -> run_tests -> verify
 
-    verify -> close_task [label="PASS", condition="preferred_label=PASS"]
-    verify -> fixup      [label="FAIL", condition="preferred_label=FAIL"]
+    verify -> publish [label="PASS", condition="preferred_label=PASS"]
+    verify -> fixup   [label="FAIL", condition="preferred_label=FAIL"]
     fixup  -> verify
 
-    close_task -> check_remaining
+    publish -> close_task
 
-    check_remaining -> pick_task [label="MORE", condition="preferred_label=MORE", loop_restart=true, reset_quality_loop_state=true]
-    check_remaining -> done      [label="DONE", condition="preferred_label=DONE"]
+    close_task -> pick_task [label="CLOSED", condition="outcome=success", loop_restart=true, reset_quality_loop_state=true]
+    close_task -> publish   [label="UNPUBLISHED", condition="outcome=fail"]
 }

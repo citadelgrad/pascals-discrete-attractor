@@ -267,7 +267,7 @@ for exit. Combining a magic ID with incompatible shape/type signals is an error.
 ## Beads handlers
 
 `beads.select` and `beads.close` claim and close Tasks of a Beads Epic. Neither
-consumes a provider, so neither takes `llm_provider`. Values must be quoted.
+consumes a provider, so neither takes `llm_provider`. String values must be quoted.
 
 ```dot
 pick_task  [shape="diamond", type="beads.select", epic="e-1", order="e-1.3,e-1.2"]

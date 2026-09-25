@@ -167,6 +167,23 @@ impl BeadsAdapter {
         self
     }
 
+    /// `bd init --prefix <prefix> --quiet --skip-agents --skip-hooks
+    /// --non-interactive`: create a Beads workspace in the adapter's
+    /// directory (or `BEADS_DIR`) without touching agent files or git hooks.
+    pub async fn init(&self, prefix: &str) -> Result<(), BeadsError> {
+        self.run(&[
+            "init",
+            "--prefix",
+            prefix,
+            "--quiet",
+            "--skip-agents",
+            "--skip-hooks",
+            "--non-interactive",
+        ])
+        .await
+        .map(|_| ())
+    }
+
     /// `bd show <id> --json`.
     pub async fn show(&self, id: &str) -> Result<BeadsIssue, BeadsError> {
         self.single(&["show", id, "--json"]).await
@@ -347,18 +364,7 @@ pub(crate) mod test_support {
             .in_dir(dir.path())
             .with_env("BEADS_DIR", dir.path().join(".beads"))
             .with_env("BEADS_ACTOR", TEST_ACTOR);
-        adapter
-            .run(&[
-                "init",
-                "--prefix",
-                "t",
-                "--quiet",
-                "--skip-agents",
-                "--skip-hooks",
-                "--non-interactive",
-            ])
-            .await
-            .unwrap();
+        adapter.init("t").await.unwrap();
         Some((dir, adapter))
     }
 
@@ -616,6 +622,49 @@ mod tests {
             err.to_string().contains("epics can only block other epics"),
             "{err}"
         );
+    }
+
+    // `init` passes the non-interactive flags, ignores stdout, and reports a
+    // failed init as CommandFailed.
+    #[tokio::test]
+    async fn init_runs_non_interactive_bd_init_and_reports_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let args_file = dir.path().join("args");
+        let program = stub(
+            dir.path(),
+            "fake-bd",
+            &format!(r#"echo "$*" > '{}'; echo 'not json'"#, args_file.display()),
+        );
+        BeadsAdapter::new()
+            .with_program(&program)
+            .init("pe")
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&args_file).unwrap().trim(),
+            "init --prefix pe --quiet --skip-agents --skip-hooks --non-interactive"
+        );
+
+        let program = stub(dir.path(), "fake-bd-fail", r#"echo "no init" >&2; exit 1"#);
+        let err = BeadsAdapter::new()
+            .with_program(&program)
+            .init("pe")
+            .await
+            .unwrap_err();
+        match &err {
+            BeadsError::CommandFailed {
+                command, stderr, ..
+            } => {
+                assert!(
+                    command.ends_with(
+                        "init --prefix pe --quiet --skip-agents --skip-hooks --non-interactive"
+                    ),
+                    "{command}"
+                );
+                assert_eq!(stderr, "no init");
+            }
+            other => panic!("expected CommandFailed, got {other:?}"),
+        }
     }
 
     #[tokio::test]

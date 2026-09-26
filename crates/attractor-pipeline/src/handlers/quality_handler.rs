@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use attractor_dot::AttributeValue;
 use attractor_quality::telemetry::{self, StageEvent};
 use attractor_types::{AttractorError, Context, Outcome, Result, StageStatus};
+use tokio::io::AsyncReadExt;
 
 use crate::execution_plan::ResolvedNode;
 use crate::graph::{PipelineGraph, PipelineNode};
@@ -157,16 +159,26 @@ impl QualityHandler {
         };
 
         let default_timeout = node.timeout.unwrap_or(std::time::Duration::from_secs(600));
+        // The engine stops the whole node at `node.timeout`. Stop each stage a
+        // little earlier, so that a slow stage becomes a Fail outcome with its
+        // output instead of an engine error that ends the run.
+        let node_deadline = node
+            .timeout
+            .map(|timeout| Instant::now() + timeout.saturating_sub(node_timeout_margin(timeout)));
 
         let mut results: Vec<serde_json::Value> = Vec::new();
         let mut all_passed = true;
         let mut failure_summaries: Vec<String> = Vec::new();
 
         for stage in &stages {
-            let stage_timeout = stage
+            let mut stage_timeout = stage
                 .timeout_secs
                 .map(std::time::Duration::from_secs)
                 .unwrap_or(default_timeout);
+            if let Some(deadline) = node_deadline {
+                stage_timeout =
+                    stage_timeout.min(deadline.saturating_duration_since(Instant::now()));
+            }
 
             let start = Instant::now();
 
@@ -186,6 +198,9 @@ impl QualityHandler {
             cmd.current_dir(workdir);
             cmd.env_clear();
             cmd.kill_on_drop(true);
+            // Never hand the terminal of `pas` to a stage: a test that sees a
+            // TTY on stdin can wait for input forever.
+            cmd.stdin(std::process::Stdio::null());
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
 
@@ -197,19 +212,18 @@ impl QualityHandler {
 
             process_group::configure(&mut cmd);
 
-            let child = cmd.spawn().map_err(|e| AttractorError::HandlerError {
+            let mut child = cmd.spawn().map_err(|e| AttractorError::HandlerError {
                 handler: "quality".into(),
                 node: node_id.clone(),
                 message: format!("failed to spawn stage '{}': {e}", stage.name),
             })?;
 
             let mut process_group = ProcessGroupGuard::new(child.id());
+            let stdout_capture = PipeCapture::start(child.stdout.take());
+            let stderr_capture = PipeCapture::start(child.stderr.take());
 
-            let output = match tokio::time::timeout(stage_timeout, child.wait_with_output()).await {
-                Ok(Ok(o)) => {
-                    process_group.disarm();
-                    o
-                }
+            let status = match tokio::time::timeout(stage_timeout, child.wait()).await {
+                Ok(Ok(status)) => Some(status),
                 Ok(Err(e)) => {
                     return Err(AttractorError::HandlerError {
                         handler: "quality".into(),
@@ -217,27 +231,44 @@ impl QualityHandler {
                         message: format!("stage '{}' I/O error: {e}", stage.name),
                     })
                 }
-                Err(_) => {
-                    return Err(AttractorError::CommandTimeout {
-                        timeout_ms: stage_timeout.as_millis() as u64,
-                    });
-                }
+                Err(_) => None,
+            };
+            let timed_out = status.is_none();
+            let (stdout, stderr) = if timed_out {
+                // Kill the whole group so no grandchild keeps the pipes open,
+                // then keep what the stage wrote before the timeout.
+                drop(process_group);
+                let _ = child.kill().await;
+                (
+                    stdout_capture.finish(Some(PIPE_DRAIN_GRACE)).await,
+                    stderr_capture.finish(Some(PIPE_DRAIN_GRACE)).await,
+                )
+            } else {
+                let output = (
+                    stdout_capture.finish(None).await,
+                    stderr_capture.finish(None).await,
+                );
+                process_group.disarm();
+                output
             };
 
             let duration_ms = start.elapsed().as_millis() as u64;
-            let exit_code = output.status.code().unwrap_or(-1);
-            let stage_ok = output.status.success();
+            let exit_code = status.and_then(|s| s.code()).unwrap_or(-1);
+            let stage_ok = status.is_some_and(|s| s.success());
             let passed = stage_ok || stage.allow_failure;
 
-            // Cap stderr at 1 MB before UTF-8 conversion to bound memory usage.
-            const MAX_STDERR_BYTES: usize = 1024 * 1024;
-            let stderr_bytes = if output.stderr.len() > MAX_STDERR_BYTES {
-                &output.stderr[..MAX_STDERR_BYTES]
-            } else {
-                &output.stderr
-            };
-            let stderr_raw = String::from_utf8_lossy(stderr_bytes);
-            let stderr_clean = strip_ansi_escapes(&stderr_raw);
+            let mut stderr_clean = strip_ansi_escapes(&capped_utf8(&stderr));
+            if timed_out {
+                // `cargo test` names the running tests on stdout, so keep it.
+                let stdout_clean = strip_ansi_escapes(&capped_utf8(&stdout));
+                stderr_clean = format!(
+                    "stage '{}' timed out after {}ms\n{}\n--- stdout ---\n{}",
+                    stage.name,
+                    stage_timeout.as_millis(),
+                    stderr_clean.trim_end(),
+                    stdout_clean.trim_end(),
+                );
+            }
             let stderr_display = truncate_head_tail(&stderr_clean, HEAD_LINES, TAIL_LINES);
 
             // failure_footprint = blake3(stage_name || "|" || first_2KB(stderr_without_ansi))[..16]
@@ -274,6 +305,7 @@ impl QualityHandler {
                 "stderr": stderr_display,
                 "failure_footprint": failure_footprint,
                 "duration_ms": duration_ms,
+                "timed_out": timed_out,
             }));
 
             if !passed {
@@ -325,6 +357,71 @@ impl QualityHandler {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Time kept free at the end of the node timeout to stop a stage and collect
+/// its output before the engine stops the node.
+fn node_timeout_margin(node_timeout: Duration) -> Duration {
+    (node_timeout / 10).min(Duration::from_secs(5))
+}
+
+/// How long to wait for the pipes to close after a timed-out stage is killed.
+const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+// Cap captured output at 1 MB before UTF-8 conversion to bound memory usage.
+const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+
+fn capped_utf8(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_CAPTURE_BYTES)])
+}
+
+/// Reads a child pipe in the background into a shared buffer, so the bytes
+/// read so far are still available when the stage is stopped.
+struct PipeCapture {
+    buffer: Arc<Mutex<Vec<u8>>>,
+    reader: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PipeCapture {
+    fn start<R>(pipe: Option<R>) -> Self
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let reader = pipe.map(|mut pipe| {
+            let buffer = Arc::clone(&buffer);
+            tokio::spawn(async move {
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match pipe.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => buffer
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .extend_from_slice(&chunk[..n]),
+                    }
+                }
+            })
+        });
+        Self { buffer, reader }
+    }
+
+    /// Waits for end of file (at most `grace`, when given) and returns the bytes.
+    async fn finish(mut self, grace: Option<Duration>) -> Vec<u8> {
+        if let Some(mut reader) = self.reader.take() {
+            match grace {
+                Some(grace) => {
+                    if tokio::time::timeout(grace, &mut reader).await.is_err() {
+                        reader.abort();
+                    }
+                }
+                None => {
+                    let _ = reader.await;
+                }
+            }
+        }
+        std::mem::take(&mut *self.buffer.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
 
 fn skip_outcome(notes: &str) -> Outcome {
     Outcome {

@@ -10,6 +10,9 @@ mod tests {
     use crate::handlers::quality_handler::QualityHandler;
     use crate::handlers::tests::{make_minimal_graph, make_node};
 
+    /// Serializes tests that set the process-wide PAS_TRUST_THIS variable.
+    static TRUST_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     // -----------------------------------------------------------------------
     // Test 1: disabled via node attribute (enabled=false)
     // -----------------------------------------------------------------------
@@ -330,9 +333,13 @@ cmd = "true"
         .await;
         let graph = make_minimal_graph();
 
-        std::env::set_var("PAS_TRUST_THIS", "1");
-        let outcome = handler.execute(&node, &ctx, &graph).await.unwrap();
-        std::env::remove_var("PAS_TRUST_THIS");
+        let outcome = {
+            let _trust = TRUST_ENV.lock().await;
+            std::env::set_var("PAS_TRUST_THIS", "1");
+            let outcome = handler.execute(&node, &ctx, &graph).await.unwrap();
+            std::env::remove_var("PAS_TRUST_THIS");
+            outcome
+        };
         assert_eq!(outcome.status, StageStatus::Success);
 
         let results = outcome
@@ -439,5 +446,225 @@ stages = []
             out2.context_updates.get("node2.completed"),
             Some(&serde_json::Value::Bool(false))
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage timeouts (attractor-yg6)
+    // -----------------------------------------------------------------------
+
+    fn quality_node(checks: &str, timeout: std::time::Duration) -> crate::graph::PipelineNode {
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "quality_checks".into(),
+            AttributeValue::String(checks.into()),
+        );
+        let mut node = make_node("verify", "box", None, attrs);
+        node.timeout = Some(timeout);
+        node
+    }
+
+    fn results(outcome: &attractor_types::Outcome) -> Vec<serde_json::Value> {
+        outcome
+            .context_updates
+            .get("verify.results")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .expect("verify.results should be an array")
+    }
+
+    fn summary(outcome: &attractor_types::Outcome) -> String {
+        outcome
+            .context_updates
+            .get("verify.failure_summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn timed_out_stage_is_a_fail_outcome_and_stops_later_stages() {
+        let node = quality_node(
+            "echo started-out; echo started-err >&2; sleep 30 | touch later-stage-ran",
+            std::time::Duration::from_secs(2),
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = Context::default();
+        ctx.set(
+            "workdir",
+            serde_json::Value::String(tmp.path().to_string_lossy().to_string()),
+        )
+        .await;
+
+        let outcome = QualityHandler
+            .execute(&node, &ctx, &make_minimal_graph())
+            .await
+            .expect("a stage timeout must be an outcome, not an error");
+
+        assert_eq!(outcome.status, StageStatus::Fail);
+        let results = results(&outcome);
+        assert_eq!(results.len(), 1, "later stages must not run");
+        assert_eq!(results[0]["timed_out"], serde_json::Value::Bool(true));
+        assert_eq!(results[0]["passed"], serde_json::Value::Bool(false));
+        assert!(!tmp.path().join("later-stage-ran").exists());
+
+        let summary = summary(&outcome);
+        assert!(summary.contains("timed out after"), "{summary:?}");
+        assert!(summary.contains("echo started-out"), "{summary:?}");
+        assert!(summary.contains("started-out"), "{summary:?}");
+        assert!(summary.contains("started-err"), "{summary:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timed_out_stage_leaves_no_process_alive() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pid_file = tmp.path().join("pid");
+        let checks = format!("sleep 60 & echo $! > '{}'; wait", pid_file.display());
+        let node = quality_node(&checks, std::time::Duration::from_secs(2));
+
+        let outcome = QualityHandler
+            .execute(&node, &Context::default(), &make_minimal_graph())
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, StageStatus::Fail);
+
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // Give the kernel a moment to reap the killed grandchild.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // SAFETY: signal 0 only checks whether the process exists.
+        let alive = unsafe { libc::kill(pid, 0) } == 0;
+        let zombie = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().starts_with('Z'))
+            .unwrap_or(false);
+        assert!(!alive || zombie, "grandchild {pid} is still running");
+    }
+
+    #[tokio::test]
+    async fn timed_out_stage_with_allow_failure_passes_and_later_stages_run() {
+        use std::io::Write;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manifest = r#"
+[project]
+name = "timeout-allow-failure"
+
+[quality]
+stages = ["slow", "after"]
+
+[quality.hooks.slow]
+cmd = "sleep 30"
+timeout_secs = 1
+allow_failure = true
+
+[quality.hooks.after]
+cmd = "true"
+"#;
+        std::fs::File::create(tmp.path().join("pas.toml"))
+            .unwrap()
+            .write_all(manifest.as_bytes())
+            .unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+
+        let node = make_node("verify", "box", None, HashMap::new());
+        let ctx = Context::default();
+        ctx.set(
+            "workdir",
+            serde_json::Value::String(tmp.path().to_string_lossy().to_string()),
+        )
+        .await;
+
+        let outcome = {
+            let _trust = TRUST_ENV.lock().await;
+            std::env::set_var("PAS_TRUST_THIS", "1");
+            let outcome = QualityHandler
+                .execute(&node, &ctx, &make_minimal_graph())
+                .await
+                .unwrap();
+            std::env::remove_var("PAS_TRUST_THIS");
+            outcome
+        };
+
+        assert_eq!(outcome.status, StageStatus::Success);
+        let results = results(&outcome);
+        assert_eq!(results.len(), 2, "the stage after the timeout must run");
+        assert_eq!(results[0]["timed_out"], serde_json::Value::Bool(true));
+        assert_eq!(results[0]["passed"], serde_json::Value::Bool(true));
+        assert_eq!(results[1]["timed_out"], serde_json::Value::Bool(false));
+    }
+
+    #[tokio::test]
+    async fn stage_stdin_is_closed() {
+        // `cat` waits forever on an open terminal or pipe; with a closed
+        // stdin it reads end of file at once.
+        let node = quality_node("cat", std::time::Duration::from_secs(20));
+
+        let outcome = QualityHandler
+            .execute(&node, &Context::default(), &make_minimal_graph())
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(
+            results(&outcome)[0]["timed_out"],
+            serde_json::Value::Bool(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_ends_before_the_engine_node_timeout() {
+        use crate::handler::NodeHandler as _;
+
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "quality_checks".into(),
+            AttributeValue::String("true | sleep 30".into()),
+        );
+        let mut node = make_node("verify", "box", None, attrs);
+        let node_timeout = std::time::Duration::from_secs(2);
+        node.timeout = Some(node_timeout);
+
+        let ctx = Context::default();
+        let graph = make_minimal_graph();
+        // The engine wraps the whole node in the node timeout.
+        let outcome =
+            tokio::time::timeout(node_timeout, QualityHandler.execute(&node, &ctx, &graph))
+                .await
+                .expect("the handler must return before the engine node timeout")
+                .unwrap();
+
+        assert_eq!(outcome.status, StageStatus::Fail);
+        let results = results(&outcome);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[1]["timed_out"], serde_json::Value::Bool(true));
+    }
+
+    #[tokio::test]
+    async fn completed_stage_reports_timed_out_false() {
+        let node = quality_node("echo ok", std::time::Duration::from_secs(20));
+
+        let outcome = QualityHandler
+            .execute(&node, &Context::default(), &make_minimal_graph())
+            .await
+            .unwrap();
+
+        let result = &results(&outcome)[0];
+        for field in [
+            "stage",
+            "exit_code",
+            "passed",
+            "stderr",
+            "failure_footprint",
+            "duration_ms",
+        ] {
+            assert!(result.get(field).is_some(), "missing field {field}");
+        }
+        assert_eq!(result["exit_code"], serde_json::json!(0));
+        assert_eq!(result["timed_out"], serde_json::Value::Bool(false));
     }
 }

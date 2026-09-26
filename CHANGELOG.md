@@ -2,6 +2,19 @@
 
 All notable changes to PAS are documented here.
 
+## [0.10.1] — 2026-09-25
+
+### Fixed
+
+- A quality stage that exceeds its timeout now gives a `fail` outcome instead of
+  an error that ends the run, so the `outcome=fail` edge (for example
+  `quality -> fixup`) runs. The stage result records `timed_out: true`, and
+  `<node>.failure_summary` keeps the stdout and stderr that the stage wrote
+  before the timeout. The whole process group is killed. Each stage now also
+  stops a little before the node `timeout`, so the engine node deadline does
+  not end the run first. Quality stages get a closed stdin, so a test can no
+  longer wait on the terminal of `pas`.
+
 ## [0.10.0] — 2026-09-01
 
 ### Fixed

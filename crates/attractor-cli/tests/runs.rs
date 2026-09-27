@@ -2,6 +2,8 @@
 //! `pas runs [--active] [--json]` (spec File Change 12, C4, C6), observed
 //! through the real binary with a private Run Index.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -12,12 +14,16 @@ use chrono::Utc;
 use serde_json::Value;
 
 /// Blocks in a stage until a `go` file appears in the workdir.
-const WAITS: &str = r#"digraph Waits {
+const WAITS: &str = concat!(
+    r#"digraph Waits {
     start [shape="Mdiamond"]
-    wait [shape="parallelogram", timeout="120s", tool_command="while [ ! -f go ]; do sleep 0.05; done"]
+    wait [shape="parallelogram", timeout="120s", tool_command=""#,
+    common::wait_for_go!(),
+    r#""]
     done [shape="Msquare"]
     start -> wait -> done
-}"#;
+}"#
+);
 
 /// Finishes at once.
 const QUICK: &str = r#"digraph Quick {
@@ -585,4 +591,62 @@ fn help_lists_runs() {
         text.contains("--active") && text.contains("--json"),
         "{text}"
     );
+}
+
+/// Runs [`common::wait_for_go`] the way a stage does: `sh -c` with a clean
+/// environment in `dir`.
+fn wait_loop(dir: &Path, envs: &[(&str, &str)]) -> Child {
+    Command::new("sh")
+        .arg("-c")
+        .arg(common::wait_for_go!())
+        .current_dir(dir)
+        .env_clear()
+        .envs(envs.iter().copied())
+        .spawn()
+        .unwrap()
+}
+
+/// Waits up to `timeout` for `child` to exit and returns its exit code.
+fn exit_code_within(child: &mut Child, timeout: Duration) -> i32 {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code().unwrap();
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("wait loop still running after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn wait_loop_exits_zero_once_go_appears() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = wait_loop(dir.path(), &[]);
+    fs::write(dir.path().join("go"), "").unwrap();
+    assert_eq!(exit_code_within(&mut child, Duration::from_secs(1)), 0);
+}
+
+// A test that SIGKILLs `pas run` orphans the stage shell; deleting its
+// TempDir must end the loop instead of leaving it to poll forever.
+#[test]
+fn wait_loop_exits_when_its_workdir_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let workdir = dir.path().join("repo");
+    fs::create_dir(&workdir).unwrap();
+    let mut child = wait_loop(&workdir, &[]);
+    std::thread::sleep(Duration::from_millis(200));
+    drop(dir);
+    assert_eq!(exit_code_within(&mut child, Duration::from_secs(1)), 1);
+}
+
+#[test]
+fn wait_loop_gives_up_after_its_poll_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = wait_loop(dir.path(), &[("WAIT_LIMIT", "3")]);
+    assert_eq!(exit_code_within(&mut child, Duration::from_secs(2)), 1);
+    assert!(dir.path().is_dir());
 }

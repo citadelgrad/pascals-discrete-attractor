@@ -2,6 +2,8 @@
 //! `pas run` Pipeline lock and Worktree lock (spec C5), observed through the
 //! real binary in temporary git repositories.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -14,12 +16,16 @@ const HEARTBEAT_ENV: &str = "PAS_HEARTBEAT_INTERVAL_MS";
 
 /// Blocks in a stage until a `go` file appears in the workdir. The retry
 /// lets a resume re-run the stage an interrupted Attempt was in.
-const WAITS: &str = r#"digraph Waits {
+const WAITS: &str = concat!(
+    r#"digraph Waits {
     start [shape="Mdiamond"]
-    wait [shape="parallelogram", timeout="120s", max_retries=2, tool_command="while [ ! -f go ]; do sleep 0.05; done"]
+    wait [shape="parallelogram", timeout="120s", max_retries=2, tool_command=""#,
+    common::wait_for_go!(),
+    r#""]
     done [shape="Msquare"]
     start -> wait -> done
-}"#;
+}"#
+);
 
 /// Finishes at once.
 const QUICK: &str = r#"digraph Quick {

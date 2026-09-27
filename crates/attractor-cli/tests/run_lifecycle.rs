@@ -3,6 +3,8 @@
 //! Run Index entry, and Attempt lifecycle Events, observed through the real
 //! binary.
 
+mod common;
+
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -568,14 +570,16 @@ fn sigterm_during_stage_writes_stopped_and_exits() {
 // run_dir exists when it is printed; human output goes to stderr.
 #[test]
 fn json_first_line_names_existing_run_dir() {
-    let fx = Fixture::new(
+    let fx = Fixture::new(concat!(
         r#"digraph Slow {
             start [shape="Mdiamond"]
-            wait [shape="parallelogram", timeout="60s", tool_command="while [ ! -f go ]; do sleep 0.05; done"]
+            wait [shape="parallelogram", timeout="60s", tool_command=""#,
+        common::wait_for_go!(),
+        r#""]
             done [shape="Msquare"]
             start -> wait -> done
-        }"#,
-    );
+        }"#
+    ));
     let mut child = fx
         .command(&["--json"])
         .stdout(Stdio::piped())

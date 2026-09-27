@@ -2,7 +2,39 @@
 
 All notable changes to PAS are documented here.
 
-## [Unreleased]
+## [0.11.0] — 2026-09-27
+
+### Added
+
+- New `attractor-journal` crate: an append-only Run Journal (v1) per Run and a
+  Run Index (v1) of all Runs, with golden-file contract tests for both formats.
+  The engine journals each `PipelineEvent` before it broadcasts it.
+- `pas run` gives each Run a Run identity, a Run folder, an Index entry and an
+  Attempt lifecycle. Each Attempt takes a Pipeline lock and a Worktree lock, and
+  writes a Heartbeat to the Run Journal every 30 s. `PipelineCheckpoint` records
+  `run_id` and no longer writes `session_id`.
+- `pas runs` lists Runs with a status that comes from each Run Journal.
+- Provider output is streamed, and each Model Invocation writes a Transcript.
+  The streams of Claude, Codex and Gemini are parsed for the actual model,
+  tokens and cost. Gemini uses `--output-format stream-json` when the installed
+  CLI supports it. Regression tests show that streaming codergen gives the same
+  Outcomes as before.
+- New journal events: `LlmInvoked` (one for each Model Invocation, also on
+  failure and timeout), `CommitsCreated` (Run Commits found around each stage),
+  and `EpicSnapshot`, `TaskClaimed`, `TaskSelectionBlocked` and `TaskClosed`.
+- `BeadsAdapter`: all `bd` calls now go through one adapter. Failure messages of
+  `pas scaffold` and `pas decompose` now include the `bd` command.
+- New `beads.select` handler: claims the next ready Task of an Epic and returns
+  `MORE`, `DONE` or `BLOCKED`. New `beads.close` handler: closes the current
+  Task, and with `require_upstream` (default true) first verifies that its
+  commits are on `@{upstream}`. `pas validate` and `pas run` report
+  `beads_available` when a Pipeline uses these handlers and `bd` is not on
+  `PATH`, and `attribute_required` when `beads.select` has no `epic`.
+- `templates/epic-runner.dot` uses `beads.select` and `beads.close`, and no
+  prompt calls `bd`. The `check_remaining` node is removed.
+- `pas scaffold --json` prints one JSON result line, with an error code on
+  failure (`epic_not_found`, `bd_not_found`, `bd_failed`, `invalid_pipeline`,
+  `write_failed`).
 
 ### Fixed
 
@@ -14,6 +46,8 @@ All notable changes to PAS are documented here.
   stops a little before the node `timeout`, so the engine node deadline does
   not end the run first. Quality stages get a closed stdin, so a test can no
   longer wait on the terminal of `pas`.
+- CLI tests that kill `pas run` no longer leave `go` wait loops that poll
+  forever after their temporary directory is deleted.
 
 ## [0.10.0] — 2026-09-01
 

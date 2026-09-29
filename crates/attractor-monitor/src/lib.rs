@@ -5,6 +5,7 @@ pub mod controls;
 pub mod findings;
 pub mod plans;
 pub mod projection;
+pub mod proposal;
 pub mod security;
 pub mod spawn;
 pub mod sse;
@@ -55,6 +56,13 @@ pub fn router(state: AppState) -> Router {
                     plans::MAX_FILES * plans::MAX_FILE_BYTES + (1 << 20),
                 )),
         )
+        .route(
+            "/plans/:pid/proposal",
+            get(views::proposal::show)
+                .post(views::proposal::generate)
+                .put(views::proposal::save),
+        )
+        .route("/plans/:pid/epic", post(views::proposal::create_epic))
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

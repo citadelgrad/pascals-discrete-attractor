@@ -110,6 +110,26 @@ pub fn plans_root(index_path: &Path) -> PathBuf {
         .join("plans")
 }
 
+/// Load a stored Plan. `id` must be a 32-character lowercase hex id, so a URL
+/// segment can never leave the Plans folder. `None` for anything else.
+pub fn load_meta(root: &Path, id: &str) -> Option<(PathBuf, PlanMeta)> {
+    if id.len() != 32 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    let dir = root.join(id);
+    let meta: PlanMeta =
+        serde_json::from_slice(&std::fs::read(dir.join("plan.json")).ok()?).ok()?;
+    (meta.v == 1).then_some((dir, meta))
+}
+
+/// The Plan's files in stored (submitted) order.
+pub fn docs_in_order(dir: &Path, meta: &PlanMeta) -> Vec<PathBuf> {
+    meta.files
+        .iter()
+        .map(|n| dir.join("docs").join(n))
+        .collect()
+}
+
 fn has_allowed_extension(name: &str) -> bool {
     let base = client_basename(name);
     match base.rsplit_once('.') {
@@ -394,5 +414,34 @@ mod tests {
         create(&root, req(t.path(), vec![up("A.MD", "x")])).unwrap();
         let e = create(&root, req(t.path(), vec![up("md", "x")])).unwrap_err();
         assert!(matches!(e, PlanError::BadType(_)));
+    }
+
+    #[test]
+    fn load_meta_accepts_only_stored_hex_ids_and_lists_files_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("plans");
+        let m = create(
+            &root,
+            req(tmp.path(), vec![up("b.md", "b"), up("a.md", "a")]),
+        )
+        .unwrap();
+        let (dir, meta) = load_meta(&root, &m.id).unwrap();
+        assert_eq!(meta, m);
+        let names: Vec<_> = docs_in_order(&dir, &meta)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["01-b.md", "02-a.md"]);
+        for bad in [
+            "",
+            "..",
+            "../plans",
+            &m.id[..31],
+            &m.id.to_uppercase(),
+            &format!("{}/", m.id),
+        ] {
+            assert!(load_meta(&root, bad).is_none(), "{bad:?}");
+        }
+        assert!(load_meta(&root, &"0".repeat(32)).is_none());
     }
 }

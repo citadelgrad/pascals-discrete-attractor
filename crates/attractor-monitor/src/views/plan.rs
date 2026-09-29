@@ -13,7 +13,7 @@ use crate::state::AppState;
 /// Shows 400 replies, and lets the user reorder the chosen files. The file
 /// input is rebuilt from a `DataTransfer`, so the multipart field order is
 /// the chosen order.
-const PLAN_SCRIPT: &str = r#"document.body.addEventListener('htmx:beforeSwap',function(e){if(e.detail.xhr.status===400){e.detail.shouldSwap=true;e.detail.isError=false;}});
+const PLAN_SCRIPT: &str = r#"document.body.addEventListener('htmx:beforeSwap',function(e){if([400,404,409,502].indexOf(e.detail.xhr.status)>=0){e.detail.shouldSwap=true;e.detail.isError=false;}});
 (function(){var inp=document.getElementById('plan-files'),box=document.getElementById('file-order');
 function draw(){box.innerHTML='';Array.from(inp.files).forEach(function(f,i){var li=document.createElement('li');li.textContent=f.name+' ';
 [['Up',-1],['Down',1]].forEach(function(b){var btn=document.createElement('button');btn.type='button';btn.textContent=b[0];btn.onclick=function(){move(i,b[1]);};li.appendChild(btn);});box.appendChild(li);});}
@@ -79,6 +79,13 @@ fn created(m: &PlanMeta) -> Markup {
         p.notice.ok {
             "Plan " code { (m.id) } " created: " (m.files.len()) " file(s), "
             (m.repo.display()) ", " (kind) ", " (mode)
+        }
+        @if m.kind == OutputKind::EpicAndPipeline {
+            p {
+                button type="button" hx-post=(format!("/plans/{}/proposal", m.id))
+                    hx-target="#proposal" hx-disabled-elt="this" { "Generate Proposal" }
+            }
+            div #proposal {}
         }
     }
 }

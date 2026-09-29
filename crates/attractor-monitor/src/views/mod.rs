@@ -2,6 +2,7 @@
 
 mod dot_scan;
 pub mod plan;
+pub mod proposal;
 pub mod run;
 pub mod runs;
 pub mod transcript;

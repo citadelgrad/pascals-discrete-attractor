@@ -32,11 +32,18 @@ pub async fn run_pas(args: &[OsString]) -> io::Result<PasOutput> {
 /// Like [`run_pas`] with an explicit executable (tests only).
 #[doc(hidden)]
 pub async fn run_at(exe: &Path, args: &[OsString]) -> io::Result<PasOutput> {
-    let out = tokio::process::Command::new(exe)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .await?;
+    run_at_in(exe, args, None).await
+}
+
+/// Like [`run_at`], in `cwd` when given (`bd` acts on the current directory).
+#[doc(hidden)]
+pub async fn run_at_in(exe: &Path, args: &[OsString], cwd: Option<&Path>) -> io::Result<PasOutput> {
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.args(args).stdin(Stdio::null());
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    let out = cmd.output().await?;
     Ok(PasOutput {
         code: out.status.code(),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),

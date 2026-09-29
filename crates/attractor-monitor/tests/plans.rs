@@ -167,6 +167,10 @@ async fn three_reordered_files_are_stored_in_order() {
         std::fs::read_to_string(dir.join("docs/03-b.txt")).unwrap(),
         "B"
     );
+    assert!(
+        text.contains("Generate Proposal") && text.contains("/proposal"),
+        "Epic + Pipeline Plans offer Generate: {text}"
+    );
     let j = plan_json(&dir);
     assert_eq!(j["v"], 1);
     assert_eq!(

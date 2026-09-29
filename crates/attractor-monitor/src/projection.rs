@@ -55,6 +55,8 @@ pub struct AttemptView {
     pub ended: Option<AttemptEnd>,
     pub last_heartbeat: Option<DateTime<Utc>>,
     pub last_event_at: DateTime<Utc>,
+    /// Like `last_event_at`, but Heartbeats do not move it.
+    pub last_activity_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +151,8 @@ pub struct StageFact {
     pub node_id: String,
     /// Error text for failures; the retry number for retries.
     pub detail: String,
+    /// Retry number for `StageRetrying`; `None` for failures.
+    pub attempt: Option<usize>,
     pub seq: u64,
 }
 
@@ -255,6 +259,7 @@ impl RunView {
                         ended: None,
                         last_heartbeat: None,
                         last_event_at: ts,
+                        last_activity_at: ts,
                     },
                 );
                 at
@@ -306,6 +311,9 @@ impl RunView {
         let (seq, ts) = (event.seq, event.ts);
         let attempt = self.attempt_mut(event.attempt, ts);
         attempt.last_event_at = attempt.last_event_at.max(ts);
+        if !matches!(event.data, EventData::Heartbeat { .. }) {
+            attempt.last_activity_at = attempt.last_activity_at.max(ts);
+        }
 
         match &event.data {
             EventData::RunStarted {
@@ -381,12 +389,14 @@ impl RunView {
                 self.failures.push(StageFact {
                     node_id: node_id.clone(),
                     detail: error.clone(),
+                    attempt: None,
                     seq,
                 });
             }
             EventData::StageRetrying { node_id, attempt } => self.retries.push(StageFact {
                 node_id: node_id.clone(),
                 detail: attempt.to_string(),
+                attempt: Some(*attempt),
                 seq,
             }),
             EventData::EpicSnapshot {
@@ -974,5 +984,26 @@ mod tests {
             vec![1, 2, 3]
         );
         assert_eq!(v.status, ViewStatus::Completed);
+    }
+
+    #[test]
+    fn heartbeats_do_not_move_last_activity_and_retries_carry_attempt() {
+        let view = fold(&number(vec![
+            (0, started(1)),
+            (0, stage("n")),
+            (0, EventData::Heartbeat { pid: 1 }),
+            (
+                0,
+                EventData::StageRetrying {
+                    node_id: "n".into(),
+                    attempt: 3,
+                },
+            ),
+            (0, EventData::Heartbeat { pid: 1 }),
+        ]));
+        let a = &view.attempts[0];
+        assert_eq!(a.last_event_at, a.last_heartbeat.unwrap());
+        assert!(a.last_activity_at < a.last_event_at);
+        assert_eq!(view.retries[0].attempt, Some(3));
     }
 }

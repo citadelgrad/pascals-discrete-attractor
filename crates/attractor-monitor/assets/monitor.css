@@ -34,3 +34,6 @@ td.commits code { word-break: break-all; }
 .gate { margin: 0.25rem 0; }
 .gate button { margin-right: 0.4rem; }
 .gate button.default { font-weight: bold; }
+.notice.ok { background: #38a16933; }
+.notice.err { background: #c6282833; }
+#file-order button { margin-left: 0.3rem; }

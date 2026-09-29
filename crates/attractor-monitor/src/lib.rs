@@ -3,6 +3,7 @@
 mod assets;
 pub mod controls;
 pub mod findings;
+pub mod plans;
 pub mod projection;
 pub mod security;
 pub mod spawn;
@@ -14,6 +15,7 @@ pub mod watcher;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::Context;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::{middleware, Router};
 use state::AppState;
@@ -44,6 +46,15 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/resume", post(controls::resume))
         .route("/runs/:id/rerun", post(controls::rerun))
         .route("/runs/:id/answers/:qid", post(controls::answer))
+        .route(
+            "/plans/new",
+            get(views::plan::page_handler)
+                .post(views::plan::create_handler)
+                // 20 files of 1 MiB plus form overhead; only this route.
+                .layer(DefaultBodyLimit::max(
+                    plans::MAX_FILES * plans::MAX_FILE_BYTES + (1 << 20),
+                )),
+        )
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

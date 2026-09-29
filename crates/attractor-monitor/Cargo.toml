@@ -6,7 +6,7 @@ license.workspace = true
 description = "PAS Monitor: loopback-only web UI served by `pas monitor`"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

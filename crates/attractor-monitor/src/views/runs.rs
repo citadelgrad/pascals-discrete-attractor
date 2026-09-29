@@ -216,6 +216,7 @@ pub fn page(rows: &[RunRow], total: usize, repos: &[String], q: &RunsQuery) -> M
             }
             body {
                 h1 { "PAS Monitor" }
+                p { a href="/plans/new" { "New Plan" } }
                 form #filters method="get" action="/" {
                     label { "Repository "
                         select name="repo" {

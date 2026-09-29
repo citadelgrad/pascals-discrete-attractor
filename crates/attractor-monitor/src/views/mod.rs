@@ -1,6 +1,7 @@
 //! HTML views of the Monitor.
 
 mod dot_scan;
+pub mod plan;
 pub mod run;
 pub mod runs;
 pub mod transcript;

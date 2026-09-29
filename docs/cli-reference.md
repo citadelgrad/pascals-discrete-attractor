@@ -856,6 +856,10 @@ pas trust remove /path/to/project/pas.toml <blake3-hash>
 
 ---
 
+### `--json` contract tests
+
+Every `--json` payload (decompose, scaffold, generate, validate, run, answer, stop, kill, runs) is pinned by a golden success and failure file in `crates/attractor-cli/tests/golden/json/`, checked by `tests/json_contract.rs`. Volatile values (paths, Run IDs, PIDs, timestamps, messages) are replaced with placeholders. After a deliberate payload change, regenerate with `UPDATE_GOLDEN=1 cargo test -p attractor-cli --test json_contract` and review the diff.
+
 ## Global exit code reference
 
 | Code | Meaning | Raised by |

@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "index_unreadable",
+    "message": "<MESSAGE>"
+  },
+  "ok": false,
+  "v": 1
+}

@@ -1,0 +1,9 @@
+{
+  "answer_path": "<PATH>",
+  "choice": "approve",
+  "ok": true,
+  "question_id": "q-gate-1",
+  "run_id": "<RUN_ID>",
+  "source": "cli",
+  "v": 1
+}

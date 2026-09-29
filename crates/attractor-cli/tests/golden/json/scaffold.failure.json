@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "epic_not_found",
+    "message": "<MESSAGE>"
+  },
+  "ok": false,
+  "v": 1
+}

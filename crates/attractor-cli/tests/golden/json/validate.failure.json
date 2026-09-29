@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "io",
+    "message": "<MESSAGE>"
+  },
+  "ok": false,
+  "v": 1
+}

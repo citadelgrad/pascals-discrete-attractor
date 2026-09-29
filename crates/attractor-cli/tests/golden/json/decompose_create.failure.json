@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "invalid_proposal",
+    "message": "<MESSAGE>"
+  },
+  "ok": false,
+  "v": 1
+}

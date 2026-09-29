@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "invalid_pipeline",
+    "message": "<MESSAGE>"
+  },
+  "ok": false,
+  "v": 1
+}

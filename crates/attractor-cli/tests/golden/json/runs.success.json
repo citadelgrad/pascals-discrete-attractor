@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "runs": [
+    {
+      "pipeline_path": "<PATH>",
+      "run_dir": "<PATH>",
+      "run_id": "<RUN_ID>",
+      "started_at": "<TS>",
+      "status": "completed",
+      "v": 1,
+      "workdir": "<PATH>"
+    }
+  ],
+  "v": 1
+}

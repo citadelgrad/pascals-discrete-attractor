@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "proposal": {
+    "dependencies": [
+      {
+        "blocked": 1,
+        "blocker": 0
+      }
+    ],
+    "epic": {
+      "description": "Epic body",
+      "title": "Epic"
+    },
+    "tasks": [
+      {
+        "description": "a",
+        "priority": "P2",
+        "title": "A",
+        "type": "task"
+      },
+      {
+        "description": "b",
+        "priority": "P1",
+        "title": "B",
+        "type": "task"
+      }
+    ],
+    "v": 1
+  },
+  "v": 1
+}

@@ -1,0 +1,8 @@
+{
+  "children_killed": 0,
+  "ok": true,
+  "pid": "<PID>",
+  "run_id": "<RUN_ID>",
+  "signal": "SIGTERM",
+  "v": 1
+}

@@ -161,6 +161,18 @@ enum Commands {
         json: bool,
     },
 
+    /// Serve the Monitor web UI on 127.0.0.1 (loopback only)
+    #[cfg(feature = "monitor")]
+    Monitor {
+        /// Port to listen on
+        #[arg(long, default_value_t = 7777)]
+        port: u16,
+
+        /// Open the Monitor in the default browser once it is listening
+        #[arg(long)]
+        open: bool,
+    },
+
     /// List Runs from the Run Index with a status derived from each Run
     /// Journal: running, completed, failed, stopped, crashed, or missing
     Runs {
@@ -552,6 +564,8 @@ async fn run_cli() -> anyhow::Result<()> {
             grace,
             json,
         } => cmd_kill(&run_id, &grace, json)?,
+        #[cfg(feature = "monitor")]
+        Commands::Monitor { port, open } => commands::monitor::cmd_monitor(port, open).await?,
         Commands::Validate { pipeline, json } => {
             cmd_validate(&pipeline, json)?;
         }

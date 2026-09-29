@@ -1,0 +1,3 @@
+Viz.js is MIT licensed. Copyright (c) 2023 Michael Daines.
+Full text and bundled-component notices: https://github.com/mdaines/viz-js/blob/main/LICENSE
+(The notices are also in the header of viz-standalone.js.)

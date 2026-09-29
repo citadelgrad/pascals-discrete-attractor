@@ -5,7 +5,7 @@ INSTALL_DIR="${HOME}/.local/bin"
 BIN_NAME="pas"
 
 echo "Building Pascal's Discrete Attractor (release)..."
-cargo build -p attractor-cli --release
+cargo build -p attractor-cli --release --features monitor
 
 # Create install directory if needed
 mkdir -p "${INSTALL_DIR}"

@@ -5,6 +5,8 @@ pub mod info;
 pub mod init;
 pub mod kill;
 pub mod launch;
+#[cfg(feature = "monitor")]
+pub mod monitor;
 pub mod plan;
 mod plan_input;
 pub mod run;

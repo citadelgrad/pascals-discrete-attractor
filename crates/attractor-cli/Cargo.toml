@@ -9,6 +9,10 @@ description = "Pascal's Discrete Attractor — DOT-based pipeline runner for AI 
 name = "pas"
 path = "src/main.rs"
 
+[features]
+# Off by default; release builds enable it (see install.sh).
+monitor = ["dep:attractor-monitor"]
+
 [dependencies]
 attractor-types = { path = "../attractor-types" }
 attractor-dot = { path = "../attractor-dot" }
@@ -17,6 +21,7 @@ attractor-tools = { path = "../attractor-tools" }
 attractor-pipeline = { path = "../attractor-pipeline" }
 attractor-journal = { path = "../attractor-journal" }
 attractor-quality = { path = "../attractor-quality" }
+attractor-monitor = { path = "../attractor-monitor", optional = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

@@ -333,6 +333,20 @@ Success: `{"v":1,"ok":true,"run_id":"…","pid":123,"signal":"SIGTERM","children
 | 0 | The Run process ended |
 | 1 | Any failure |
 
+### `monitor` — Serve the Monitor web UI
+
+Available only when built with `--features monitor` (`install.sh` does this).
+
+```
+pas monitor [--port 7777] [--open]
+```
+
+Binds `127.0.0.1` only; the address cannot be changed. Every request must carry
+a loopback `Host` (`localhost`, `127.0.0.1`, `[::1]`) and any `Origin` must be
+loopback too, otherwise the server answers 403. Assets are embedded in the
+binary and need no network. If the port is in use the command exits 1 with a
+message naming it. `--open` opens the default browser once listening.
+
 ### `validate` — Check a pipeline for errors
 
 Runs canonical semantic compilation followed by nine structural checks without

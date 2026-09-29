@@ -1,0 +1,12 @@
+[package]
+name = "attractor-monitor"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "PAS Monitor: loopback-only web UI served by `pas monitor`"
+
+[dependencies]
+axum = "0.7"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

@@ -273,8 +273,14 @@ async fn transcript_link_opens_the_invocations_transcript() {
     let (_, page) = get(addr, &format!("/runs/{id}")).await;
     let link = format!("/runs/{id}/transcripts/inv-1");
     assert!(page.contains(&format!(r#"href="{link}""#)), "{page}");
-    let (code, body) = get(addr, &link).await;
+    let (code, body) = get(addr, &format!("{link}?raw=1")).await;
     assert_eq!((code, body.trim()), (200, "{\"hello\":\"transcript\"}"));
+    let (code, body) = get(addr, &link).await;
+    assert_eq!(code, 200);
+    assert!(
+        body.contains("Transcript") && body.contains("tx-raw"),
+        "{body}"
+    );
 
     for bad in [
         "secret",

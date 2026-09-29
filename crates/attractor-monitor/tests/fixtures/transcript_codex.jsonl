@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"x"}
+{"type":"item.completed","item":{"type":"command_execution","command":"cmd-hotel","aggregated_output":"out-india"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"message-juliet"}}
+{"type":"turn.completed","usage":{}}

@@ -35,7 +35,7 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/summary", get(views::run::summary_handler))
         .route(
             "/runs/:id/transcripts/:inv",
-            get(views::run::transcript_handler),
+            get(views::transcript::handler),
         )
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn(security::host_guard))

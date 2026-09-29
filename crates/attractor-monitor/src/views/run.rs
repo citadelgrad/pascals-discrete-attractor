@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use attractor_journal::{parse_run_id, read_all, EventData, JournalEvent, RunDir, RunStatus};
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
@@ -555,25 +555,6 @@ pub async fn summary_handler(State(state): State<AppState>, Path(id): Path<Strin
             ).unwrap_or_else(|_| "[]".into())) {}
     };
     Html(out.into_string()).into_response()
-}
-
-/// The raw Transcript of a Model Invocation of this Run. The invocation ID must be
-/// one the journal recorded, so no other path segment reaches the filesystem.
-pub async fn transcript_handler(
-    State(state): State<AppState>,
-    Path((id, inv)): Path<(String, String)>,
-) -> Response {
-    let Some(snap) = snapshot(&state, &id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if !snap.view.invocations.iter().any(|i| i.invocation_id == inv) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let path = RunDir::from_path(&snap.entry.run_dir).transcript(&inv);
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], bytes).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "Transcript file not found\n").into_response(),
-    }
 }
 
 #[cfg(test)]

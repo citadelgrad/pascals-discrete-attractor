@@ -3,6 +3,7 @@
 mod dot_scan;
 pub mod run;
 pub mod runs;
+pub mod transcript;
 
 /// `pid_alive` for the Findings environment. EPERM means the process exists.
 #[cfg(unix)]

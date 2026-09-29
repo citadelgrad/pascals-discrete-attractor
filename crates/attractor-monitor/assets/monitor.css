@@ -23,3 +23,11 @@ form#filters { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 
 #event-log { font-family: ui-monospace, monospace; font-size: 0.85rem; list-style: none; padding: 0; max-height: 24rem; overflow-y: auto; }
 #event-log .ts { opacity: 0.6; }
 td.commits code { word-break: break-all; }
+.tx { margin: 0.25rem 0; padding: 0.25rem 0.5rem; border-left: 3px solid #8888; }
+.tx pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.tx .who { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; }
+.tx-assistant { border-left-color: #1976d2; }
+.tx-tool { border-left-color: #7b1fa2; }
+.tx-result { border-left-color: #388e3c; }
+.tx-error, .tx-raw { border-left-color: #c62828; }
+.tx-thinking, .tx-note { opacity: 0.65; }

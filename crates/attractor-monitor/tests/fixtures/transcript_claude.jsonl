@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","model":"m"}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"pondering-alpha"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"message-bravo"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"ToolCharlie","input":{"command":"echo delta"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"result-echo"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"message-foxtrot"}]}}
+{"type":"result","result":"done-golf","is_error":false}

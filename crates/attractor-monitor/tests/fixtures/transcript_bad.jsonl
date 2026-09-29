@@ -1,0 +1,4 @@
+not json <b>bold</b>
+{"type":"assistant","message":42}
+{"type":"assistant","message":{"content":[{"type":"text","te
+{"type":"assistant","message":{"content":[{"type":"text","text":"after-kilo"}]}}

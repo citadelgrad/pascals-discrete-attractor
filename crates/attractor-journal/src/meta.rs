@@ -59,17 +59,12 @@ mod tests {
   "pas_version": "0.11.0", "epic_id": null }"#;
 
     #[test]
-    fn spec_example_parses() {
-        let m: RunMeta = serde_json::from_str(EXAMPLE).unwrap();
-        assert_eq!(m.v, RunMeta::VERSION);
-        assert_eq!(m.argv.len(), 5);
-        assert_eq!(m.epic_id, None);
-    }
-
-    #[test]
     fn write_then_read_round_trips() {
         let tmp = tempfile::tempdir().unwrap();
         let mut m: RunMeta = serde_json::from_str(EXAMPLE).unwrap();
+        assert_eq!(m.v, RunMeta::VERSION);
+        assert_eq!(m.argv.len(), 5);
+        assert_eq!(m.epic_id, None);
         m.git_worktree = None;
         write_run_meta(tmp.path(), &m).unwrap();
         assert_eq!(read_run_meta(tmp.path()).unwrap(), m);

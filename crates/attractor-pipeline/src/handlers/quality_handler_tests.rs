@@ -133,6 +133,11 @@ mod tests {
 
         let outcome = handler.execute(&node, &ctx, &graph).await.unwrap();
         assert_eq!(outcome.status, StageStatus::Fail);
+        assert!(outcome.failure_reason.is_some());
+        assert_eq!(
+            outcome.context_updates.get("verify.completed"),
+            Some(&serde_json::Value::Bool(false))
+        );
 
         // Only 1 result entry — second command must not have run
         let results = outcome
@@ -408,43 +413,6 @@ stages = []
         assert_eq!(
             results[0].get("stage").and_then(|v| v.as_str()),
             Some("true")
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Test 12 (integration): 2-node pass+fail outcomes
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn quality_handler_two_node_pipeline_pass_then_fail() {
-        let handler = QualityHandler;
-        let graph = make_minimal_graph();
-
-        // Node 1: passes
-        let mut attrs1 = HashMap::new();
-        attrs1.insert(
-            "quality_checks".into(),
-            AttributeValue::String("true".into()),
-        );
-        let node1 = make_node("node1", "box", None, attrs1);
-        let ctx1 = Context::default();
-        let out1 = handler.execute(&node1, &ctx1, &graph).await.unwrap();
-        assert_eq!(out1.status, StageStatus::Success);
-
-        // Node 2: fails
-        let mut attrs2 = HashMap::new();
-        attrs2.insert(
-            "quality_checks".into(),
-            AttributeValue::String("false".into()),
-        );
-        let node2 = make_node("node2", "box", None, attrs2);
-        let ctx2 = Context::default();
-        let out2 = handler.execute(&node2, &ctx2, &graph).await.unwrap();
-        assert_eq!(out2.status, StageStatus::Fail);
-        assert!(out2.failure_reason.is_some());
-        assert_eq!(
-            out2.context_updates.get("node2.completed"),
-            Some(&serde_json::Value::Bool(false))
         );
     }
 

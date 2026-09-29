@@ -123,23 +123,13 @@ mod tests {
     }
 
     #[test]
-    fn file_filter_keeps_allowed_files() {
-        let files = vec![
-            PathBuf::from("Cargo.toml"),
-            PathBuf::from("package.json"),
-            PathBuf::from("pyproject.toml"),
-        ];
-        let filtered = filter_files(&files);
-        assert_eq!(filtered.len(), 3);
-    }
-
-    #[test]
     fn file_filter_excludes_secrets() {
         let files = vec![
             PathBuf::from("Cargo.toml"),
             PathBuf::from(".env"),
             PathBuf::from("secrets.json"),
             PathBuf::from("package.json"),
+            PathBuf::from("pyproject.toml"),
             PathBuf::from(".env.local"),
             PathBuf::from("api_key.txt"),
         ];
@@ -150,6 +140,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"Cargo.toml"));
         assert!(names.contains(&"package.json"));
+        assert!(names.contains(&"pyproject.toml"));
         assert!(!names.contains(&".env"));
         assert!(!names.iter().any(|n| n.contains("secret")));
         assert!(!names.iter().any(|n| n.contains("key")));

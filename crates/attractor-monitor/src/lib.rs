@@ -4,6 +4,7 @@ mod assets;
 pub mod findings;
 pub mod projection;
 pub mod security;
+pub mod spawn;
 pub mod sse;
 pub mod state;
 pub mod views;
@@ -38,6 +39,10 @@ pub fn router(state: AppState) -> Router {
             get(views::transcript::handler),
         )
         .route("/assets/:name", get(assets::serve_asset))
+        .layer(middleware::from_fn_with_state(
+            state.csrf_token().clone(),
+            security::csrf_guard,
+        ))
         .layer(middleware::from_fn(security::host_guard))
         .with_state(state)
 }

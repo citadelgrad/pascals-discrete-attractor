@@ -8,6 +8,7 @@ use attractor_journal::{IndexEntry, JournalEvent, RunDir};
 use tokio::sync::broadcast;
 
 use crate::projection::RunView;
+use crate::security::CsrfToken;
 
 /// Events buffered per Run for live subscribers before one is marked lagged.
 const CHANNEL_CAPACITY: usize = 1024;
@@ -18,6 +19,7 @@ pub struct AppState(Arc<Inner>);
 struct Inner {
     index_path: PathBuf,
     capacity: usize,
+    csrf: CsrfToken,
     runs: RwLock<HashMap<String, RunSlot>>,
 }
 
@@ -41,11 +43,17 @@ impl AppState {
         Self::with_capacity(index_path, CHANNEL_CAPACITY)
     }
 
+    /// The per-process CSRF token that unsafe requests must present.
+    pub fn csrf_token(&self) -> &CsrfToken {
+        &self.0.csrf
+    }
+
     /// Like [`AppState::new`] with a custom broadcast capacity (for tests).
     pub fn with_capacity(index_path: impl Into<PathBuf>, capacity: usize) -> Self {
         Self(Arc::new(Inner {
             index_path: index_path.into(),
             capacity,
+            csrf: CsrfToken::generate(),
             runs: RwLock::default(),
         }))
     }

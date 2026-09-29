@@ -994,6 +994,7 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::EdgeSelected { .. } => "edge_selected",
             PipelineEvent::GoalGateChecked { .. } => "goal_gate_checked",
             PipelineEvent::CheckpointSaved { .. } => "checkpoint_saved",
+            PipelineEvent::StopRequested { .. } => "stop_requested",
             PipelineEvent::ContextUpdated { .. } => "context_updated",
             PipelineEvent::CommitsCreated { .. } => "commits_created",
             PipelineEvent::LlmInvoked { .. } => "llm_invoked",
@@ -2589,6 +2590,61 @@ fn find_named(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
             find_named(&path, name, found);
         }
     }
+}
+
+// A `control/stop` file ends the Run before the next stage with a resumable
+// checkpoint; without PipelineCompleted, PipelineFailed, or a cleared
+// checkpoint. Resuming after the file is gone completes the Run.
+#[tokio::test]
+async fn stop_file_stops_before_next_node_and_resume_completes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let logs = tmp.path().join("logs");
+    let control = run_dir.join("control");
+    std::fs::create_dir_all(&control).unwrap();
+    std::fs::write(control.join("stop"), r#"{"v":1,"source":"monitor"}"#).unwrap();
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+
+    let result = PipelineExecutor::with_default_registry()
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &logs,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stopped_before.as_deref(), Some("start"));
+
+    let types = journal_types(&run_dir.join(EVENTS_FILE));
+    assert_eq!(
+        types,
+        ["PipelineStarted", "StopRequested", "CheckpointSaved"]
+    );
+    let events = attractor_journal::read_all(run_dir.join(EVENTS_FILE)).unwrap();
+    assert!(matches!(
+        &events[1].data,
+        EventData::StopRequested { source } if source == "monitor"
+    ));
+    assert!(logs.join("checkpoint.json").exists());
+
+    std::fs::remove_file(control.join("stop")).unwrap();
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 2).unwrap();
+    let result = PipelineExecutor::with_default_registry()
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &three_stage_graph(),
+            dry_run_context(tmp.path()).await,
+            &logs,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stopped_before, None);
+    assert_eq!(
+        result.completed_nodes,
+        vec!["start", "plan", "implement", "review", "done"]
+    );
+    assert!(!logs.join("checkpoint.json").exists());
 }
 
 // AC3: without `with_journal` the Run behaves as before and writes no journal.

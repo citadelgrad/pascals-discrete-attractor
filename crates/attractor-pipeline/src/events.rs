@@ -54,6 +54,10 @@ pub enum PipelineEvent {
     CheckpointSaved {
         node_id: String,
     },
+    /// `control/stop` was found between stages (spec File Change 10).
+    StopRequested {
+        source: String,
+    },
     ContextUpdated {
         node_id: String,
         keys: Vec<String>,
@@ -195,6 +199,7 @@ impl PipelineEvent {
                 EventData::GoalGateChecked { node_id, satisfied }
             }
             Self::CheckpointSaved { node_id } => EventData::CheckpointSaved { node_id },
+            Self::StopRequested { source } => EventData::StopRequested { source },
             Self::ContextUpdated { node_id, keys } => EventData::ContextUpdated { node_id, keys },
             Self::CommitsCreated {
                 node_id,

@@ -9,6 +9,7 @@ pub mod run;
 mod run_lock;
 pub mod runs;
 pub mod scaffold;
+pub mod stop;
 pub mod validate;
 
 pub use answer::{cmd_answer, AnswerSourceArg};
@@ -24,6 +25,7 @@ pub use run::{
 };
 pub use runs::cmd_runs;
 pub use scaffold::cmd_scaffold;
+pub use stop::cmd_stop;
 pub use validate::cmd_validate;
 
 pub(crate) fn print_diagnostics(diagnostics: &[attractor_pipeline::Diagnostic]) -> bool {

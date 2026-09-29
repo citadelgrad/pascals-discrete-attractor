@@ -90,7 +90,7 @@ Prints:
 
 | Code | Meaning |
 |------|---------|
-| 0 | Pipeline completed successfully |
+| 0 | Pipeline completed successfully, or a stop request (`pas stop`) ended the Run between stages |
 | 1 | Pipeline failed (validation error, handler error, goal gate unsatisfied, or quality loop exhausted) |
 | 2 | `pas.toml` found but not trusted — run `pas trust add` or set `PAS_TRUST_THIS=1` |
 | 5 | The Pipeline is already running (another Run holds its Pipeline lock) |
@@ -270,6 +270,38 @@ Error codes: `unknown_run`, `run_missing`, `unknown_question`,
 | 7 | The question is already answered; the existing file is unchanged |
 
 ---
+
+### `stop` — Stop an active Run after its current stage
+
+```
+pas stop <run-id> [--source cli|monitor] [--json]
+```
+
+Creates `<logs>/runs/<run-id>/control/stop`. The running `pas run` checks for the file before each stage. The stage in progress always finishes. Then the Run journals `StopRequested`, saves a checkpoint at the next node, journals `AttemptEnded` with reason `stopped`, and exits 0. Its status is `stopped`.
+
+Run the same `pas run` command again to resume. The resume starts at the next node without repeating the finished stage, and removes the stop file first. A stop file left over from an earlier Attempt never stops a new one. In directory mode a stopped pipeline halts the batch; rerun to resume it.
+
+`pas stop` never writes the journal and takes no lock. The stop file is JSON, `{"v":1,"source":"cli","requested_at":"..."}`; an unreadable file still stops the Run, with source `cli`. A second `pas stop` succeeds and leaves the first file unchanged.
+
+A Run waiting at a Human Gate does not check for a stop until the gate is answered. If the Run ends between the status check and the file write, the stale file is removed by the next Attempt.
+
+#### Options
+
+| Flag | Meaning |
+|------|---------|
+| `--source cli\|monitor` | Who is stopping; recorded in `StopRequested` (default `cli`) |
+| `--json` | Print one JSON object |
+
+#### Output
+
+Success: `{"v":1,"ok":true,"run_id":"…","stop_path":"…","already_requested":false}`. Failure: `{"v":1,"ok":false,"run_id":"<as typed>","error":{"code":"…","message":"…"}}`. Codes: `unknown_run`, `run_missing`, `not_active` (the Run's status is not `running`; the message says `run <id> is not active (status: …)`), `io_error`.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Stop requested (or already requested) |
+| 1 | Any failure; no file is created |
 
 ### `validate` — Check a pipeline for errors
 

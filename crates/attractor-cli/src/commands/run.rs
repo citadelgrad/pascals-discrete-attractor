@@ -494,6 +494,10 @@ enum AttemptOutcome {
 fn attempt_end_reason(outcome: &AttemptOutcome) -> (AttemptEndReason, Option<String>) {
     use attractor_types::AttractorError;
     match outcome {
+        AttemptOutcome::Finished(Ok(r)) if r.stopped_before.is_some() => (
+            AttemptEndReason::Stopped,
+            Some("stop requested".to_string()),
+        ),
         AttemptOutcome::Finished(Ok(_)) => (AttemptEndReason::Completed, None),
         AttemptOutcome::Finished(Err(error)) => {
             let reason = match error {
@@ -590,6 +594,14 @@ struct PreparedRun {
     locks: RunLocks,
 }
 
+/// How a `pas run` that did not fail ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEnd {
+    Completed,
+    /// A stop request ended the Attempt between stages; the Run can resume.
+    Stopped,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_run(
     path: &std::path::Path,
@@ -601,7 +613,7 @@ pub async fn cmd_run(
     fresh: bool,
     codergen_claude: &CodergenClaudeCliOpts,
     invocation: &RunInvocation,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RunEnd> {
     let json = invocation.json;
     // Installed before `AttemptStarted` is written, so every Attempt the
     // journal records can end with `AttemptEnded{stopped}`.
@@ -741,6 +753,14 @@ pub async fn cmd_run(
         }
     };
 
+    if let Some(node) = &result.stopped_before {
+        say!(
+            json,
+            "\nStopped before {node}; resume with the same pas run command (Run {run_id})"
+        );
+        return Ok(RunEnd::Stopped);
+    }
+
     say!(json, "\nPipeline completed");
     say!(json, "Completed nodes: {:?}", result.completed_nodes);
 
@@ -749,7 +769,7 @@ pub async fn cmd_run(
         say!(json, "Total cost: ${:.4}", result.total_cost);
     }
 
-    Ok(())
+    Ok(RunEnd::Completed)
 }
 
 /// Validate the invocation and the plan, decide the Run, create its folder,
@@ -872,6 +892,13 @@ async fn prepare_run(
             run_dir.path().display()
         ))
     })?;
+    // The locks are held, so this cannot eat a stop aimed at a live Attempt;
+    // it drops the stop request that ended (or raced) the previous one.
+    match std::fs::remove_file(run_dir.control_stop()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(error = %e, "cannot remove the stale control/stop"),
+    }
     let attempt = last_attempt(&run_dir.events()) + 1;
     let pipeline_path = absolute(path);
     let pas_version = env!("CARGO_PKG_VERSION").to_string();
@@ -1065,7 +1092,7 @@ pub async fn cmd_run_dir(
         manifest.current = Some(name.clone());
         save_manifest(&manifest, &manifest_path)?;
 
-        cmd_run(
+        let end = cmd_run(
             dot_file,
             workdir,
             None, // each pipeline gets its own stable logs dir
@@ -1077,6 +1104,11 @@ pub async fn cmd_run_dir(
             invocation, // each pipeline gets its own Run
         )
         .await?;
+
+        if end == RunEnd::Stopped {
+            println!("\nStopped; rerun to resume");
+            return Ok(());
+        }
 
         manifest.completed.push(name);
         manifest.current = None;
@@ -1282,8 +1314,21 @@ mod tests {
             node_outcomes: std::collections::HashMap::new(),
             final_context: std::collections::HashMap::new(),
             total_cost: 0.0,
+            stopped_before: None,
+        };
+        let stopped = attractor_pipeline::PipelineResult {
+            completed_nodes: vec![],
+            node_outcomes: std::collections::HashMap::new(),
+            final_context: std::collections::HashMap::new(),
+            total_cost: 0.0,
+            stopped_before: Some("next".to_string()),
         };
         let cases = [
+            (
+                AttemptOutcome::Finished(Ok(stopped)),
+                AttemptEndReason::Stopped,
+                Some("stop requested"),
+            ),
             (
                 AttemptOutcome::Finished(Ok(ok)),
                 AttemptEndReason::Completed,

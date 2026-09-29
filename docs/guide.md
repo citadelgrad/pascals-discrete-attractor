@@ -714,6 +714,8 @@ The choices are the outgoing edge labels. `pas run` takes the first valid answer
 
 Piped stdin (`echo 1 | pas run ...`) no longer answers a gate. If the Run is killed while it waits, resuming it asks the same question again.
 
+To stop a Run cleanly between stages, use `pas stop <run-id>`; see the [CLI reference](cli-reference.md#stop--stop-an-active-run-after-its-current-stage). A Run waiting at a Human Gate ignores it until the gate is answered.
+
 ---
 
 ## Integrating with Beads

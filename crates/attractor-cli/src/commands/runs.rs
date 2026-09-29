@@ -154,7 +154,7 @@ fn render_table(rows: &[RunRow], active: bool) -> String {
 /// Whether a process with this PID exists (`kill(pid, 0)`; `EPERM` means it
 /// exists under another user).
 #[cfg(unix)]
-fn pid_alive(pid: u32) -> bool {
+pub(super) fn pid_alive(pid: u32) -> bool {
     // 0 and values beyond `pid_t` would address process groups, not a process.
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
@@ -171,7 +171,7 @@ fn pid_alive(pid: u32) -> bool {
 
 /// Without a way to probe, never claim a Run crashed.
 #[cfg(not(unix))]
-fn pid_alive(_pid: u32) -> bool {
+pub(super) fn pid_alive(_pid: u32) -> bool {
     true
 }
 

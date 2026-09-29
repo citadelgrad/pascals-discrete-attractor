@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use commands::{
     cmd_answer, cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch,
-    cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_validate,
+    cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_stop, cmd_validate,
     heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenClaudeCliOpts,
     InitOpts, RunInvocation, RunRefused,
 };
@@ -122,6 +122,21 @@ enum Commands {
         choice: String,
 
         /// Who is answering, recorded in the journal
+        #[arg(long, value_enum, default_value = "cli")]
+        source: AnswerSourceArg,
+
+        /// Print one JSON object `{"v":1,"ok":...,"run_id":...}`
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ask an active Run to stop after its current stage. It ends with
+    /// `stopped` and can be resumed by running the same command again
+    Stop {
+        /// Run ID (a UUID from `pas runs`)
+        run_id: String,
+
+        /// Who is stopping, recorded in the journal
         #[arg(long, value_enum, default_value = "cli")]
         source: AnswerSourceArg,
 
@@ -482,6 +497,11 @@ async fn run_cli() -> anyhow::Result<()> {
             source,
             json,
         } => cmd_answer(&run_id, &question_id, &choice, source, json)?,
+        Commands::Stop {
+            run_id,
+            source,
+            json,
+        } => cmd_stop(&run_id, source, json)?,
         Commands::Validate { pipeline } => {
             cmd_validate(&pipeline)?;
         }

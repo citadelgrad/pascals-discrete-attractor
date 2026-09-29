@@ -50,6 +50,9 @@ pub struct PipelineResult {
     pub node_outcomes: HashMap<String, Outcome>,
     pub final_context: HashMap<String, serde_json::Value>,
     pub total_cost: f64,
+    /// Set when a stop request ended the Run between stages: the node that
+    /// has not run yet and that a resume starts at. The checkpoint is kept.
+    pub stopped_before: Option<String>,
 }
 
 #[derive(Default)]
@@ -687,6 +690,24 @@ impl PipelineExecutor {
         });
     }
 
+    /// The `source` of a pending stop request: `control/stop` of the attached
+    /// Run folder. Best-effort content (`{"source":..}`); anything unreadable
+    /// counts as `cli`. `None` when no journal is attached or no file exists.
+    fn stop_request_source(&self) -> Option<String> {
+        let run_dir = attractor_journal::RunDir::from_path(self.run_dir.as_deref()?);
+        let path = run_dir.control_stop();
+        if !path.exists() {
+            return None;
+        }
+        let source = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|v| v.get("source")?.as_str().map(str::to_string))
+            .filter(|s| s == "cli" || s == "monitor")
+            .unwrap_or_else(|| "cli".to_string());
+        Some(source)
+    }
+
     /// Core execution loop. When `logs_root` is `Some`, checkpoints are
     /// saved after each node and an existing checkpoint triggers resume.
     async fn run_inner(
@@ -830,6 +851,34 @@ impl PipelineExecutor {
                     spent: progress.total_cost,
                     limit: max_budget,
                 });
+            }
+
+            // Stop request (spec File Change 10): honoured between stages only.
+            if !plan.is_exit(&current_node.id) {
+                if let Some(source) = self.stop_request_source() {
+                    self.emit(PipelineEvent::StopRequested { source });
+                    CheckpointData {
+                        logs_root,
+                        completed_nodes: &completed_nodes,
+                        node_outcomes: &node_outcomes,
+                        context: &context,
+                        quality_loop_counters: &quality_loop_counters,
+                        quality_last_footprint: &quality_last_footprint,
+                        previous_node_id: prev_node_id.as_deref(),
+                        execution_fingerprint: Some(&execution_fingerprint),
+                        run_id: run_id.as_deref(),
+                        observers: &self.observers,
+                    }
+                    .save(&current_node.id, &progress)
+                    .await?;
+                    return Ok(PipelineResult {
+                        completed_nodes,
+                        node_outcomes,
+                        final_context: context.snapshot().await,
+                        total_cost: progress.total_cost,
+                        stopped_before: Some(current_node.id.clone()),
+                    });
+                }
             }
 
             // Terminal check (exit node)
@@ -1124,11 +1173,13 @@ impl PipelineExecutor {
             node_outcomes,
             final_context,
             total_cost: progress.total_cost,
+            stopped_before: None,
         })
         }
         .await;
 
         match execution_result {
+            Ok(result) if result.stopped_before.is_some() => Ok(result),
             Ok(result) => {
                 self.emit(PipelineEvent::PipelineCompleted {
                     pipeline_name: graph.name.clone(),

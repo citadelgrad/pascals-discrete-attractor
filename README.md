@@ -115,7 +115,7 @@ This builds a release binary and installs it to `~/.local/bin/pas`.
 Or install via cargo:
 
 ```sh
-cargo install --path crates/attractor-cli
+cargo install --path crates/attractor-cli --features monitor
 ```
 
 ## Usage
@@ -193,6 +193,22 @@ There's also a meta-pipeline that chains the full workflow end-to-end:
 pas run templates/plan-to-execute.dot -w .
 ```
 
+## PAS Monitor
+
+`pas monitor` serves a local web UI (loopback only) that shows every Run on the machine, controls them, and turns uploaded Plans into an Epic and/or Pipeline. It needs a build with `--features monitor` (`./install.sh` does this).
+
+```sh
+pas monitor            # then open http://127.0.0.1:7777
+pas monitor --port 8080 --open
+```
+
+- Runs started with `pas run` appear automatically via their Run Journal and the Run Index.
+- Human Gates can be answered, and Runs stopped or killed, from the UI.
+- Plans (`.md`/`.txt` files) become a Proposal, Epic and Pipeline in reviewed or one-click mode.
+- Terminal equivalents: `pas runs`, `pas answer`, `pas stop`, `pas kill`.
+
+State lives under `PAS_STATE_DIR` (default `~/.local/state/pas`). See [docs/cli-reference.md](docs/cli-reference.md#monitor--serve-the-monitor-web-ui).
+
 ## Documentation
 
 - **[docs/cli-reference.md](docs/cli-reference.md)** — CLI commands, flags, examples, and environment setup
@@ -223,6 +239,8 @@ export ANTHROPIC_API_KEY=...
 export GEMINI_API_KEY=...
 ```
 
+Set `PAS_STATE_DIR` to relocate the Run Index and Monitor Plan workspaces (default `$XDG_STATE_HOME/pas`, else `~/.local/state/pas`).
+
 ## Crate Structure
 
 | Crate | Description |
@@ -233,7 +251,9 @@ export GEMINI_API_KEY=...
 | `attractor-tools` | Tool trait, registry, built-in tools, execution environment |
 | `attractor-agent` | Agent session loop with steering and loop detection |
 | `attractor-pipeline` | Pipeline graph, engine, handlers, validation, stylesheets |
-| `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`, `launch`) |
+| `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`, `launch`, `runs`, `answer`, `stop`, `kill`, `monitor`) |
+| `attractor-journal` | Run Journal, Run folder layout and Run Index |
+| `attractor-monitor` | The Monitor web UI (`pas monitor`); reads journals and spawns `pas` |
 
 ## Reference
 

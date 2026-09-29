@@ -295,7 +295,19 @@ async fn buttons_follow_status() {
     ];
     for (kind, shown) in cases {
         let id = add_run(&e, kind, RUN_ARGV);
-        let html = page(&e, &id).await;
+        // The watcher registers a Run before it folds the journal, so wait
+        // for the page to show the loaded state.
+        let mut html = page(&e, &id).await;
+        for _ in 0..100 {
+            if ["stop", "kill", "resume", "rerun"]
+                .iter()
+                .all(|a| has(&html, a) == shown.contains(a))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            html = page(&e, &id).await;
+        }
         for action in ["stop", "kill", "resume", "rerun"] {
             assert_eq!(has(&html, action), shown.contains(&action), "{action}");
         }

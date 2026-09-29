@@ -49,6 +49,8 @@ pas run <PIPELINE> [OPTIONS]
 | `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for `codergen` nodes. |
 | `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for `codergen` nodes. Repeatable. |
 | `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for `codergen` nodes. `--strict-mcp-config` remains enabled. |
+| `--run-id <UUID>` | — | generated (UUID v7) | Use this Run ID instead of generating one. Must be a UUID; anything else is rejected. The Monitor passes it so it knows the ID before the Run starts. |
+| `--json` | — | false | Print `{"v":1,"ok":true,"run_id","run_dir"}` as the first stdout line once the Run folder exists; all other output goes to stderr. |
 | `--allow-shared-workdir` | — | false | Start even if another Run is active in the same git worktree. The Run records `shared_workdir: true` in its `RunStarted` event when it actually shares the worktree. |
 
 PAS resolves each run-control field independently using `caller > manifest > permitted graph defaults > built-ins`.
@@ -72,6 +74,23 @@ Each Attempt holds two exclusive, non-blocking `flock` locks until it ends. Both
 - **Worktree lock:** `pas-run.lock` in the worktree's git dir (`git rev-parse --absolute-git-dir`). Each linked worktree has its own. A `pas run` of another Pipeline in the same worktree exits with code 6 and names the other Run, unless `--allow-shared-workdir` is passed. Outside a git repository, or without `git` on `PATH`, only the Pipeline lock is taken.
 
 Both locks are taken before the checkpoint is read, so a refused Run creates no Run folder or Run Index entry. With `--json`, the refusal is printed as `{"v":1,"ok":false,"error":{"code":"pipeline_locked"|"worktree_locked","message":…}}`. The OS releases both locks when the process exits, even after `kill -9`, so no cleanup is needed. A Pipeline whose stages call `pas run` in the same worktree needs `--allow-shared-workdir` on the inner `pas run`.
+
+#### Run folder layout
+
+Every Run writes a Run Journal under its Pipeline's logs folder and registers in the Run Index (`$PAS_STATE_DIR/runs.jsonl`, see [Environment](#environment)):
+
+```
+<logs>/<stem>-<hash>/          the Pipeline folder
+  checkpoint.json
+  run.lock                     Pipeline lock
+  runs/<run-id>/
+    run.json                   Run metadata
+    events.jsonl               Events (Run Journal)
+    console.log
+    transcripts/<invocation-id>.jsonl   one per Model Invocation
+    answers/<question-id>.json          Human Gate answers
+    control/stop                        stop request
+```
 
 #### Directory mode
 
@@ -341,11 +360,55 @@ Available only when built with `--features monitor` (`install.sh` does this).
 pas monitor [--port 7777] [--open]
 ```
 
+#### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port <PORT>` | 7777 | Port to listen on (`127.0.0.1` only). |
+| `--open` | false | Open the default browser once listening. |
+
 Binds `127.0.0.1` only; the address cannot be changed. Every request must carry
 a loopback `Host` (`localhost`, `127.0.0.1`, `[::1]`) and any `Origin` must be
-loopback too, otherwise the server answers 403. Assets are embedded in the
-binary and need no network. If the port is in use the command exits 1 with a
-message naming it. `--open` opens the default browser once listening.
+loopback too, otherwise the server answers 403. State-changing requests also
+need the per-process CSRF token (`X-CSRF-Token`). Assets are embedded in the
+binary and need no network.
+
+The Monitor observes Runs only through Run Journals and the Run Index, so a
+Run started in any terminal appears without configuration. It controls Runs
+with the same files `pas stop` and `pas answer` write. It plans and launches
+Runs by spawning the `pas` binary, never by linking the engine (ADR 0001,
+ADR 0002). Uploaded Plans are stored under `$PAS_STATE_DIR/plans/<plan-id>/`.
+A Plan runs in reviewed mode (Proposal, Epic, Pipeline, then Launch, each
+step confirmed) or one-click mode (all steps without pausing, stopping at the
+first failure). Without `--features monitor` the subcommand does not exist.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The server shut down cleanly |
+| 1 | Any failure, including a port already in use (the message names `127.0.0.1:<port>`) |
+
+### Beads handlers
+
+`beads.select` and `beads.close` claim and close Tasks of a Beads Epic inside a Pipeline. Both need `bd` on `PATH`. See [dot-dialect.md](dot-dialect.md#beads-handlers) for validation rules.
+
+| Handler | Attribute | Default | Description |
+|---------|-----------|---------|-------------|
+| `beads.select` | `epic` | required | ID of the Epic whose child Tasks are claimed. |
+| `beads.select` | `order` | — | Comma list of Task IDs to try first. |
+| `beads.select` | `exclude` | — | Comma list of Task IDs to skip. |
+| `beads.close` | `require_upstream` | `true` | Only close when the upstream node succeeded. |
+| `beads.close` | `reason` | — | Close reason template. |
+
+`beads.select` routes with `preferred_label` `MORE`, `DONE` or `BLOCKED`.
+
+```dot
+pick_task  [shape="diamond", type="beads.select", epic="e-1", order="e-1.3,e-1.2"]
+close_task [shape="box", type="beads.close", require_upstream=true]
+pick_task -> implement [label="MORE", condition="preferred_label=MORE"]
+pick_task -> done      [label="DONE", condition="preferred_label=DONE"]
+```
 
 ### `validate` — Check a pipeline for errors
 
@@ -884,7 +947,8 @@ Every `--json` payload (decompose, scaffold, generate, validate, run, answer, st
 | 3 | Trust store corrupted | `run`, `trust` |
 | 4 | No `.git` root found without `--force` | `init` |
 | 5 | Pipeline already running | `run`, `launch` |
-| 6 | Git worktree busy with another Run | `run`, `launch` |
+| 6 | Git worktree busy with another Run (override with `--allow-shared-workdir`) | `run`, `launch` |
+| 7 | The Human Gate question is already answered; existing answer unchanged | `answer` |
 
 ---
 
@@ -1077,6 +1141,7 @@ Quick way to compare node counts and structure between pipeline revisions.
 
 ### Optional
 
+- **`PAS_STATE_DIR`** — Folder for machine-wide PAS state: the Run Index (`runs.jsonl`) and Monitor Plan workspaces (`plans/<plan-id>/`). Default `$XDG_STATE_HOME/pas`, else `~/.local/state/pas`.
 - **`RUST_LOG`** — Override log level (e.g. `RUST_LOG=debug pas run ...`). The `-v` flag sets this to `debug` automatically.
 
 ---

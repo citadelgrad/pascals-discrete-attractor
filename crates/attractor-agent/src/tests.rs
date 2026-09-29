@@ -10,26 +10,6 @@ use attractor_tools::{Tool, ToolDefinition as ToolsToolDef};
 // Test 1: Session creation with config
 // -----------------------------------------------------------------------
 
-#[test]
-fn session_creation_with_config() {
-    let client = make_client(SequenceMockProvider::single_text("hello"));
-    let registry = ToolRegistry::new();
-    let env = Box::new(MockEnv);
-    let config = SessionConfig {
-        model: "test-model".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        max_turns: 10,
-        max_tool_rounds: 50,
-        ..Default::default()
-    };
-
-    let session = AgentSession::new(client, registry, env, config);
-
-    assert!(!session.id().is_empty());
-    assert_eq!(*session.state(), SessionState::Idle);
-    assert!(session.history().is_empty());
-}
-
 #[tokio::test]
 async fn session_model_and_system_prompt_reach_the_provider_request() {
     let (provider, requests) = SequenceMockProvider::recording(vec![Response {

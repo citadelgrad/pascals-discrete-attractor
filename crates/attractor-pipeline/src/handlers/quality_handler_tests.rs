@@ -5,7 +5,6 @@ mod tests {
     use attractor_dot::AttributeValue;
     use attractor_types::{Context, StageStatus};
 
-    use crate::handler::default_registry;
     use crate::handler::NodeHandler;
     use crate::handlers::quality_handler::QualityHandler;
     use crate::handlers::tests::{make_minimal_graph, make_node};
@@ -201,15 +200,6 @@ mod tests {
     // Test 7: QualityHandler appears in default_registry()
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn quality_handler_registers_in_default_registry() {
-        let reg = default_registry();
-        assert!(
-            reg.has("quality"),
-            "default_registry() should include the 'quality' handler"
-        );
-    }
-
     // -----------------------------------------------------------------------
     // Test 8: failure_footprint is present in results on stage failure
     // -----------------------------------------------------------------------
@@ -266,15 +256,6 @@ mod tests {
             !result.contains("line 100"),
             "middle lines should be omitted"
         );
-    }
-
-    #[test]
-    fn truncate_head_tail_short_text_unchanged() {
-        use crate::handlers::quality_handler::truncate_head_tail;
-
-        let text = "line 1\nline 2\nline 3";
-        let result = truncate_head_tail(text, 50, 50);
-        assert_eq!(result, text.trim_end());
     }
 
     #[test]

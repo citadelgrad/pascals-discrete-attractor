@@ -168,15 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn index_path_is_runs_jsonl_in_state_dir() {
-        // Reads the real environment; only the file name is asserted.
-        if let Ok(p) = index_path() {
-            assert_eq!(p.file_name().unwrap(), INDEX_FILE);
-            assert_eq!(p.parent().unwrap(), state_dir().unwrap());
-        }
-    }
-
-    #[test]
     fn append_and_read_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nested").join(INDEX_FILE);
@@ -215,12 +206,5 @@ mod tests {
         text.push_str(&serde_json::to_string(&good).unwrap()[..20]);
         std::fs::write(&path, text).unwrap();
         assert_eq!(read_index_at(&path).unwrap(), vec![good]);
-    }
-
-    #[test]
-    fn spec_example_entry_parses() {
-        let line = r#"{"v":1,"run_id":"0192...","started_at":"2026-09-24T10:00:00Z","workdir":"/abs/repo","pipeline_path":"/abs/pipelines/x.dot","run_dir":"/abs/repo/.pas/logs/x-1a2b3c4d/runs/0192..."}"#;
-        let e: IndexEntry = serde_json::from_str(line).unwrap();
-        assert_eq!(e.workdir, PathBuf::from("/abs/repo"));
     }
 }

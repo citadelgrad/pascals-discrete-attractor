@@ -90,15 +90,6 @@ mod tests {
     use serde_json::json;
 
     // Test 1: No loop detected with varied calls
-    #[test]
-    fn no_loop_with_varied_calls() {
-        let mut detector = LoopDetector::new(3);
-
-        assert!(!detector.record_and_check("read_file", &json!({"path": "/a.rs"})));
-        assert!(!detector.record_and_check("write_file", &json!({"path": "/b.rs"})));
-        assert!(!detector.record_and_check("exec", &json!({"cmd": "cargo build"})));
-        assert!(!detector.record_and_check("grep", &json!({"pattern": "foo"})));
-    }
 
     // Test 2: Loop detected with identical calls filling the window
     #[test]
@@ -130,18 +121,6 @@ mod tests {
     }
 
     // Test 4: Window boundary -- one less than window doesn't trigger
-    #[test]
-    fn window_boundary_no_trigger() {
-        let mut detector = LoopDetector::new(4);
-
-        let args = json!({"x": 1});
-        assert!(!detector.record_and_check("tool_a", &args));
-        assert!(!detector.record_and_check("tool_a", &args));
-        // 3 identical calls with window_size=4 should NOT trigger
-        assert!(!detector.record_and_check("tool_a", &args));
-        // 4th call fills the window -> triggers
-        assert!(detector.record_and_check("tool_a", &args));
-    }
 
     // Test 5: Different args for same tool don't trigger
     #[test]

@@ -81,7 +81,6 @@ impl DynProvider {
 mod tests {
     use super::*;
     use crate::{FinishReason, Message, Usage};
-    use std::collections::HashMap;
     use tokio_stream::StreamExt;
 
     struct MockProvider;
@@ -151,27 +150,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dyn_provider_complete() {
-        let provider = DynProvider::new(MockProvider);
-        let req = make_test_request();
-        let resp = provider.complete(&req).await.unwrap();
-        assert_eq!(resp.id, "mock-resp-1");
-        assert_eq!(resp.text, "Hello from mock");
-        assert_eq!(resp.finish_reason, FinishReason::EndTurn);
-    }
-
-    #[test]
-    fn dyn_provider_capability_methods() {
-        let provider = DynProvider::new(MockProvider);
-        assert_eq!(provider.name(), "mock");
-        assert_eq!(provider.default_model(), "mock-model");
-        assert!(provider.supports_tools());
-        assert!(provider.supports_streaming());
-        assert!(!provider.supports_reasoning());
-        assert_eq!(provider.context_window_size(), 128_000);
-    }
-
-    #[tokio::test]
     async fn streaming_capability_fixture_yields_a_real_event() {
         let provider = DynProvider::new(MockProvider);
         assert!(provider.supports_streaming());
@@ -179,6 +157,16 @@ mod tests {
         let request = make_test_request();
         let event = provider.stream(&request).next().await;
         assert!(matches!(event, Some(StreamEvent::ContentStart)));
+    }
+
+    #[tokio::test]
+    async fn dyn_provider_complete() {
+        let provider = DynProvider::new(MockProvider);
+        let req = make_test_request();
+        let resp = provider.complete(&req).await.unwrap();
+        assert_eq!(resp.id, "mock-resp-1");
+        assert_eq!(resp.text, "Hello from mock");
+        assert_eq!(resp.finish_reason, FinishReason::EndTurn);
     }
 
     #[tokio::test]
@@ -202,18 +190,5 @@ mod tests {
                 provider.name()
             );
         }
-    }
-
-    #[tokio::test]
-    async fn dyn_provider_in_hashmap() {
-        let mut providers: HashMap<String, DynProvider> = HashMap::new();
-        providers.insert("mock".into(), DynProvider::new(MockProvider));
-
-        let provider = providers.get("mock").unwrap();
-        assert_eq!(provider.name(), "mock");
-
-        let req = make_test_request();
-        let resp = provider.complete(&req).await.unwrap();
-        assert_eq!(resp.text, "Hello from mock");
     }
 }

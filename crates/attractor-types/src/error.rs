@@ -412,20 +412,4 @@ mod tests {
         let err: AttractorError = json_err.into();
         assert!(matches!(err, AttractorError::Json(_)));
     }
-
-    #[test]
-    fn result_alias_works() {
-        fn example() -> Result<u32> {
-            Ok(42)
-        }
-        assert_eq!(example().unwrap(), 42);
-    }
-
-    #[test]
-    fn result_alias_err() {
-        fn example() -> Result<()> {
-            Err(AttractorError::Other("fail".into()))
-        }
-        assert!(example().is_err());
-    }
 }

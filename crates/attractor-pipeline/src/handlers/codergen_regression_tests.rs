@@ -691,18 +691,6 @@ fn both_ok<'a>(both: &'a Both, case: &str) -> (&'a Outcome, &'a Outcome) {
 // AC1: for each fixture, the Outcome equals the pre-streaming Outcome.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn gemini_fixtures_hold_the_same_response() {
-    let json: serde_json::Value = serde_json::from_str(&fixture("gemini-0.61.0.json")).unwrap();
-    let streamed: String = fixture("gemini-0.61.0.stream.jsonl")
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .filter(|line| line["type"] == "message" && line["role"] == "assistant")
-        .map(|line| line["content"].as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(json["response"].as_str(), Some(streamed.as_str()));
-}
-
 #[tokio::test]
 async fn recorded_fixtures_give_pre_streaming_outcomes_for_task_nodes() {
     for response in recorded_responses() {

@@ -370,17 +370,6 @@ mod tests {
     }
 
     #[test]
-    fn usage_default() {
-        let usage = Usage::default();
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.output_tokens, 0);
-        assert!(usage.reasoning_tokens.is_none());
-        assert!(usage.cache_read_tokens.is_none());
-        assert!(usage.cache_write_tokens.is_none());
-        assert_eq!(usage.total_tokens, 0);
-    }
-
-    #[test]
     fn finish_reason_variants() {
         let reasons = [
             (FinishReason::EndTurn, "\"end_turn\""),

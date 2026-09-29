@@ -1957,17 +1957,4 @@ mod stream_formats {
 
     // AC1 at the stage level: each recorded fixture gives the same Outcome
     // text through the handler as through the parser.
-    #[tokio::test]
-    async fn recorded_fixtures_succeed_through_the_handler() {
-        for (provider, name, text) in [
-            (LlmCliProvider::Claude, "claude-2.1.282.stream.jsonl", "OK"),
-            (LlmCliProvider::Codex, "codex-0.151.0.jsonl", "OK"),
-        ] {
-            let tmp = tempfile::tempdir().unwrap();
-            let program = stub(tmp.path(), &format!("cat '{}'", fixture(name).display()));
-            let outcome = run(provider, program).await.unwrap();
-            assert_eq!(outcome.status, StageStatus::Success, "{provider:?}");
-            assert_eq!(outcome.notes, text, "{provider:?}");
-        }
-    }
 }

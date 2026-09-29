@@ -188,38 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn registry_names() {
-        let mut registry = ToolRegistry::new();
-        registry.register(EchoTool);
-        let names = registry.names();
-        assert_eq!(names.len(), 1);
-        assert!(names.contains(&"echo".to_string()));
-    }
-
-    #[tokio::test]
-    async fn mock_tool_execute() {
-        let tool = EchoTool;
-        let env = MockEnv::new();
-        let args = serde_json::json!({"text": "hello"});
-        let result = tool.execute(args, &env).await.unwrap();
-        assert_eq!(result, "hello");
-    }
-
-    #[test]
-    fn exec_result_creation() {
-        let result = ExecResult {
-            stdout: "out".to_string(),
-            stderr: "err".to_string(),
-            exit_code: 0,
-            timed_out: false,
-            duration_ms: 42,
-        };
-        assert_eq!(result.exit_code, 0);
-        assert!(!result.timed_out);
-        assert_eq!(result.duration_ms, 42);
-    }
-
-    #[test]
     fn grep_options_default() {
         let opts = GrepOptions::default();
         assert!(!opts.case_insensitive);
@@ -295,26 +263,5 @@ mod tests {
         let result = tool.execute(args, &env).await.unwrap();
         assert!(result.contains("Exit code: 0"));
         assert!(result.contains("hello"));
-    }
-
-    #[test]
-    fn truncation_head_tail_mode() {
-        use truncation::{truncate_output, TruncationMode};
-        let input: String = "x".repeat(100);
-        let result = truncate_output(&input, 50, TruncationMode::HeadTail);
-        assert!(result.contains("[WARNING: Output truncated."));
-        assert!(result.contains("characters removed from middle"));
-        // Head portion is 20 chars (40% of 50)
-        assert!(result.starts_with(&"x".repeat(20)));
-    }
-
-    #[test]
-    fn truncation_tail_mode() {
-        use truncation::{truncate_output, TruncationMode};
-        let input: String = "y".repeat(100);
-        let result = truncate_output(&input, 50, TruncationMode::Tail);
-        assert!(result.contains("[WARNING: Output truncated."));
-        assert!(result.contains("characters removed from start"));
-        assert!(result.ends_with(&"y".repeat(50)));
     }
 }

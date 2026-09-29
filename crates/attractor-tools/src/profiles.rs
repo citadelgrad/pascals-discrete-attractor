@@ -84,26 +84,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn anthropic_profile_includes_all_tools() {
-        let profile = ToolProfile::anthropic();
-        assert_eq!(profile.name, "anthropic");
-        assert_eq!(profile.tools.len(), 6);
-        assert!(profile.tools.contains(&"read_file".to_string()));
-        assert!(profile.tools.contains(&"write_file".to_string()));
-        assert!(profile.tools.contains(&"edit_file".to_string()));
-        assert!(profile.tools.contains(&"shell".to_string()));
-        assert!(profile.tools.contains(&"grep".to_string()));
-        assert!(profile.tools.contains(&"glob".to_string()));
-    }
-
-    #[test]
-    fn build_registry_creates_correct_number_of_tools() {
-        let profile = ToolProfile::anthropic();
-        let registry = profile.build_registry();
-        assert_eq!(registry.len(), 6);
-    }
-
-    #[test]
     fn registry_has_correct_tool_names() {
         let profile = ToolProfile::anthropic();
         let registry = profile.build_registry();

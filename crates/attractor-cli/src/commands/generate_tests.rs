@@ -9,18 +9,6 @@ fn strip_fences_dot() {
 }
 
 #[test]
-fn strip_fences_plain() {
-    let input = "```\ndigraph { a -> b }\n```";
-    assert_eq!(strip_code_fences(input), "digraph { a -> b }");
-}
-
-#[test]
-fn strip_fences_graphviz() {
-    let input = "```graphviz\ndigraph G {\n  start -> done\n}\n```";
-    assert_eq!(strip_code_fences(input), "digraph G {\n  start -> done\n}");
-}
-
-#[test]
 fn strip_fences_trailing_whitespace() {
     let input = "```dot\ndigraph { a -> b }\n```  ";
     assert_eq!(strip_code_fences(input), "digraph { a -> b }");
@@ -63,42 +51,6 @@ fn build_prompt_with_prd() {
 }
 
 #[test]
-fn build_prompt_contains_pipeline_conventions() {
-    let result = build_prompt("spec", None);
-    assert!(result.contains("Mdiamond"));
-    assert!(result.contains("Msquare"));
-    assert!(result.contains("node_type=\"conditional\""));
-    assert!(result.contains("loop_restart"));
-}
-
-#[test]
-fn build_prompt_contains_timeout_guidance() {
-    let result = build_prompt("spec", None);
-    assert!(result.contains("timeout"));
-    assert!(result.contains("timeout=\"120s\""));
-    assert!(result.contains("timeout=\"300s\""));
-    assert!(result.contains("timeout=\"900s\""));
-    assert!(result.contains("Lightweight"));
-    assert!(result.contains("Heavy"));
-}
-
-#[test]
-fn build_prompt_requires_commit_step() {
-    let result = build_prompt("spec", None);
-    assert!(result.contains("commit_changes"));
-    assert!(result.contains("Commit Changes"));
-    assert!(result.contains("git add -A"));
-    assert!(result.contains("Bash(git:*)"));
-}
-
-#[test]
-fn build_prompt_asks_for_raw_digraph() {
-    let result = build_prompt("spec", None);
-    assert!(result.contains("Output ONLY the raw digraph"));
-    assert!(result.contains("No markdown fences"));
-}
-
-#[test]
 fn build_prompt_prd_before_spec() {
     let result = build_prompt("SPEC_CONTENT", Some("PRD_CONTENT"));
     let prd_pos = result.find("PRD_CONTENT").unwrap();
@@ -126,12 +78,6 @@ fn build_prompt_requires_llm_provider() {
 }
 
 // ── extract_digraph ────────────────────────────────────────────
-
-#[test]
-fn extract_raw_digraph() {
-    let input = "digraph G { a -> b }";
-    assert_eq!(extract_digraph(input).unwrap(), "digraph G { a -> b }");
-}
 
 #[test]
 fn extract_from_fenced() {

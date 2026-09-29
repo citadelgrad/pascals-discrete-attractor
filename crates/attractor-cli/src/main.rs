@@ -177,6 +177,9 @@ enum Commands {
     Validate {
         /// Path to the pipeline .dot file
         pipeline: PathBuf,
+        /// Print one JSON object `{"v":1,"ok":true,"valid":...,"diagnostics":[...]}`
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show information about a pipeline
@@ -442,6 +445,7 @@ async fn run_cli() -> anyhow::Result<()> {
         Commands::Run { json: true, .. }
             | Commands::Runs { json: true, .. }
             | Commands::Scaffold { json: true, .. }
+            | Commands::Validate { json: true, .. }
     ) {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
@@ -548,8 +552,8 @@ async fn run_cli() -> anyhow::Result<()> {
             grace,
             json,
         } => cmd_kill(&run_id, &grace, json)?,
-        Commands::Validate { pipeline } => {
-            cmd_validate(&pipeline)?;
+        Commands::Validate { pipeline, json } => {
+            cmd_validate(&pipeline, json)?;
         }
         Commands::Info { pipeline } => {
             cmd_info(&pipeline)?;

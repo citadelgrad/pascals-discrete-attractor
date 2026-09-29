@@ -1,9 +1,51 @@
 use anyhow;
+use attractor_pipeline::{Diagnostic, Severity};
+use serde::Serialize;
 
-pub fn cmd_validate(path: &std::path::Path) -> anyhow::Result<()> {
-    let graph = crate::load_pipeline(path)
-        .map_err(|error| anyhow::anyhow!("Validation failed: {error}"))?;
-    let diagnostics = attractor_pipeline::validate(&graph);
+/// A `pas validate` failure before validation could run. In `--json` mode it
+/// is printed as `{"v":1,"ok":false,"error":{..}}` (C6).
+struct ValidateError {
+    code: &'static str,
+    message: String,
+}
+
+/// `pas validate --json` payload (C6), fields in contract order.
+#[derive(Serialize)]
+struct ValidateJson {
+    v: u32,
+    ok: bool,
+    valid: bool,
+    diagnostics: Vec<DiagnosticJson>,
+}
+
+#[derive(Serialize)]
+struct DiagnosticJson {
+    severity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_id: Option<String>,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fix: Option<String>,
+}
+
+fn check(path: &std::path::Path) -> Result<Vec<Diagnostic>, ValidateError> {
+    let source = std::fs::read_to_string(path).map_err(|e| ValidateError {
+        code: "io",
+        message: e.to_string(),
+    })?;
+    let graph = attractor_dot::parse(&source)
+        .map_err(anyhow::Error::from)
+        .and_then(|dot| Ok(attractor_pipeline::PipelineGraph::from_dot(dot)?))
+        .map_err(|e| ValidateError {
+            code: "invalid_dot",
+            message: e.to_string(),
+        })?;
+    Ok(attractor_pipeline::validate(&graph))
+}
+
+fn print_human(result: Result<Vec<Diagnostic>, ValidateError>) -> anyhow::Result<()> {
+    let diagnostics =
+        result.map_err(|error| anyhow::anyhow!("Validation failed: {}", error.message))?;
 
     if diagnostics.is_empty() {
         println!("Pipeline is valid");
@@ -14,6 +56,57 @@ pub fn cmd_validate(path: &std::path::Path) -> anyhow::Result<()> {
         anyhow::bail!("Validation failed");
     }
     Ok(())
+}
+
+fn print_json(result: Result<Vec<Diagnostic>, ValidateError>) -> anyhow::Result<()> {
+    match result {
+        Ok(diagnostics) => {
+            let valid = !diagnostics.iter().any(|d| d.severity == Severity::Error);
+            let payload = ValidateJson {
+                v: 1,
+                ok: true,
+                valid,
+                diagnostics: diagnostics
+                    .into_iter()
+                    .map(|d| DiagnosticJson {
+                        severity: match d.severity {
+                            Severity::Error => "error",
+                            Severity::Warning => "warning",
+                            Severity::Info => "info",
+                        },
+                        node_id: d.node_id,
+                        message: d.message,
+                        fix: d.fix,
+                    })
+                    .collect(),
+            };
+            println!("{}", serde_json::to_string(&payload)?);
+            if !valid {
+                anyhow::bail!("Validation failed");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "v": 1,
+                    "ok": false,
+                    "error": {"code": error.code, "message": error.message},
+                })
+            );
+            anyhow::bail!("Validation failed: {}", error.message)
+        }
+    }
+}
+
+pub fn cmd_validate(path: &std::path::Path, json: bool) -> anyhow::Result<()> {
+    let result = check(path);
+    if json {
+        print_json(result)
+    } else {
+        print_human(result)
+    }
 }
 
 #[cfg(test)]
@@ -40,7 +133,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = cmd_validate(&path);
+        let result = cmd_validate(&path, false);
         let err = result.expect_err("validation must fail for a missing llm_provider");
         assert!(err.to_string().contains("Validation failed"));
 
@@ -74,7 +167,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = cmd_validate(&path);
+        let result = cmd_validate(&path, false);
         assert!(result.is_ok());
     }
 }

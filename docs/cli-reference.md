@@ -344,7 +344,7 @@ without it, each such node gets a `beads_available` error. A `beads.select` node
 without `epic` gets an `attribute_required` error.
 
 ```
-pas validate <PIPELINE>
+pas validate <PIPELINE> [--json]
 ```
 
 #### Arguments
@@ -352,6 +352,20 @@ pas validate <PIPELINE>
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `PIPELINE` | Yes | Path to the `.dot` pipeline file |
+| `--json` | No | Print one JSON object on stdout instead of the human report |
+
+#### JSON output (`--json`)
+
+```
+{"v":1,"ok":true,"valid":false,"diagnostics":[{"severity":"error","node_id":"work","message":"...","fix":"..."}]}
+```
+
+`diagnostics` lists every validator diagnostic in order; `severity` is `error`,
+`warning` or `info`; `node_id` and `fix` appear only when present. `valid` is
+false only when an `error` diagnostic exists, so a warnings-only Pipeline is
+`valid:true` with diagnostics and exits 0. If the file cannot be read or
+parsed, the output is `{"v":1,"ok":false,"error":{"code":"io"|"invalid_dot","message":"..."}}`
+with no `valid` key. Any `valid:false` or `ok:false` result exits 1.
 
 #### Output
 

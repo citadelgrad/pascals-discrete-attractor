@@ -4,6 +4,9 @@ mod assets;
 pub mod findings;
 pub mod projection;
 pub mod security;
+pub mod sse;
+pub mod state;
+pub mod watcher;
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -11,7 +14,11 @@ use anyhow::Context;
 use axum::response::Html;
 use axum::routing::get;
 use axum::{middleware, Router};
+use state::AppState;
 use tokio::net::TcpListener;
+
+/// How often the watcher re-reads the Run Index.
+const INDEX_POLL: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct MonitorOpts {
@@ -23,11 +30,13 @@ const INDEX: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><title>P
 <link rel=\"stylesheet\" href=\"/assets/monitor.css\"><script src=\"/assets/htmx.min.js\"></script>\
 </head><body><h1>PAS Monitor</h1></body></html>";
 
-pub fn router() -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/runs/:id/events", get(sse::run_events))
         .route("/", get(|| async { Html(INDEX) }))
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn(security::host_guard))
+        .with_state(state)
 }
 
 /// Bind `127.0.0.1:port`. The address is not configurable.
@@ -42,7 +51,21 @@ pub async fn serve_on(
     listener: TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, router())
+    let index = attractor_journal::index_path().context("cannot resolve the Run Index path")?;
+    let state = AppState::new(index.clone());
+    let watcher = watcher::spawn(state.clone(), index, INDEX_POLL);
+    let result = serve_on_with(listener, state, shutdown).await;
+    watcher.abort();
+    result
+}
+
+/// Serve on an existing listener with a caller-managed [`AppState`].
+pub async fn serve_on_with(
+    listener: TcpListener,
+    state: AppState,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> anyhow::Result<()> {
+    axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown)
         .await
         .context("monitor server failed")

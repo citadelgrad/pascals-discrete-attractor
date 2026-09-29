@@ -12,6 +12,9 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 attractor-journal = { path = "../attractor-journal" }
 chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio-stream = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+tempfile = "3"

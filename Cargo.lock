@@ -236,7 +236,10 @@ name = "attractor-monitor"
 version = "0.11.0"
 dependencies = [
  "anyhow",
+ "attractor-journal",
  "axum",
+ "chrono",
+ "serde_json",
  "tokio",
  "tracing",
 ]

@@ -1,6 +1,7 @@
 //! PAS Monitor server. Binds 127.0.0.1 only; every request must carry a loopback Host.
 
 mod assets;
+pub mod projection;
 pub mod security;
 
 use std::net::{Ipv4Addr, SocketAddr};

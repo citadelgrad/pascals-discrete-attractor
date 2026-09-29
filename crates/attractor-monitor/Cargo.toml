@@ -10,3 +10,8 @@ axum = "0.7"
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+attractor-journal = { path = "../attractor-journal" }
+chrono = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

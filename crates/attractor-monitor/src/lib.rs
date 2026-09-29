@@ -76,6 +76,10 @@ pub fn router(state: AppState) -> Router {
             "/plans/:pid/launch",
             views::pipeline::body_limit(post(views::pipeline::launch)),
         )
+        .route(
+            "/plans/:pid/one-click",
+            views::pipeline::body_limit(post(views::one_click::run)),
+        )
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

@@ -59,15 +59,15 @@ pub fn build_button(pid: &str, exists: bool) -> Markup {
 
 /// Launch values as typed, kept across a refused Launch.
 #[derive(Debug, Clone)]
-struct Values {
-    workdir: String,
-    budget: String,
-    steps: String,
+pub(crate) struct Values {
+    pub(crate) workdir: String,
+    pub(crate) budget: String,
+    pub(crate) steps: String,
     shared: bool,
 }
 
 impl Values {
-    fn defaults(repo: &Path) -> Self {
+    pub(crate) fn defaults(repo: &Path) -> Self {
         Self {
             workdir: repo.display().to_string(),
             budget: pipeline::DEFAULT_MAX_BUDGET_USD.to_string(),
@@ -160,7 +160,7 @@ fn section(
     }
 }
 
-fn build_button_inner(pid: &str) -> Markup {
+pub(crate) fn build_button_inner(pid: &str) -> Markup {
     html! {
         p {
             button type="button" hx-post=(format!("/plans/{pid}/pipeline")) hx-target="#pipeline"
@@ -172,16 +172,16 @@ fn build_button_inner(pid: &str) -> Markup {
     }
 }
 
-struct Ctx {
-    pid: String,
-    dir: PathBuf,
-    meta: PlanMeta,
+pub(crate) struct Ctx {
+    pub(crate) pid: String,
+    pub(crate) dir: PathBuf,
+    pub(crate) meta: PlanMeta,
     /// Where the Pipeline is written; `Err` is why it cannot be named yet.
     dot: Result<PathBuf, String>,
 }
 
 #[allow(clippy::result_large_err)] // the Err is the ready reply
-fn ctx(state: &AppState, pid: &str) -> Result<Ctx, Response> {
+pub(crate) fn ctx(state: &AppState, pid: &str) -> Result<Ctx, Response> {
     let root = plans::plans_root(state.index_path());
     let (dir, meta) = plans::load_meta(&root, pid)
         .ok_or_else(|| reply(StatusCode::NOT_FOUND, notice_err("no such Plan")))?;
@@ -217,7 +217,13 @@ impl Ctx {
         }
     }
 
-    fn render(&self, status: StatusCode, check: &Check, v: &Values, err: Option<&str>) -> Response {
+    pub(crate) fn render(
+        &self,
+        status: StatusCode,
+        check: &Check,
+        v: &Values,
+        err: Option<&str>,
+    ) -> Response {
         match self.dot.as_deref() {
             Ok(p) => reply(status, section(&self.pid, p, check, v, err)),
             Err(m) => reply(StatusCode::CONFLICT, notice_err(m)),
@@ -266,6 +272,14 @@ fn failure(out: &spawn::PasOutput) -> (Option<String>, String) {
     (code, msg)
 }
 
+/// The result of building the Pipeline file.
+pub(crate) enum Built {
+    /// The file is written and checked. The message is why `pas` refused it,
+    /// when the file is there to be fixed in the editor.
+    Ready(Check, Option<String>),
+    Failed(Response),
+}
+
 /// `POST /plans/{pid}/pipeline`: build the Pipeline with `pas scaffold`
 /// (Epic mode) or `pas generate --plan` (Pipeline only).
 pub async fn build(State(state): State<AppState>, UrlPath(pid): UrlPath<String>) -> Response {
@@ -273,9 +287,21 @@ pub async fn build(State(state): State<AppState>, UrlPath(pid): UrlPath<String>)
         Ok(c) => c,
         Err(r) => return r,
     };
+    match build_step(&state, &c).await {
+        Built::Ready(chk, msg) => c.render(
+            StatusCode::OK,
+            &chk,
+            &Values::defaults(&c.meta.repo),
+            msg.as_deref(),
+        ),
+        Built::Failed(r) => r,
+    }
+}
+
+pub(crate) async fn build_step(state: &AppState, c: &Ctx) -> Built {
     let dot = match c.dot() {
         Ok(d) => d.to_path_buf(),
-        Err(r) => return r,
+        Err(r) => return Built::Failed(r),
     };
     let marker = c.dir.join("pipeline.pending");
     if std::fs::OpenOptions::new()
@@ -284,10 +310,10 @@ pub async fn build(State(state): State<AppState>, UrlPath(pid): UrlPath<String>)
         .open(&marker)
         .is_err()
     {
-        return reply(
+        return Built::Failed(reply(
             StatusCode::CONFLICT,
             notice_err("this Plan's Pipeline is already being built"),
-        );
+        ));
     }
     let _pending = Pending(marker);
     let mut args: Vec<OsString> = Vec::new();
@@ -308,41 +334,38 @@ pub async fn build(State(state): State<AppState>, UrlPath(pid): UrlPath<String>)
     let exe = match state.pas_exe() {
         Ok(e) => e,
         Err(e) => {
-            return reply(
+            return Built::Failed(reply(
                 StatusCode::BAD_GATEWAY,
                 notice_err(&format!("cannot find the pas executable: {e}")),
-            )
+            ))
         }
     };
     let out = match spawn::run_at_in(&exe, &args, Some(&c.meta.repo)).await {
         Ok(o) => o,
         Err(e) => {
-            return reply(
+            return Built::Failed(reply(
                 StatusCode::BAD_GATEWAY,
                 notice_err(&format!("cannot run pas: {e}")),
-            )
+            ))
         }
     };
     let ok = out.code == Some(0)
         && serde_json::from_str::<Value>(out.stdout.trim())
             .map(|v| v["ok"] == Value::Bool(true))
             .unwrap_or(false);
-    let values = Values::defaults(&c.meta.repo);
     if ok {
-        let chk = check(&state, &c.meta.repo, &dot).await;
-        return c.render(StatusCode::OK, &chk, &values, None);
+        return Built::Ready(check(state, &c.meta.repo, &dot).await, None);
     }
     let (code, msg) = failure(&out);
     // The file is written before it is validated, so it can be fixed in the editor.
     if code.as_deref() == Some("invalid_pipeline") && dot.is_file() {
-        let chk = check(&state, &c.meta.repo, &dot).await;
-        return c.render(StatusCode::OK, &chk, &values, Some(&msg));
+        return Built::Ready(check(state, &c.meta.repo, &dot).await, Some(msg));
     }
     let shown = match code {
         Some(k) => format!("{msg} ({k})"),
         None => msg,
     };
-    reply(StatusCode::BAD_GATEWAY, notice_err(&shown))
+    Built::Failed(reply(StatusCode::BAD_GATEWAY, notice_err(&shown)))
 }
 
 /// `PUT /plans/{pid}/pipeline`: save the edited DOT, then check it again.
@@ -418,17 +441,20 @@ pub async fn launch(
     UrlPath(pid): UrlPath<String>,
     Form(form): Form<Pairs>,
 ) -> Response {
-    let c = match ctx(&state, &pid) {
-        Ok(c) => c,
-        Err(r) => return r,
-    };
+    match ctx(&state, &pid) {
+        Ok(c) => launch_step(&state, &c, &form).await,
+        Err(r) => r,
+    }
+}
+
+pub(crate) async fn launch_step(state: &AppState, c: &Ctx, form: &Pairs) -> Response {
     let dot = match c.existing_dot() {
         Ok(d) => d.to_path_buf(),
         Err(r) => return r,
     };
-    let values = Values::from_form(&form, &c.meta.repo);
-    let chk = check(&state, &c.meta.repo, &dot).await;
-    let f = match LaunchForm::parse(&form) {
+    let values = Values::from_form(form, &c.meta.repo);
+    let chk = check(state, &c.meta.repo, &dot).await;
+    let f = match LaunchForm::parse(form) {
         Ok(f) => f,
         Err(m) => return c.render(StatusCode::BAD_REQUEST, &chk, &values, Some(&m)),
     };

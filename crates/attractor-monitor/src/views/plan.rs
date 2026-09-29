@@ -80,7 +80,12 @@ fn created(m: &PlanMeta) -> Markup {
             "Plan " code { (m.id) } " created: " (m.files.len()) " file(s), "
             (m.repo.display()) ", " (kind) ", " (mode)
         }
-        @if m.kind == OutputKind::EpicAndPipeline {
+        @if m.mode == Mode::OneClick {
+            div #one-click hx-post=(format!("/plans/{}/one-click", m.id)) hx-trigger="load"
+                hx-target="#one-click" hx-disabled-elt="this" {
+                p { "Working: Proposal, Epic, Pipeline, check and Launch run without pausing." }
+            }
+        } @else if m.kind == OutputKind::EpicAndPipeline {
             p {
                 button type="button" hx-post=(format!("/plans/{}/proposal", m.id))
                     hx-target="#proposal" hx-disabled-elt="this" { "Generate Proposal" }

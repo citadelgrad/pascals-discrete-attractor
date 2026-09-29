@@ -94,7 +94,7 @@ fn form(e: &Env, files: Vec<(&str, Vec<u8>)>) -> Form {
         files: files.into_iter().map(|(n, b)| (n.to_string(), b)).collect(),
         repo: e.repo(),
         kind: "epic_pipeline",
-        mode: "one_click",
+        mode: "reviewed",
     }
 }
 
@@ -182,7 +182,7 @@ async fn three_reordered_files_are_stored_in_order() {
         serde_json::json!(["01-c.md", "02-a.md", "03-b.txt"])
     );
     assert_eq!(j["kind"], "epic_pipeline");
-    assert_eq!(j["mode"], "one_click");
+    assert_eq!(j["mode"], "reviewed");
     assert!(Path::new(j["repo"].as_str().unwrap()).is_absolute());
 }
 
@@ -204,6 +204,45 @@ async fn pipeline_only_plan_offers_build_at_once() {
         "{text}"
     );
     assert!(!text.contains("Generate Proposal"), "{text}");
+}
+
+#[tokio::test]
+async fn one_click_plan_fires_the_chain_on_load_and_offers_no_step_buttons() {
+    for kind in ["epic_pipeline", "pipeline"] {
+        let e = env().await;
+        let mut f = form(&e, vec![("a.md", b"A".to_vec())]);
+        f.kind = kind;
+        f.mode = "one_click";
+        let (st, text) = post(&e, &f).await;
+        assert_eq!(st, 200, "{text}");
+        let id = e
+            .only_plan()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            text.contains(&format!("hx-post=\"/plans/{id}/one-click\""))
+                && text.contains("hx-trigger=\"load\""),
+            "{kind}: {text}"
+        );
+        assert!(
+            !text.contains("Generate Proposal") && !text.contains("Build Pipeline"),
+            "{kind}: {text}"
+        );
+        assert_eq!(plan_json(&e.only_plan())["mode"], "one_click");
+    }
+}
+
+#[tokio::test]
+async fn reviewed_plan_has_no_one_click_trigger() {
+    let e = env().await;
+    let f = form(&e, vec![("a.md", b"A".to_vec())]);
+    let (_, text) = post(&e, &f).await;
+    assert!(
+        !text.contains("one-click") && !text.contains("hx-trigger"),
+        "{text}"
+    );
 }
 
 #[tokio::test]

@@ -171,6 +171,10 @@ async fn three_reordered_files_are_stored_in_order() {
         text.contains("Generate Proposal") && text.contains("/proposal"),
         "Epic + Pipeline Plans offer Generate: {text}"
     );
+    assert!(
+        !text.contains("Build Pipeline"),
+        "Epic mode builds only after the Epic exists: {text}"
+    );
     let j = plan_json(&dir);
     assert_eq!(j["v"], 1);
     assert_eq!(
@@ -180,6 +184,26 @@ async fn three_reordered_files_are_stored_in_order() {
     assert_eq!(j["kind"], "epic_pipeline");
     assert_eq!(j["mode"], "one_click");
     assert!(Path::new(j["repo"].as_str().unwrap()).is_absolute());
+}
+
+#[tokio::test]
+async fn pipeline_only_plan_offers_build_at_once() {
+    let e = env().await;
+    let mut f = form(&e, vec![("a.md", b"A".to_vec())]);
+    f.kind = "pipeline";
+    let (st, text) = post(&e, &f).await;
+    assert_eq!(st, 200, "{text}");
+    let id = e
+        .only_plan()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        text.contains("Build Pipeline") && text.contains(&format!("/plans/{id}/pipeline")),
+        "{text}"
+    );
+    assert!(!text.contains("Generate Proposal"), "{text}");
 }
 
 #[tokio::test]

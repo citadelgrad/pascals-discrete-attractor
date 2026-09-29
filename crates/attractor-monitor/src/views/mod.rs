@@ -1,6 +1,7 @@
 //! HTML views of the Monitor.
 
 mod dot_scan;
+pub mod pipeline;
 pub mod plan;
 pub mod proposal;
 pub mod run;

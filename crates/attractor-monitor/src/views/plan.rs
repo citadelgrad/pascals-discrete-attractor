@@ -86,6 +86,8 @@ fn created(m: &PlanMeta) -> Markup {
                     hx-target="#proposal" hx-disabled-elt="this" { "Generate Proposal" }
             }
             div #proposal {}
+        } @else {
+            (super::pipeline::build_button(&m.id, false))
         }
     }
 }

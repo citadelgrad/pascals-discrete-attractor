@@ -3,6 +3,7 @@
 mod assets;
 pub mod controls;
 pub mod findings;
+pub mod pipeline;
 pub mod plans;
 pub mod projection;
 pub mod proposal;
@@ -63,6 +64,18 @@ pub fn router(state: AppState) -> Router {
                 .put(views::proposal::save),
         )
         .route("/plans/:pid/epic", post(views::proposal::create_epic))
+        .route(
+            "/plans/:pid/pipeline",
+            views::pipeline::body_limit(
+                get(views::pipeline::show)
+                    .post(views::pipeline::build)
+                    .put(views::pipeline::save),
+            ),
+        )
+        .route(
+            "/plans/:pid/launch",
+            views::pipeline::body_limit(post(views::pipeline::launch)),
+        )
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

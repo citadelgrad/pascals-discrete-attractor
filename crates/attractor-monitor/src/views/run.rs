@@ -239,21 +239,28 @@ Viz.instance().then(function(v){box.replaceChildren(v.renderSVGElement(JSON.pars
 document.body.addEventListener('htmx:afterSettle',mark);
 })();"#;
 
+/// The drawn graph (or why there is none), without the live Run marks.
+pub(crate) fn dot_graph(source: &GraphSource) -> Markup {
+    html! {
+        @match source {
+            GraphSource::Dot(dot) => {
+                p.note { "Graph from the Pipeline file as it is now." }
+                div #graph-svg {}
+                script #dot-src type="application/json" { (script_json(dot)) }
+                script src="/assets/viz-standalone.js" {}
+                script { (PreEscaped(GRAPH_SCRIPT)) }
+            }
+            GraphSource::Unavailable(msg) => { p.graph-missing { (msg) } }
+        }
+    }
+}
+
 fn graph(view: &RunView, source: &GraphSource) -> Markup {
     html! {
         section #graph {
             h2 { "Pipeline" }
             (graph_state(view))
-            @match source {
-                GraphSource::Dot(dot) => {
-                    p.note { "Graph from the Pipeline file as it is now." }
-                    div #graph-svg {}
-                    script #dot-src type="application/json" { (script_json(dot)) }
-                    script src="/assets/viz-standalone.js" {}
-                    script { (PreEscaped(GRAPH_SCRIPT)) }
-                }
-                GraphSource::Unavailable(msg) => { p.graph-missing { (msg) } }
-            }
+            (dot_graph(source))
         }
     }
 }

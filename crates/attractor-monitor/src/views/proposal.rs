@@ -96,7 +96,7 @@ fn editor(pid: &str, p: &Proposal, error: Option<&str>) -> Markup {
     }
 }
 
-fn created(epic_id: &str, task_ids: &[String]) -> Markup {
+fn created(pid: &str, epic_id: &str, task_ids: &[String]) -> Markup {
     html! {
         p.notice.ok {
             "Epic " code { (epic_id) } " created with " (task_ids.len()) " Task(s): "
@@ -105,6 +105,7 @@ fn created(epic_id: &str, task_ids: &[String]) -> Markup {
                 code { (t) }
             }
         }
+        (super::pipeline::build_button(pid, false))
     }
 }
 
@@ -201,7 +202,7 @@ pub async fn show(State(state): State<AppState>, UrlPath(pid): UrlPath<String>) 
         Err(r) => return r,
     };
     if let Some((epic, tasks)) = read_result(&dir) {
-        return reply(StatusCode::OK, created(&epic, &tasks));
+        return reply(StatusCode::OK, created(&pid, &epic, &tasks));
     }
     match proposal::read(&dir.join("proposal.json")) {
         Ok(p) => {
@@ -212,7 +213,7 @@ pub async fn show(State(state): State<AppState>, UrlPath(pid): UrlPath<String>) 
     }
 }
 
-fn read_result(dir: &Path) -> Option<(String, Vec<String>)> {
+pub(crate) fn read_result(dir: &Path) -> Option<(String, Vec<String>)> {
     let v: Value = serde_json::from_slice(&std::fs::read(dir.join("result.json")).ok()?).ok()?;
     let ids = v["task_ids"].as_array()?;
     Some((
@@ -267,7 +268,7 @@ pub async fn save(
 }
 
 /// Removes the in-progress marker however the request ends.
-struct Pending(PathBuf);
+pub(crate) struct Pending(pub(crate) PathBuf);
 
 impl Drop for Pending {
     fn drop(&mut self) {
@@ -286,7 +287,7 @@ pub async fn create_epic(
         Err(r) => return r,
     };
     if let Some((epic, tasks)) = read_result(&dir) {
-        return reply(StatusCode::CONFLICT, created(&epic, &tasks));
+        return reply(StatusCode::CONFLICT, created(&pid, &epic, &tasks));
     }
     let marker = dir.join("epic.pending");
     let opened = std::fs::OpenOptions::new()
@@ -346,5 +347,5 @@ pub async fn create_epic(
             )),
         );
     }
-    reply(StatusCode::OK, created(epic, &tasks))
+    reply(StatusCode::OK, created(&pid, epic, &tasks))
 }

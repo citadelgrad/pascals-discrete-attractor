@@ -153,7 +153,7 @@ fn failure_message(out: &spawn::PasOutput) -> String {
         .unwrap_or_else(|| format!("pas exited with code {}", out.code.unwrap_or(-1)))
 }
 
-fn tail(path: &Path) -> String {
+pub(crate) fn tail(path: &Path) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut f) = std::fs::File::open(path) else {
         return String::new();

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use attractor_journal::{CommitRef, EventData, TaskSummary};
+use attractor_journal::{AnswerSource, CommitRef, EventData, TaskSummary};
 use serde::{Deserialize, Serialize};
 
 /// Events emitted during pipeline execution.
@@ -114,6 +114,22 @@ pub enum PipelineEvent {
         reason: String,
         upstream_verified: bool,
         commits: Vec<String>,
+    },
+    /// A Human Gate is about to wait for `question_id`. Emitted again, with
+    /// the same `question_id`, when a resumed Run re-enters an unanswered gate.
+    HumanInputRequested {
+        question_id: String,
+        node_id: String,
+        text: String,
+        choices: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+    },
+    /// `choice` answered `question_id`; `source` is where the answer came from.
+    HumanInputAnswered {
+        question_id: String,
+        choice: String,
+        source: AnswerSource,
     },
 }
 
@@ -253,6 +269,28 @@ impl PipelineEvent {
                 reason,
                 upstream_verified,
                 commits,
+            },
+            Self::HumanInputRequested {
+                question_id,
+                node_id,
+                text,
+                choices,
+                default,
+            } => EventData::HumanInputRequested {
+                question_id,
+                node_id,
+                text,
+                choices,
+                default,
+            },
+            Self::HumanInputAnswered {
+                question_id,
+                choice,
+                source,
+            } => EventData::HumanInputAnswered {
+                question_id,
+                choice,
+                source,
             },
         }
     }
@@ -516,6 +554,25 @@ mod tests {
                 reason: "".into(),
                 upstream_verified: false,
                 commits: vec![],
+            },
+            PipelineEvent::HumanInputRequested {
+                question_id: "q-review-1".into(),
+                node_id: "review".into(),
+                text: "Ship?".into(),
+                choices: vec!["approve".into(), "reject".into()],
+                default: None,
+            },
+            PipelineEvent::HumanInputRequested {
+                question_id: "q-review-2".into(),
+                node_id: "review".into(),
+                text: "Ship?".into(),
+                choices: vec!["approve".into()],
+                default: Some("approve".into()),
+            },
+            PipelineEvent::HumanInputAnswered {
+                question_id: "q-review-1".into(),
+                choice: "approve".into(),
+                source: AnswerSource::Terminal,
             },
         ];
 

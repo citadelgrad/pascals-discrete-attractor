@@ -528,8 +528,15 @@ impl PipelineExecutor {
             }
             progress.step_count += 1;
             progress.total_handler_attempts += 1;
-            progress.active_node_attempts = attempt + 1;
+            // A waiting attempt the process does not live through is asked
+            // again on resume rather than counted as used.
+            progress.active_node_attempts = if handler.resumes_interrupted_attempt() {
+                attempt
+            } else {
+                attempt + 1
+            };
             checkpoint.save(&node.id, progress).await?;
+            progress.active_node_attempts = attempt + 1;
 
             let workdir = configured.controls().workdir().value();
             let head_before = run_commits::head(workdir).await;

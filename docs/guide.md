@@ -701,6 +701,17 @@ review -> next_step [label="continue"]
 review -> regenerate [label="reject", condition="preferred_label=reject"]
 ```
 
+The choices are the outgoing edge labels. `pas run` takes the first valid answer from either place:
+
+- **The terminal**, only when stdin is a TTY: type a choice's number or its label. Anything else asks again.
+- **An answer file** at `<logs>/runs/<run-id>/answers/<question-id>.json`, checked every second. The question ID is in the Run Journal's `HumanInputRequested` Event and in the message `pas run` prints to stderr when stdin is not a TTY. A file whose choice is not offered is moved to `<question-id>.json.rejected` and the gate keeps waiting:
+
+  ```json
+  {"v":1,"question_id":"q-review-1","choice":"continue","source":"cli","answered_at":"2026-09-24T10:00:00Z"}
+  ```
+
+Piped stdin (`echo 1 | pas run ...`) no longer answers a gate. If the Run is killed while it waits, resuming it asks the same question again.
+
 ---
 
 ## Integrating with Beads

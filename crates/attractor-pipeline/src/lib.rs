@@ -50,7 +50,8 @@ pub use handlers::{
     ParallelHandler, QualityHandler, ToolHandler,
 };
 pub use interviewer::{
-    Answer, AutoApproveInterviewer, ConsoleInterviewer, Interviewer, Question, RecordingInterviewer,
+    Answer, AutoApproveInterviewer, ConsoleInterviewer, Interviewer, JournalInterviewer, Question,
+    RecordingInterviewer, ANSWER_POLL_INTERVAL,
 };
 pub use preflight::{
     run as preflight_run, run_configuration as preflight_run_configuration,

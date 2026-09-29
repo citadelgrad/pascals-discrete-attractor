@@ -693,7 +693,10 @@ pub async fn cmd_run(
         configured.controls().max_steps().value()
     );
 
-    let interviewer = std::sync::Arc::new(attractor_pipeline::ConsoleInterviewer);
+    // Human Gates answer from the terminal (only when stdin is a TTY) or from
+    // `answers/<question-id>.json`, e.g. written by `pas answer`.
+    let interviewer =
+        std::sync::Arc::new(attractor_pipeline::JournalInterviewer::new(run_dir.clone()));
     let registry = attractor_pipeline::default_registry_with_interviewer(interviewer);
     let executor =
         attractor_pipeline::PipelineExecutor::new(registry).with_journal(journal.clone());
@@ -1351,9 +1354,11 @@ mod tests {
 
         let mut invocation = test_invocation(dir.path());
         invocation.run_id = Some(OTHER_ID.into());
+        // The workdir is the temp folder, not the process's cwd: the cwd is
+        // this repo, whose worktree lock is held while any real Run is active.
         let error = cmd_run(
             &pipeline,
-            None,
+            Some(dir.path()),
             Some(&logs),
             true,
             None,

@@ -1001,6 +1001,8 @@ async fn executor_emits_pipeline_stage_context_and_edge_lifecycle() {
             PipelineEvent::TaskClaimed { .. } => "task_claimed",
             PipelineEvent::TaskSelectionBlocked { .. } => "task_selection_blocked",
             PipelineEvent::TaskClosed { .. } => "task_closed",
+            PipelineEvent::HumanInputRequested { .. } => "human_input_requested",
+            PipelineEvent::HumanInputAnswered { .. } => "human_input_answered",
         });
     }
 

@@ -6,6 +6,7 @@
 //! It depends on no other `attractor-*` crate, so the Monitor can observe Runs
 //! through it alone.
 
+pub mod answer;
 pub mod event;
 pub mod index;
 pub mod layout;
@@ -14,6 +15,10 @@ pub mod reader;
 pub mod status;
 pub mod writer;
 
+pub use answer::{
+    is_valid_question_id, question_id_for, read_answer, reject_answer, write_answer, AnswerFile,
+    ANSWER_VERSION,
+};
 pub use event::{AnswerSource, AttemptEndReason, CommitRef, EventData, JournalEvent, TaskSummary};
 pub use index::{
     append_entry, append_entry_at, index_path, read_index, read_index_at, resolve_state_dir,

@@ -78,7 +78,7 @@ pub fn select_edge<'a>(
 
 /// Normalize a label for comparison: lowercase, strip accelerator prefixes like
 /// `[Y]`, `Y)`, `Y-`.
-fn normalize_label(label: &str) -> String {
+pub(crate) fn normalize_label(label: &str) -> String {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE
         .get_or_init(|| regex::Regex::new(r"^(?:\[\w\]\s*|\w\)\s*|\w-\s*)").expect("valid regex"));

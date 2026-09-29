@@ -557,10 +557,17 @@ mod tests {
             panic!("expected CommandFailed, got {err:?}");
         };
         assert_eq!(command, "bd show t-nope --json");
-        assert!(stderr.contains("no issue found"), "stderr: {stderr}");
+        // bd words its "missing issue" error differently across versions
+        // ("no issue found matching ..." / "Issue ... not found").
+        let says_missing = |text: &str| {
+            let text = text.to_lowercase();
+            text.contains("t-nope")
+                && (text.contains("no issue found") || text.contains("not found"))
+        };
+        assert!(says_missing(stderr), "stderr: {stderr}");
         let message = err.to_string();
         assert!(message.contains("bd show t-nope --json"), "{message}");
-        assert!(message.contains("no issue found"), "{message}");
+        assert!(says_missing(&message), "{message}");
 
         // Claiming an already-closed or missing issue also fails loudly.
         assert!(matches!(

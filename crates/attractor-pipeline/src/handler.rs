@@ -142,6 +142,14 @@ pub trait NodeHandler: Send + Sync {
         None
     }
 
+    /// Whether an attempt cut short because the process died (crash, kill)
+    /// is run again when the Run resumes instead of counting as used. True
+    /// only for handlers that do nothing but wait, like a Human Gate; other
+    /// interrupted attempts count so a crash cannot retry forever.
+    fn resumes_interrupted_attempt(&self) -> bool {
+        false
+    }
+
     /// Execute this handler for a given node.
     async fn execute(
         &self,
@@ -164,6 +172,11 @@ impl DynHandler {
 
     pub fn handler_type(&self) -> &str {
         self.0.handler_type()
+    }
+
+    /// See [`NodeHandler::resumes_interrupted_attempt`].
+    pub fn resumes_interrupted_attempt(&self) -> bool {
+        self.0.resumes_interrupted_attempt()
     }
 
     pub async fn execute(

@@ -127,7 +127,13 @@ impl RunDir {
         self.0.join(ANSWERS_DIR)
     }
 
+    /// `answers/<question-id>.json`. Check untrusted IDs with
+    /// [`is_valid_question_id`](crate::is_valid_question_id) first.
     pub fn answer(&self, question_id: &str) -> PathBuf {
+        debug_assert!(
+            crate::is_valid_question_id(question_id),
+            "invalid question id: {question_id:?}"
+        );
         self.answers_dir().join(format!("{question_id}.json"))
     }
 

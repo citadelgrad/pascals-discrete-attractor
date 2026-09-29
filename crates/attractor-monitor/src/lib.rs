@@ -31,6 +31,12 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/events", get(sse::run_events))
         .route("/", get(views::runs::page_handler))
         .route("/runs", get(views::runs::table_handler))
+        .route("/runs/:id", get(views::run::page_handler))
+        .route("/runs/:id/summary", get(views::run::summary_handler))
+        .route(
+            "/runs/:id/transcripts/:inv",
+            get(views::run::transcript_handler),
+        )
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn(security::host_guard))
         .with_state(state)

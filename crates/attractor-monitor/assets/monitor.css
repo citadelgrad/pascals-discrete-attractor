@@ -10,3 +10,16 @@ th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid #88
 tr.history-start td { border-top: 2px solid #8888; }
 .empty { padding: 2rem 0; text-align: center; }
 form#filters { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
+.bar { margin: 0.25rem 0; }
+.bar progress { width: 14rem; vertical-align: middle; }
+.notice { padding: 0.25rem 0.5rem; background: #e0a80033; }
+.graph-missing { font-style: italic; }
+#graph-svg svg { max-width: 100%; height: auto; }
+#graph-svg g.node.visited polygon, #graph-svg g.node.visited ellipse { fill: #b3d4ff; }
+#graph-svg g.node.current polygon, #graph-svg g.node.current ellipse { fill: #ffd54f; stroke-width: 3; }
+.finding.warn .severity { background: #e0a800; color: #000; padding: 0 0.3em; border-radius: 0.3em; }
+.finding.critical .severity { background: #c62828; color: #fff; padding: 0 0.3em; border-radius: 0.3em; }
+.finding.info .severity { background: #8883; padding: 0 0.3em; border-radius: 0.3em; }
+#event-log { font-family: ui-monospace, monospace; font-size: 0.85rem; list-style: none; padding: 0; max-height: 24rem; overflow-y: auto; }
+#event-log .ts { opacity: 0.6; }
+td.commits code { word-break: break-all; }

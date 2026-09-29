@@ -80,6 +80,22 @@ pub fn rows(snaps: &[RunSnapshot], now: DateTime<Utc>, env: &Env) -> Vec<RunRow>
     out
 }
 
+/// A Run's status as shown to the user: `Crashed` and `Missing` are derived here.
+pub(crate) fn run_status(s: &RunSnapshot, crashed: bool) -> RunStatus {
+    if s.missing {
+        RunStatus::Missing
+    } else if crashed {
+        RunStatus::Crashed
+    } else {
+        match s.view.status {
+            ViewStatus::Unknown | ViewStatus::Running => RunStatus::Running,
+            ViewStatus::Completed => RunStatus::Completed,
+            ViewStatus::Failed => RunStatus::Failed,
+            ViewStatus::Stopped => RunStatus::Stopped,
+        }
+    }
+}
+
 fn row(s: &RunSnapshot, now: DateTime<Utc>, env: &Env) -> RunRow {
     let v = &s.view;
     let mut findings = [0usize; 3];
@@ -94,18 +110,7 @@ fn row(s: &RunSnapshot, now: DateTime<Utc>, env: &Env) -> RunRow {
             }] += 1;
         }
     }
-    let status = if s.missing {
-        RunStatus::Missing
-    } else if crashed {
-        RunStatus::Crashed
-    } else {
-        match v.status {
-            ViewStatus::Unknown | ViewStatus::Running => RunStatus::Running,
-            ViewStatus::Completed => RunStatus::Completed,
-            ViewStatus::Failed => RunStatus::Failed,
-            ViewStatus::Stopped => RunStatus::Stopped,
-        }
-    };
+    let status = run_status(s, crashed);
     let started = s.entry.started_at;
     let elapsed = match status {
         RunStatus::Missing => None,
@@ -177,7 +182,7 @@ pub fn table(rows: &[RunRow], total: usize) -> Markup {
                     tr class=(if Some(i) == first_history && i > 0 { "history-start" } else { "" })
                         data-run-id=(r.run_id) {
                         td.repository { (r.repository) }
-                        td.pipeline { (r.pipeline) }
+                        td.pipeline { a href=(format!("/runs/{}", r.run_id)) { (r.pipeline) } }
                         td.status data-status=(r.status.as_str()) { (r.status.as_str()) }
                         td.task {
                             @if let Some((id, title)) = &r.task { (id) " " (title) }
@@ -238,33 +243,10 @@ pub fn page(rows: &[RunRow], total: usize, repos: &[String], q: &RunsQuery) -> M
     }
 }
 
-/// `pid_alive` for the Findings environment. EPERM means the process exists.
-#[cfg(unix)]
-fn pid_alive(pid: u32) -> bool {
-    // 0 and values beyond `pid_t` would address process groups, not a process.
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    if pid <= 0 {
-        return false;
-    }
-    // SAFETY: signal 0 only checks that the process exists; nothing is sent.
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-/// Without a way to probe, never claim a Run crashed.
-#[cfg(not(unix))]
-fn pid_alive(_pid: u32) -> bool {
-    true
-}
-
 fn filtered(state: &AppState, q: &RunsQuery) -> (Vec<RunRow>, usize, Vec<String>) {
     let no_timeout = |_: &str| None;
     let env = Env {
-        pid_alive: &pid_alive,
+        pid_alive: &super::pid_alive,
         node_timeout: &no_timeout,
         commit_nodes: None,
     };

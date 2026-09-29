@@ -1,9 +1,12 @@
 use anyhow;
+use serde::Serialize;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::normalize_provider_defaults;
+use super::plan_input::load_plan;
 
 /// Spawn a braille spinner on stderr. Returns a guard that stops it on drop.
 fn start_spinner(message: &str) -> SpinnerGuard {
@@ -56,48 +59,126 @@ impl Drop for SpinnerGuard {
     }
 }
 
-pub async fn cmd_generate(
-    prd_path: Option<&std::path::Path>,
-    spec_path: &std::path::Path,
-    output: Option<&std::path::Path>,
-    verbose: bool,
-) -> anyhow::Result<()> {
-    // Read spec (required)
-    let spec_content = std::fs::read_to_string(spec_path).map_err(|e| {
-        anyhow::anyhow!("Failed to read spec file '{}': {}", spec_path.display(), e)
-    })?;
+/// What `pas generate` reads: a spec (with optional PRD), or an ordered Plan.
+pub enum GenerateInput<'a> {
+    SpecPrd {
+        spec: &'a Path,
+        prd: Option<&'a Path>,
+    },
+    Plan(&'a [PathBuf]),
+}
 
-    // Read PRD (optional)
-    let prd_content =
-        match prd_path {
-            Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
-                anyhow::anyhow!("Failed to read PRD file '{}': {}", path.display(), e)
-            })?),
-            None => None,
-        };
+/// A `pas generate` failure. In `--json` mode it is printed as
+/// `{"v":1,"ok":false,"error":{..}}` (C6).
+#[derive(Debug)]
+struct GenerateError {
+    code: &'static str,
+    message: String,
+}
 
-    if verbose {
-        eprintln!(
-            "[debug] spec: {} ({} bytes)",
-            spec_path.display(),
-            spec_content.len()
-        );
-        if let Some(p) = prd_path {
-            eprintln!(
-                "[debug] prd: {} ({} bytes)",
-                p.display(),
-                prd_content.as_ref().map_or(0, |c| c.len())
-            );
+impl GenerateError {
+    fn new(code: &'static str, message: impl std::fmt::Display) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
         }
     }
+}
 
-    // Build the prompt
-    let prompt = build_prompt(&spec_content, prd_content.as_deref());
+/// A Pipeline written to disk, with what the printers report about it.
+struct Generated {
+    output_path: PathBuf,
+    defaulted_providers: Vec<String>,
+    errors: Vec<attractor_pipeline::Diagnostic>,
+    node_count: usize,
+}
+
+/// `pas generate --json` success payload (C6), fields in contract order.
+#[derive(Serialize)]
+struct GenerateJson {
+    v: u32,
+    ok: bool,
+    pipeline_path: PathBuf,
+}
+
+pub async fn cmd_generate(
+    input: GenerateInput<'_>,
+    output: Option<&Path>,
+    verbose: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let result = generate(&input, output, verbose, json).await;
+    if json {
+        return print_json(result);
+    }
+    let generated = result.map_err(|e| anyhow::anyhow!(e.message))?;
+    print_human(&input, &generated);
+    Ok(())
+}
+
+async fn generate(
+    input: &GenerateInput<'_>,
+    output: Option<&Path>,
+    verbose: bool,
+    quiet: bool,
+) -> Result<Generated, GenerateError> {
+    let prompt = match input {
+        GenerateInput::SpecPrd { spec, prd } => {
+            // Read spec (required)
+            let spec_content = std::fs::read_to_string(spec).map_err(|e| {
+                GenerateError::new(
+                    "io",
+                    format!("Failed to read spec file '{}': {}", spec.display(), e),
+                )
+            })?;
+
+            // Read PRD (optional)
+            let prd_content = match prd {
+                Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
+                    GenerateError::new(
+                        "io",
+                        format!("Failed to read PRD file '{}': {}", path.display(), e),
+                    )
+                })?),
+                None => None,
+            };
+
+            if verbose {
+                eprintln!(
+                    "[debug] spec: {} ({} bytes)",
+                    spec.display(),
+                    spec_content.len()
+                );
+                if let Some(p) = prd {
+                    eprintln!(
+                        "[debug] prd: {} ({} bytes)",
+                        p.display(),
+                        prd_content.as_ref().map_or(0, |c| c.len())
+                    );
+                }
+            }
+            build_prompt(&spec_content, prd_content.as_deref())
+        }
+        GenerateInput::Plan(files) => {
+            let plan_text =
+                load_plan(files).map_err(|e| GenerateError::new("plan_input", format!("{e:#}")))?;
+            if verbose {
+                eprintln!(
+                    "[debug] plan: {} file(s) ({} bytes)",
+                    files.len(),
+                    plan_text.len()
+                );
+            }
+            build_plan_prompt(&plan_text)
+        }
+    };
 
     if verbose {
         eprintln!("[debug] prompt: {} bytes", prompt.len());
         eprintln!("[debug] cmd: claude -p - --model sonnet --settings '{{\"enabledPlugins\":{{}}}}' --strict-mcp-config '{{}}' --tools '' --output-format json --no-session-persistence");
     }
+
+    let llm = |e: &dyn std::fmt::Display| GenerateError::new("llm_failed", e);
 
     // Call Claude CLI with spinner — disable plugins/MCP/skills for speed
     let mut cmd = tokio::process::Command::new("claude");
@@ -122,20 +203,26 @@ pub async fn cmd_generate(
     cmd.stderr(std::process::Stdio::piped());
 
     let gen_start = std::time::Instant::now();
-    let spinner = start_spinner("Generating pipeline from spec...");
-    let mut child = cmd.spawn()?;
+    // --json keeps stderr free of spinner frames too
+    let spinner = (!quiet).then(|| start_spinner("Generating pipeline from spec..."));
+    let mut child = cmd.spawn().map_err(|e| llm(&e))?;
 
     // Write prompt to stdin, then close it
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(prompt.as_bytes()).await?;
+        stdin
+            .write_all(prompt.as_bytes())
+            .await
+            .map_err(|e| llm(&e))?;
         // stdin is dropped here, closing the pipe
     }
 
-    let output_result = child.wait_with_output().await?;
+    let output_result = child.wait_with_output().await.map_err(|e| llm(&e))?;
     drop(spinner);
     let gen_elapsed = gen_start.elapsed();
-    eprintln!("Claude responded in {:.1}s", gen_elapsed.as_secs_f64());
+    if !quiet {
+        eprintln!("Claude responded in {:.1}s", gen_elapsed.as_secs_f64());
+    }
 
     if !output_result.status.success() {
         let stderr = String::from_utf8_lossy(&output_result.stderr);
@@ -145,10 +232,10 @@ pub async fn cmd_generate(
             eprintln!("[debug] stdout: {}", &stdout[..stdout.len().min(1000)]);
             eprintln!("[debug] stderr: {}", &stderr[..stderr.len().min(1000)]);
         }
-        anyhow::bail!("Claude CLI failed: {}", stderr);
+        return Err(llm(&format!("Claude CLI failed: {}", stderr)));
     }
 
-    let output_json = String::from_utf8(output_result.stdout)?;
+    let output_json = String::from_utf8(output_result.stdout).map_err(|e| llm(&e))?;
 
     if verbose {
         eprintln!("[debug] response json: {} bytes", output_json.len());
@@ -162,11 +249,11 @@ pub async fn cmd_generate(
         }
     }
 
-    let parsed: serde_json::Value = serde_json::from_str(&output_json)?;
+    let parsed: serde_json::Value = serde_json::from_str(&output_json).map_err(|e| llm(&e))?;
 
     let result_str = parsed["result"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Claude output missing 'result' field"))?;
+        .ok_or_else(|| llm(&"Claude output missing 'result' field"))?;
 
     // Extract the digraph from Claude's response (handles preamble, fences, etc.)
     let dot_content = match extract_digraph(result_str) {
@@ -174,7 +261,10 @@ pub async fn cmd_generate(
         None => {
             eprintln!("No digraph found in Claude's response. First 500 chars:");
             eprintln!("{}", &result_str[..result_str.len().min(500)]);
-            anyhow::bail!("Claude did not produce a valid digraph");
+            return Err(GenerateError::new(
+                "invalid_dot",
+                "Claude did not produce a valid digraph",
+            ));
         }
     };
 
@@ -191,42 +281,45 @@ pub async fn cmd_generate(
     // normalization step is the actual guarantee: a generated pipeline must
     // never depend on an implicit provider default, no matter what the LLM
     // produced.
-    let dot_content = match normalize_provider_defaults(&dot_content, "claude") {
-        Ok((normalized, defaulted)) => {
-            if !defaulted.is_empty() {
-                println!(
-                    "  Defaulted llm_provider=\"claude\" on: {}",
-                    defaulted.join(", ")
-                );
+    let (dot_content, defaulted_providers) =
+        match normalize_provider_defaults(&dot_content, "claude") {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("Generated DOT failed to parse for provider normalization:");
+                eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
+                return Err(GenerateError::new(
+                    "invalid_dot",
+                    format!("Generated pipeline is not valid DOT: {}", e),
+                ));
             }
-            normalized
-        }
-        Err(e) => {
-            eprintln!("Generated DOT failed to parse for provider normalization:");
-            eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
-            anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
-        }
-    };
+        };
 
     // Determine output path
     let output_path = match output {
         Some(path) => path.to_path_buf(),
         None => {
-            let stem = spec_path
-                .file_stem()
+            // A Plan is ordered PRD then spec, so the last file names the Pipeline
+            let named = match input {
+                GenerateInput::SpecPrd { spec, .. } => Some(*spec),
+                GenerateInput::Plan(files) => files.last().map(|p| p.as_path()),
+            };
+            let stem = named
+                .and_then(|p| p.file_stem())
                 .and_then(|s| s.to_str())
                 .unwrap_or("pipeline");
-            std::path::PathBuf::from(format!("pipelines/{}.dot", stem))
+            PathBuf::from(format!("pipelines/{}.dot", stem))
         }
     };
 
+    let io = |e: std::io::Error| GenerateError::new("io", e);
+
     // Create parent directory if needed
     if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(io)?;
     }
 
     // Write the pipeline file
-    std::fs::write(&output_path, &dot_content)?;
+    std::fs::write(&output_path, &dot_content).map_err(io)?;
 
     // Validate the generated pipeline
     let plan = match crate::load_execution_plan(&output_path) {
@@ -235,33 +328,107 @@ pub async fn cmd_generate(
             eprintln!("Generated file written to: {}", output_path.display());
             eprintln!("DOT parse failed — first 500 chars of output:");
             eprintln!("{}", &dot_content[..dot_content.len().min(500)]);
-            anyhow::bail!("Generated pipeline is not valid DOT: {}", e);
+            return Err(GenerateError::new(
+                "invalid_dot",
+                format!("Generated pipeline is not valid DOT: {}", e),
+            ));
         }
     };
-    let diagnostics = attractor_pipeline::validate_plan(&plan);
+    let errors = attractor_pipeline::validate_plan(&plan)
+        .into_iter()
+        .filter(|d| matches!(d.severity, attractor_pipeline::Severity::Error))
+        .collect();
 
-    let has_error = diagnostics
-        .iter()
-        .any(|d| matches!(d.severity, attractor_pipeline::Severity::Error));
+    Ok(Generated {
+        output_path,
+        defaulted_providers,
+        errors,
+        node_count: plan.all_nodes().count(),
+    })
+}
 
+/// Exactly one JSON object on stdout; notices and diagnostics go to stderr.
+fn print_json(result: Result<Generated, GenerateError>) -> anyhow::Result<()> {
+    let result = result.and_then(|generated| {
+        if !generated.defaulted_providers.is_empty() {
+            eprintln!(
+                "  Defaulted llm_provider=\"claude\" on: {}",
+                generated.defaulted_providers.join(", ")
+            );
+        }
+        if generated.errors.is_empty() {
+            return Ok(generated);
+        }
+        for diag in &generated.errors {
+            eprintln!("  [ERROR] {}: {}", diag.rule, diag.message);
+        }
+        Err(GenerateError::new(
+            "invalid_pipeline",
+            format!(
+                "Pipeline {} was written but has {} validation error(s)",
+                generated.output_path.display(),
+                generated.errors.len()
+            ),
+        ))
+    });
+    let result = result.and_then(|generated| {
+        std::fs::canonicalize(&generated.output_path).map_err(|e| GenerateError::new("io", e))
+    });
+    match result {
+        Ok(pipeline_path) => {
+            let payload = GenerateJson {
+                v: 1,
+                ok: true,
+                pipeline_path,
+            };
+            println!("{}", serde_json::to_string(&payload)?);
+            Ok(())
+        }
+        Err(error) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "v": 1,
+                    "ok": false,
+                    "error": {"code": error.code, "message": error.message},
+                })
+            );
+            anyhow::bail!(error.message)
+        }
+    }
+}
+
+fn print_human(input: &GenerateInput<'_>, generated: &Generated) {
+    if !generated.defaulted_providers.is_empty() {
+        println!(
+            "  Defaulted llm_provider=\"claude\" on: {}",
+            generated.defaulted_providers.join(", ")
+        );
+    }
+
+    let has_error = !generated.errors.is_empty();
     if has_error {
         println!("Warning: pipeline has validation errors:");
-        for diag in &diagnostics {
-            if matches!(diag.severity, attractor_pipeline::Severity::Error) {
-                println!("  [ERROR] {}: {}", diag.rule, diag.message);
-            }
+        for diag in &generated.errors {
+            println!("  [ERROR] {}: {}", diag.rule, diag.message);
         }
     }
 
-    let node_count = plan.all_nodes().count();
-
     println!("Pipeline generated");
-    println!("  Output: {}", output_path.display());
-    println!("  Spec: {}", spec_path.display());
-    if let Some(prd) = prd_path {
-        println!("  PRD: {}", prd.display());
+    println!("  Output: {}", generated.output_path.display());
+    match input {
+        GenerateInput::SpecPrd { spec, prd } => {
+            println!("  Spec: {}", spec.display());
+            if let Some(prd) = prd {
+                println!("  PRD: {}", prd.display());
+            }
+        }
+        GenerateInput::Plan(files) => {
+            let names: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
+            println!("  Plan: {}", names.join(", "));
+        }
     }
-    println!("  Nodes: {}", node_count);
+    println!("  Nodes: {}", generated.node_count);
     println!(
         "  Validation: {}",
         if has_error { "FAILED" } else { "PASSED" }
@@ -269,27 +436,39 @@ pub async fn cmd_generate(
 
     if !has_error {
         println!("\nNext steps:");
-        println!("1. Review pipeline: cat {}", output_path.display());
-        println!("2. Run pipeline: pas run {} -w .", output_path.display());
+        println!(
+            "1. Review pipeline: cat {}",
+            generated.output_path.display()
+        );
+        println!(
+            "2. Run pipeline: pas run {} -w .",
+            generated.output_path.display()
+        );
     }
-
-    Ok(())
 }
 
+/// Input section for a spec (and optional PRD).
 fn build_prompt(spec: &str, prd: Option<&str>) -> String {
     let prd_section = match prd {
         Some(content) => format!("## PRD (Product Requirements Document)\n\n{}\n\n", content),
         None => String::new(),
     };
 
+    render_prompt(&format!(
+        "{prd_section}## Technical Specification\n\n{spec}\n\n"
+    ))
+}
+
+/// Prompt for an ordered multi-file Plan; `load_plan` supplies the headings.
+fn build_plan_prompt(plan_text: &str) -> String {
+    render_prompt(&format!("## Plan\n\n{plan_text}\n\n"))
+}
+
+fn render_prompt(input_section: &str) -> String {
     format!(
         r#"Generate a Graphviz DOT pipeline for an AI workflow engine. Each provider-backed `codergen` node runs its explicitly selected local provider CLI with the `prompt` attribute as its task.
 
-{prd_section}## Technical Specification
-
-{spec}
-
-## Pipeline conventions
+{input_section}## Pipeline conventions
 
 IMPORTANT: ALL attribute values MUST be double-quoted. Use `shape="Mdiamond"` not `shape=Mdiamond`. Use multi-line node declarations with one attribute per line.
 
@@ -342,8 +521,7 @@ The LAST work node before `done` MUST be a commit node that stages and commits a
     ]
 
 Output ONLY the raw digraph. No markdown fences, no commentary."#,
-        prd_section = prd_section,
-        spec = spec,
+        input_section = input_section,
     )
 }
 
@@ -492,7 +670,16 @@ pub async fn cmd_generate_dir(
             output_path.display()
         );
 
-        cmd_generate(prd, spec_path, Some(&output_path), verbose).await?;
+        cmd_generate(
+            GenerateInput::SpecPrd {
+                spec: spec_path,
+                prd,
+            },
+            Some(&output_path),
+            verbose,
+            false,
+        )
+        .await?;
         generated.push(output_path);
     }
 

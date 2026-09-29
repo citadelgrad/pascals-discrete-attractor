@@ -522,7 +522,13 @@ pas generate <DIRECTORY>
 |--------|---------|-------------|
 | `--prd <PATH>` | — | Explicit PRD file path |
 | `--spec <PATH>` | — | Explicit spec file path |
+| `--plan <FILE>` | — | A Plan document (`.md`/`.txt`); repeat for an ordered multi-file Plan. Conflicts with positional files, `--prd` and `--spec`. Default output is `pipelines/<stem of the last --plan file>.dot` |
 | `--output <PATH>` | `pipelines/<stem>.dot` | Output file path |
+| `--json` | false | Print one JSON object on stdout (not supported in directory mode) |
+
+#### JSON output (`--json`)
+
+Success: `{"v":1,"ok":true,"pipeline_path":"/abs/path.dot"}`. Failure (exit 1): `{"v":1,"ok":false,"error":{"code","message"}}` with codes `plan_input`, `io`, `llm_failed`, `invalid_dot`, `invalid_pipeline` (the file is written but has validation errors). Spinner and notices go to stderr, and the spinner is suppressed.
 
 #### Modes
 

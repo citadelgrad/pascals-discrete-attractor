@@ -193,3 +193,22 @@ fn generated_output_with_explicit_provider_is_left_untouched() {
         Some(&attractor_dot::AttributeValue::String("codex".to_string()))
     );
 }
+
+#[test]
+fn build_plan_prompt_contains_plan_once_and_conventions() {
+    let plan = "# Plan document 1 of 2: a.md\n\nAAA\n\n# Plan document 2 of 2: b.md\n\nBBB";
+    let prompt = build_plan_prompt(plan);
+    assert_eq!(prompt.matches(plan).count(), 1);
+    assert!(prompt.contains("## Pipeline conventions"));
+    assert!(prompt.contains("llm_provider"));
+}
+
+#[test]
+fn build_prompt_shape_is_unchanged() {
+    let prompt = build_prompt("SPEC", Some("PRD"));
+    assert!(prompt.starts_with("Generate a Graphviz DOT pipeline"));
+    assert!(prompt.contains(
+        "## PRD (Product Requirements Document)\n\nPRD\n\n## Technical Specification\n\nSPEC\n\n## Pipeline conventions"
+    ));
+    assert!(prompt.ends_with("No markdown fences, no commentary."));
+}

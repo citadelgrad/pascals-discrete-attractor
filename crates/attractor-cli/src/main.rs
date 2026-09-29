@@ -9,7 +9,7 @@ use commands::{
     cmd_answer, cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_kill,
     cmd_launch, cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_stop, cmd_validate,
     heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenClaudeCliOpts,
-    DecomposeSource, InitOpts, RunInvocation, RunRefused,
+    DecomposeSource, GenerateInput, InitOpts, RunInvocation, RunRefused,
 };
 
 #[derive(Parser)]
@@ -275,9 +275,19 @@ enum Commands {
         #[arg(long)]
         spec: Option<PathBuf>,
 
-        /// Output .dot file or directory (default: pipelines/<spec-stem>.dot)
+        /// A Plan document (.md or .txt); repeat for a multi-file Plan, in order
+        #[arg(long = "plan", value_name = "FILE", action = clap::ArgAction::Append, conflicts_with_all = ["files", "prd", "spec"])]
+        plan: Vec<PathBuf>,
+
+        /// Output .dot file or directory (default: pipelines/<spec-stem>.dot,
+        /// or the last --plan file's stem)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Print one JSON object (C6): `{"v":1,"ok":true,"pipeline_path":..}`;
+        /// failures print `{"v":1,"ok":false,"error":{"code","message"}}` and exit 1
+        #[arg(long)]
+        json: bool,
     },
 
     /// Initialise a `pas.toml` in the current (or specified) project.
@@ -583,10 +593,26 @@ async fn run_cli() -> anyhow::Result<()> {
             files,
             prd,
             spec,
+            plan,
             output,
+            json,
         } => {
-            // Check if the single positional arg is a directory
-            if files.len() == 1 && files[0].is_dir() && prd.is_none() && spec.is_none() {
+            if !plan.is_empty() {
+                cmd_generate(
+                    GenerateInput::Plan(&plan),
+                    output.as_deref(),
+                    cli.verbose,
+                    json,
+                )
+                .await?;
+            } else if files.len() == 1
+                && files[0].is_dir()
+                && prd.is_none()
+                && spec.is_none()
+                && json
+            {
+                anyhow::bail!("--json is not supported in directory mode");
+            } else if files.len() == 1 && files[0].is_dir() && prd.is_none() && spec.is_none() {
                 cmd_generate_dir(&files[0], output.as_deref(), cli.verbose, true).await?;
             } else {
                 // Resolve spec and prd from positional args and/or named flags.
@@ -615,10 +641,13 @@ async fn run_cli() -> anyhow::Result<()> {
                     }
                 };
                 cmd_generate(
-                    resolved_prd.as_deref(),
-                    &resolved_spec,
+                    GenerateInput::SpecPrd {
+                        spec: &resolved_spec,
+                        prd: resolved_prd.as_deref(),
+                    },
                     output.as_deref(),
                     cli.verbose,
+                    json,
                 )
                 .await?;
             }

@@ -9,7 +9,7 @@ use commands::{
     cmd_answer, cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_kill,
     cmd_launch, cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_stop, cmd_validate,
     heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenClaudeCliOpts,
-    InitOpts, RunInvocation, RunRefused,
+    DecomposeSource, InitOpts, RunInvocation, RunRefused,
 };
 
 #[derive(Parser)]
@@ -204,18 +204,33 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Decompose a spec into beads epic and tasks
+    /// Decompose a spec or Plan into beads epic and tasks
+    #[command(group(clap::ArgGroup::new("source").required(true).args(["spec_path", "plan", "from_proposal"])))]
     Decompose {
         /// Path to the spec markdown file
-        spec_path: PathBuf,
+        spec_path: Option<PathBuf>,
+
+        /// A Plan document (.md or .txt); repeat for a multi-file Plan
+        #[arg(long = "plan", value_name = "FILE", action = clap::ArgAction::Append, conflicts_with_all = ["spec_path", "from_proposal", "validate"])]
+        plan: Vec<PathBuf>,
+
+        /// Create exactly the Proposal in this JSON file, without an LLM call
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["spec_path", "plan", "dry_run", "validate"])]
+        from_proposal: Option<PathBuf>,
 
         /// Print the generated shell commands without executing them
         #[arg(long, conflicts_with = "validate")]
         dry_run: bool,
 
         /// Validate existing tickets against spec (skip LLM, just check coverage)
-        #[arg(long, conflicts_with = "dry_run")]
+        #[arg(long, conflicts_with = "dry_run", requires = "spec_path")]
         validate: Option<String>,
+
+        /// Print one JSON object (C6): a Proposal with --dry-run, else
+        /// `{"v":1,"ok":true,"epic_id":..,"task_ids":[..]}`; failures print
+        /// `{"v":1,"ok":false,"error":{"code","message"}}` and exit 1
+        #[arg(long, conflicts_with = "validate")]
+        json: bool,
     },
 
     /// Scaffold a pipeline from a beads epic
@@ -539,14 +554,22 @@ async fn run_cli() -> anyhow::Result<()> {
         }
         Commands::Decompose {
             spec_path,
+            plan,
+            from_proposal,
             dry_run,
             validate,
+            json,
         } => {
-            if let Some(epic_id) = validate {
-                let spec_content = std::fs::read_to_string(&spec_path)?;
-                validate_decomposition(&spec_content, Some(&epic_id)).await?;
+            if let (Some(epic_id), Some(spec_path)) = (&validate, &spec_path) {
+                let spec_content = std::fs::read_to_string(spec_path)?;
+                validate_decomposition(&spec_content, Some(epic_id)).await?;
             } else {
-                cmd_decompose(&spec_path, dry_run).await?;
+                let source = match (&spec_path, &from_proposal) {
+                    (_, Some(file)) => DecomposeSource::Proposal(file),
+                    (Some(path), _) => DecomposeSource::Spec(path),
+                    _ => DecomposeSource::Plan(&plan),
+                };
+                cmd_decompose(source, dry_run, json).await?;
             }
         }
         Commands::Scaffold {

@@ -652,6 +652,8 @@ This reads the spec's `## Implementation Phases` section and creates:
 - Child tasks for each phase/task
 - Dependencies between tasks based on phase ordering
 
+To decompose several documents as one Plan, pass `--plan a.md --plan b.txt` instead of a spec path. `--dry-run --json` prints the Proposal; `--from-proposal p.json` creates exactly that Proposal without calling Claude. See the [CLI reference](cli-reference.md#decompose--convert-spec-to-beads-issues).
+
 ### Step 3: Scaffold and run the pipeline
 
 ```bash

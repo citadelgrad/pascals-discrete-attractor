@@ -453,19 +453,34 @@ Reads a technical specification file and uses Claude to generate beads CLI comma
 
 ```
 pas decompose <SPEC_PATH> [OPTIONS]
+pas decompose --plan <FILE> [--plan <FILE> ...] [OPTIONS]
+pas decompose --from-proposal <FILE> [--json]
 ```
+
+Exactly one source is required: `SPEC_PATH`, one or more `--plan`, or `--from-proposal`. Combining them is a usage error (exit 2).
 
 #### Arguments
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `SPEC_PATH` | Yes | Path to the spec markdown file |
+| `SPEC_PATH` | One source | Path to the spec markdown file |
 
 #### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--dry-run` | false | Print the generated `bd` commands without executing them |
+| `--plan <FILE>` | | A Plan document (`.md` or `.txt`); repeat for a multi-file Plan (max 20 files, 1 MiB each). Conflicts with `SPEC_PATH` |
+| `--from-proposal <FILE>` | | Create exactly the Proposal in this JSON file, with no LLM call. Conflicts with `SPEC_PATH`, `--plan`, `--dry-run` |
+| `--dry-run` | false | Print the generated Proposal without creating anything |
+| `--json` | false | Print one JSON object on stdout (C6); progress goes to stderr |
+
+#### JSON payloads
+
+- `--dry-run --json`: `{"v":1,"ok":true,"proposal":{"v":1,"epic":{"title","description"},"tasks":[{"title","type","priority","description","acceptance"?,"design"?,"notes"?}],"dependencies":[{"blocked","blocker"}]}}`. Makes no `bd` call.
+- Create with `--json`: `{"v":1,"ok":true,"epic_id":"..","task_ids":[".."]}`.
+- Failure: `{"v":1,"ok":false,"error":{"code","message"}}` and exit 1. Codes: `invalid_proposal`, `plan_input`, `llm_failed`, `beads_failed`, `bd_not_found`, `io`.
+
+`dependencies` use 0-based Task indices. A Proposal with no Tasks, an out-of-range or self dependency, or `v` other than 1 is rejected before any `bd` call (this also applies to Proposals Claude generates). `--from-proposal` skips the post-create spec coverage check, since there is no spec text.
 
 #### Output
 

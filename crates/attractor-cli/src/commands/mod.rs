@@ -15,7 +15,7 @@ pub mod stop;
 pub mod validate;
 
 pub use answer::{cmd_answer, AnswerSourceArg};
-pub use decompose::{cmd_decompose, validate_decomposition};
+pub use decompose::{cmd_decompose, validate_decomposition, DecomposeSource};
 pub use generate::{cmd_generate, cmd_generate_dir};
 pub use info::cmd_info;
 pub use init::{cmd_init, InitOpts};

@@ -15,7 +15,6 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Only `.md` and `.txt` files are accepted (case-insensitive), each valid
 /// UTF-8 and at most 1 MiB; at most 20 files. All files are validated before
 /// anything is returned.
-#[allow(dead_code)] // first callers: decompose --plan, generate --plan
 pub fn load_plan(files: &[PathBuf]) -> anyhow::Result<String> {
     if files.is_empty() {
         bail!("a Plan needs at least one file");

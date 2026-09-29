@@ -95,7 +95,9 @@ fn checked_path(run_dir: &RunDir, question_id: &str) -> io::Result<PathBuf> {
 pub fn write_answer(run_dir: &RunDir, answer: &AnswerFile) -> io::Result<bool> {
     let path = checked_path(run_dir, &answer.question_id)?;
     std::fs::create_dir_all(run_dir.answers_dir())?;
-    let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+    // Unique per call, so two writers in one process never share a temp file.
+    static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = run_dir.answers_dir().join(format!(
         ".{}.{}.{nanos}.tmp",
         answer.question_id,

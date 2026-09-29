@@ -222,6 +222,55 @@ exists but cannot be read, stdout is
 
 ---
 
+### `answer` — Answer a waiting Human Gate
+
+Creates the answer file of a Human Gate question. The waiting `pas run` picks
+it up, journals `HumanInputAnswered` with the file's `source`, and continues.
+`pas answer` finds the Run through the Run Index, takes no Run lock, and never
+writes the Run Journal.
+
+```
+pas answer <run-id> <question-id> <choice> [--source cli|monitor] [--json]
+```
+
+- `<question-id>` is the `question_id` of the Run's `HumanInputRequested` Event.
+- `<choice>` must equal one of that Event's `choices` (an edge label) exactly;
+  numbers are not accepted.
+- `--source` (default `cli`) is recorded as the answer's source. `terminal` is
+  reserved for `pas run` itself.
+
+The file is `<run-dir>/answers/<question-id>.json`, created exclusively, so the
+first answer wins and an existing file is never changed:
+
+```json
+{"v":1,"question_id":"q-review-1","choice":"approve","source":"cli","answered_at":"2026-09-24T10:00:00Z"}
+```
+
+With `--json`, stdout is exactly one object. Success:
+
+```json
+{"v":1,"ok":true,"run_id":"0192...","question_id":"q-review-1","choice":"approve","source":"cli","answer_path":"/abs/.../answers/q-review-1.json"}
+```
+
+Failure (`run_id` is echoed as typed):
+
+```json
+{"v":1,"ok":false,"run_id":"0192...","error":{"code":"invalid_choice","message":"..."}}
+```
+
+Error codes: `unknown_run`, `run_missing`, `unknown_question`,
+`invalid_choice`, `already_answered`, `io_error`.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Answer file created |
+| 1 | Any other failure; no file is created |
+| 7 | The question is already answered; the existing file is unchanged |
+
+---
+
 ### `validate` — Check a pipeline for errors
 
 Runs canonical semantic compilation followed by nine structural checks without

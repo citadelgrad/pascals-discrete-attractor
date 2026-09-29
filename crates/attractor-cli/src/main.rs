@@ -6,9 +6,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use commands::{
-    cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch, cmd_plan,
-    cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_validate, heartbeat_interval_from_env,
-    validate_decomposition, CodergenClaudeCliOpts, InitOpts, RunInvocation, RunRefused,
+    cmd_answer, cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_launch,
+    cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_validate,
+    heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenClaudeCliOpts,
+    InitOpts, RunInvocation, RunRefused,
 };
 
 #[derive(Parser)]
@@ -106,6 +107,27 @@ enum Commands {
         /// (recorded as `shared_workdir` in `RunStarted`)
         #[arg(long)]
         allow_shared_workdir: bool,
+    },
+
+    /// Answer a waiting Human Gate by creating its answer file. Exits 7 when
+    /// the question is already answered
+    Answer {
+        /// Run ID (a UUID from `pas runs`)
+        run_id: String,
+
+        /// Question ID from the Run's `HumanInputRequested` Event
+        question_id: String,
+
+        /// One of the question's choices (its edge label, exactly)
+        choice: String,
+
+        /// Who is answering, recorded in the journal
+        #[arg(long, value_enum, default_value = "cli")]
+        source: AnswerSourceArg,
+
+        /// Print one JSON object `{"v":1,"ok":...,"run_id":...}`
+        #[arg(long)]
+        json: bool,
     },
 
     /// List Runs from the Run Index with a status derived from each Run
@@ -453,6 +475,13 @@ async fn run_cli() -> anyhow::Result<()> {
             cmd_init(&workdir, &opts)?;
         }
         Commands::Runs { active, json } => cmd_runs(active, json)?,
+        Commands::Answer {
+            run_id,
+            question_id,
+            choice,
+            source,
+            json,
+        } => cmd_answer(&run_id, &question_id, &choice, source, json)?,
         Commands::Validate { pipeline } => {
             cmd_validate(&pipeline)?;
         }

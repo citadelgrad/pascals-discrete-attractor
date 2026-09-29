@@ -710,6 +710,8 @@ The choices are the outgoing edge labels. `pas run` takes the first valid answer
   {"v":1,"question_id":"q-review-1","choice":"continue","source":"cli","answered_at":"2026-09-24T10:00:00Z"}
   ```
 
+`pas answer <run-id> <question-id> <choice>` writes this file for you; see the [CLI reference](cli-reference.md#answer--answer-a-waiting-human-gate).
+
 Piped stdin (`echo 1 | pas run ...`) no longer answers a gate. If the Run is killed while it waits, resuming it asks the same question again.
 
 ---

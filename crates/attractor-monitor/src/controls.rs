@@ -12,6 +12,7 @@ use attractor_journal::{
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
+use axum::Form;
 use chrono::Utc;
 use maud::{html, Markup};
 
@@ -318,6 +319,80 @@ async fn start(
             })
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct AnswerForm {
+    choice: String,
+}
+
+/// Exit code of `pas answer` when the gate already has an answer (C6).
+const EXIT_ALREADY_ANSWERED: i32 = 7;
+
+/// Answer the pending Human Gate `qid` through `pas answer --source monitor`.
+pub async fn answer(
+    State(state): State<AppState>,
+    UrlPath((id, qid)): UrlPath<(String, String)>,
+    Form(form): Form<AnswerForm>,
+) -> Response {
+    let Some(snap) = parse_run_id(&id).and_then(|id| state.snapshot(&id)) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !attractor_journal::is_valid_question_id(&qid) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Some(a) = snap.view.answered.iter().find(|a| a.question_id == qid) {
+        return already_answered(Some(&format!("{:?}", a.source).to_lowercase()));
+    }
+    let Some(gate) = snap.view.gate.as_ref().filter(|g| g.question_id == qid) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let status = current_status(&snap, Utc::now());
+    if status != RunStatus::Running {
+        return conflict(&format!("Cannot answer: the Run is {}.", status.as_str()));
+    }
+    if snap.answers_sent.contains_key(&qid) {
+        return already_answered(Some("monitor"));
+    }
+    if !gate.choices.contains(&form.choice) {
+        return reply(
+            StatusCode::BAD_REQUEST,
+            "notice error",
+            "That choice is not offered by this gate.",
+        );
+    }
+    let exe = match state.pas_exe() {
+        Ok(e) => e,
+        Err(e) => return failed(&format!("Cannot find the pas executable: {e}")),
+    };
+    let run_id = snap.entry.run_id.clone();
+    let mut args: Vec<OsString> = ["answer", "--source", "monitor", "--json", "--"]
+        .map(OsString::from)
+        .to_vec();
+    args.extend([&run_id, &qid, &form.choice].map(OsString::from));
+    match spawn::run_at(&exe, &args).await {
+        Ok(out) if out.code == Some(0) => {
+            state.mark_answer_sent(&run_id, &qid, &form.choice);
+            reply(
+                StatusCode::OK,
+                "notice",
+                &format!(
+                    "Answered {}. Waiting for the Run to record it.",
+                    form.choice
+                ),
+            )
+        }
+        Ok(out) if out.code == Some(EXIT_ALREADY_ANSWERED) => already_answered(None),
+        Ok(out) => failed(&failure_message(&out)),
+        Err(e) => failed(&format!("Cannot run pas: {e}")),
+    }
+}
+
+fn already_answered(by: Option<&str>) -> Response {
+    let by = by.map(|b| format!(" (by {b})")).unwrap_or_default();
+    conflict(&format!(
+        "This gate is already answered{by}; the Run is unchanged."
+    ))
 }
 
 #[cfg(test)]

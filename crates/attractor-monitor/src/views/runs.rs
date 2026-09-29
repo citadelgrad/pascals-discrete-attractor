@@ -316,6 +316,7 @@ mod tests {
             ),
             view: fold(&evs),
             missing: false,
+            answers_sent: Default::default(),
         }
     }
 
@@ -566,6 +567,7 @@ mod tests {
             entry: IndexEntry::new("e", t0(), "/r/a", "p.dot", "/nonexistent"),
             view: Default::default(),
             missing: false,
+            answers_sent: Default::default(),
         };
         let r = rows(&[s], t0() + Duration::seconds(5), &env(&ALIVE));
         assert_eq!(r[0].status, RunStatus::Running);

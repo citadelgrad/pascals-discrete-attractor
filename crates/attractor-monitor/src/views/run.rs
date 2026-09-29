@@ -446,7 +446,39 @@ fn invocations(run_id: &str, view: &RunView) -> Markup {
     }
 }
 
-fn findings(list: &[Finding]) -> Markup {
+/// The question and one button per choice for the pending Human Gate of a
+/// Running Run. Once our own `pas answer` succeeded the buttons give way to a
+/// notice, so they are gone at the next refresh without waiting for the journal.
+fn gate(s: &RunSnapshot, status: RunStatus) -> Markup {
+    let Some(g) = s
+        .view
+        .gate
+        .as_ref()
+        .filter(|_| status == RunStatus::Running)
+    else {
+        return html! {};
+    };
+    let run_id = &s.entry.run_id;
+    html! {
+        div.gate data-question=(g.question_id) {
+            p.gate-text { (g.text) }
+            @if let Some(sent) = s.answers_sent.get(&g.question_id) {
+                p.notice role="status" { "Answered " (sent) "; waiting for the Run to record it." }
+            } @else {
+                @for c in &g.choices {
+                    button type="button" data-choice=(c)
+                        class=[(g.default.as_deref() == Some(c.as_str())).then_some("default")]
+                        hx-post=(format!("/runs/{run_id}/answers/{}", g.question_id))
+                        hx-vals=(serde_json::json!({ "choice": c }).to_string())
+                        hx-target="closest .gate" hx-swap="outerHTML" { (c) }
+                    " "
+                }
+            }
+        }
+    }
+}
+
+fn findings(list: &[Finding], s: &RunSnapshot, status: RunStatus) -> Markup {
     html! {
         section #findings {
             h2 { "Findings" }
@@ -455,6 +487,7 @@ fn findings(list: &[Finding]) -> Markup {
                     @for f in list {
                         li class=(format!("finding {}", f.severity.as_str())) data-rule=(f.rule.as_str()) {
                             span.severity { (f.severity.as_str()) } " " (f.message)
+                            @if f.rule == Rule::HumanGateWaiting { (gate(s, status)) }
                         }
                     }
                 }
@@ -491,7 +524,7 @@ pub fn summary(s: &RunSnapshot, now: DateTime<Utc>, env: &Env) -> Markup {
         (tasks(&s.view))
         (commits(&s.view))
         (invocations(&s.entry.run_id, &s.view))
-        (findings(&list))
+        (findings(&list, s, status))
     }
 }
 
@@ -640,6 +673,7 @@ mod tests {
             ),
             view: fold(events),
             missing: false,
+            answers_sent: Default::default(),
         }
     }
 
@@ -1064,5 +1098,94 @@ mod tests {
         let html = render(&s, 3);
         assert!(html.contains("Run folder missing") && html.contains(r#"data-status="missing""#));
         assert!(html.contains("No Findings."));
+    }
+
+    fn gate_events(text: &str, choices: &[&str], tail: Vec<(i64, EventData)>) -> Vec<JournalEvent> {
+        let mut l = vec![
+            (0, started(None, None)),
+            (1, attempt()),
+            (
+                2,
+                EventData::HumanInputRequested {
+                    question_id: "q1".into(),
+                    node_id: "gate".into(),
+                    text: text.into(),
+                    choices: choices.iter().map(|c| c.to_string()).collect(),
+                    default: Some(choices[0].into()),
+                },
+            ),
+        ];
+        l.extend(tail);
+        evs(l)
+    }
+
+    #[test]
+    fn gate_renders_question_and_one_button_per_choice() {
+        let s = snap_of(&gate_events(
+            "Ship it?",
+            &["approve", "reject", "wait"],
+            vec![],
+        ));
+        let html = render(&s, 5);
+        assert!(html.contains("Ship it?"));
+        assert_eq!(html.matches("data-choice=").count(), 3, "{html}");
+        assert!(html.contains(&format!(
+            "/runs/{}/answers/q1",
+            "11111111-1111-7111-8111-111111111111"
+        )));
+        assert!(
+            html.contains("&quot;choice&quot;:&quot;reject&quot;"),
+            "{html}"
+        );
+        assert_eq!(html.matches("class=\"default\"").count(), 1);
+    }
+
+    #[test]
+    fn gate_text_and_choices_are_escaped() {
+        let s = snap_of(&gate_events(
+            "<script>x</script>",
+            &["\"><script>y</script>"],
+            vec![],
+        ));
+        let html = render(&s, 5);
+        assert!(!html.contains("<script>x"), "{html}");
+        assert!(!html.contains("<script>y"), "{html}");
+    }
+
+    #[test]
+    fn no_buttons_without_a_pending_gate_or_when_not_running() {
+        let answered = EventData::HumanInputAnswered {
+            question_id: "q1".into(),
+            choice: "a".into(),
+            source: attractor_journal::AnswerSource::Terminal,
+        };
+        let ended = EventData::AttemptEnded {
+            attempt: 1,
+            reason: AttemptEndReason::Stopped,
+            message: None,
+        };
+        for tail in [vec![(3, answered)], vec![(3, ended)]] {
+            let html = render(&snap_of(&gate_events("Q?", &["a", "b"], tail)), 5);
+            assert!(!html.contains("data-choice"), "{html}");
+        }
+        // A stale heartbeat makes the Run Crashed: its gate is not answerable.
+        let dead = Env {
+            pid_alive: &|_| false,
+            node_timeout: &|_| None,
+            commit_nodes: None,
+        };
+        let s = snap_of(&gate_events("Q?", &["a", "b"], vec![]));
+        let html = summary(&s, t0() + Duration::seconds(100_000), &dead).into_string();
+        assert!(html.contains("crashed"), "{html}");
+        assert!(!html.contains("data-choice"), "{html}");
+    }
+
+    #[test]
+    fn sent_answer_replaces_buttons_with_a_notice() {
+        let mut s = snap_of(&gate_events("Q?", &["a", "b"], vec![]));
+        s.answers_sent.insert("q1".into(), "b".into());
+        let html = render(&s, 5);
+        assert!(!html.contains("data-choice"), "{html}");
+        assert!(html.contains("Answered b"), "{html}");
     }
 }

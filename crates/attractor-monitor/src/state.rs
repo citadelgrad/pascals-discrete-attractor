@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use attractor_journal::{IndexEntry, JournalEvent, RunDir};
 use tokio::sync::broadcast;
@@ -21,6 +21,8 @@ struct Inner {
     capacity: usize,
     csrf: CsrfToken,
     pas_exe: RwLock<Option<PathBuf>>,
+    /// (run id, question id) -> choice, for answers our own `pas answer` accepted.
+    answers_sent: Mutex<HashMap<(String, String), String>>,
     runs: RwLock<HashMap<String, RunSlot>>,
 }
 
@@ -37,6 +39,8 @@ pub struct RunSnapshot {
     pub entry: IndexEntry,
     pub view: RunView,
     pub missing: bool,
+    /// Answers this Monitor sent that the journal may not show yet, by question id.
+    pub answers_sent: HashMap<String, String>,
 }
 
 impl AppState {
@@ -72,6 +76,7 @@ impl AppState {
             capacity,
             csrf: CsrfToken::generate(),
             pas_exe: RwLock::default(),
+            answers_sent: Mutex::default(),
             runs: RwLock::default(),
         }))
     }
@@ -142,11 +147,33 @@ impl AppState {
         ))
     }
 
+    /// Remember that `pas answer` accepted `choice` for the gate. This records
+    /// only what the Monitor did; the journal stays the observation of the Run.
+    pub fn mark_answer_sent(&self, run_id: &str, question_id: &str, choice: &str) {
+        self.0
+            .answers_sent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert((run_id.into(), question_id.into()), choice.into());
+    }
+
+    fn sent_for(&self, run_id: &str) -> HashMap<String, String> {
+        self.0
+            .answers_sent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|((r, _), _)| r == run_id)
+            .map(|((_, q), c)| (q.clone(), c.clone()))
+            .collect()
+    }
+
     pub fn snapshot(&self, run_id: &str) -> Option<RunSnapshot> {
         self.read().get(run_id).map(|s| RunSnapshot {
             entry: s.entry.clone(),
             view: s.view.clone(),
             missing: s.missing,
+            answers_sent: self.sent_for(run_id),
         })
     }
 
@@ -159,6 +186,7 @@ impl AppState {
                 entry: s.entry.clone(),
                 view: s.view.clone(),
                 missing: s.missing,
+                answers_sent: HashMap::new(),
             })
             .collect();
         all.sort_by(|a, b| {

@@ -457,6 +457,7 @@ mod tests {
             entry: IndexEntry::new("rid", Utc::now(), "/w", "p.dot", std::path::Path::new(dir)),
             view: RunView::default(),
             missing: false,
+            answers_sent: Default::default(),
         }
     }
 

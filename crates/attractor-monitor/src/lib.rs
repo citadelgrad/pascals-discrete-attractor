@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/runs/:id/kill", post(controls::kill))
         .route("/runs/:id/resume", post(controls::resume))
         .route("/runs/:id/rerun", post(controls::rerun))
+        .route("/runs/:id/answers/:qid", post(controls::answer))
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

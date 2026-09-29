@@ -716,6 +716,8 @@ Piped stdin (`echo 1 | pas run ...`) no longer answers a gate. If the Run is kil
 
 To stop a Run cleanly between stages, use `pas stop <run-id>`; see the [CLI reference](cli-reference.md#stop--stop-an-active-run-after-its-current-stage). A Run waiting at a Human Gate ignores it until the gate is answered.
 
+To end a Run immediately, use `pas kill <run-id> [--grace 10s]`; see the [CLI reference](cli-reference.md#kill--end-an-active-run-now). Unlike `pas stop`, it does not wait for the current stage: it sends SIGTERM, then SIGKILL after the grace period, and only if the Run's PID holds its lock. Resume with the same `pas run` command.
+
 ---
 
 ## Integrating with Beads

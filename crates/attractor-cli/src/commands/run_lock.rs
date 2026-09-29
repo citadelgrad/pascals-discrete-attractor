@@ -69,6 +69,23 @@ impl RunLock {
         }
     }
 
+    /// Whether another open file description currently holds the lock at
+    /// `path`. Creates nothing: a missing file is not held, and a lock taken
+    /// for the probe is released at once.
+    pub(crate) fn is_held(path: &Path) -> bool {
+        let Ok(file) = OpenOptions::new().read(true).open(path) else {
+            return false;
+        };
+        match file.try_lock() {
+            Ok(()) => {
+                let _ = file.unlock();
+                false
+            }
+            Err(std::fs::TryLockError::WouldBlock) => true,
+            Err(std::fs::TryLockError::Error(_)) => false,
+        }
+    }
+
     /// Replace the contents with this process's PID and `run_id`.
     /// Overwritten before truncating, so a reader never sees an empty file
     /// after the first record.
@@ -119,6 +136,19 @@ mod tests {
             Err(LockError::Busy(holder)) => holder,
             other => panic!("expected Busy, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn is_held_probes_without_creating_or_keeping_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.lock");
+        assert!(!RunLock::is_held(&path));
+        assert!(!path.exists(), "the probe must not create the file");
+        let lock = RunLock::try_acquire(&path).unwrap();
+        assert!(RunLock::is_held(&path));
+        drop(lock);
+        assert!(!RunLock::is_held(&path));
+        assert!(RunLock::try_acquire(&path).is_ok(), "probe left it locked");
     }
 
     #[test]

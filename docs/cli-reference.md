@@ -303,6 +303,36 @@ Success: `{"v":1,"ok":true,"run_id":"…","stop_path":"…","already_requested":
 | 0 | Stop requested (or already requested) |
 | 1 | Any failure; no file is created |
 
+### `kill` — End an active Run now
+
+```
+pas kill <run-id> [--grace 10s] [--json]
+```
+
+Ends a `running` Run immediately. `pas kill` takes the PID of the Run's last Heartbeat (else its `AttemptStarted`) and signals it only if that PID provably is the Run: the Pipeline lock (`run.lock`) must be held right now, and the lock file must name that PID and this Run. Otherwise it sends no signal and fails with `pid_not_lock_holder`. A Run that is not `running` fails with `not_active`, also without a signal.
+
+It sends SIGTERM to the Run's process group (only when the Run leads its group; otherwise to the PID alone). A `pas run` handles SIGTERM by killing its stage children, journaling `AttemptEnded` with reason `stopped`, and exiting. If the process is still alive after `--grace`, `pas kill` sends SIGKILL to the Run and to the process groups of its child processes (provider CLIs and tool commands run in their own groups). A SIGKILLed Run writes no `AttemptEnded`, so its status becomes `crashed` once its Heartbeat is stale. The checkpoint of the last completed stage is kept: run the same `pas run` command again to resume, which repeats the stage that was in progress.
+
+`pas kill` never writes the journal and takes no lock beyond a momentary probe. Use `pas stop` to end a Run cleanly after its current stage.
+
+#### Options
+
+| Flag | Meaning |
+|------|---------|
+| `--grace <duration>` | Time between SIGTERM and SIGKILL, e.g. `500ms`, `10s`, `1m` (default `10s`) |
+| `--json` | Print one JSON object |
+
+#### Output
+
+Success: `{"v":1,"ok":true,"run_id":"…","pid":123,"signal":"SIGTERM","children_killed":0}`. `signal` is the signal that ended the Run; `children_killed` counts child process groups killed on the SIGKILL path. Failure: `{"v":1,"ok":false,"run_id":"<as typed>","error":{"code":"…","message":"…"}}`. Codes: `unknown_run`, `run_missing`, `not_active`, `no_pid`, `pid_not_lock_holder`, `invalid_grace`, `kill_failed` (still alive one second after SIGKILL), `io_error`.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The Run process ended |
+| 1 | Any failure |
+
 ### `validate` — Check a pipeline for errors
 
 Runs canonical semantic compilation followed by nine structural checks without

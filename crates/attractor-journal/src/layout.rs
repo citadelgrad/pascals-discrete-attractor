@@ -103,6 +103,16 @@ impl RunDir {
         &self.0
     }
 
+    /// The Pipeline folder holding this Run folder (`<pipeline>/runs/<run-id>`),
+    /// or `None` when the path is not shaped like that.
+    pub fn pipeline_dir(&self) -> Option<PipelineDir> {
+        let runs = self.0.parent()?;
+        if runs.file_name()? != RUNS_DIR {
+            return None;
+        }
+        runs.parent().map(PipelineDir::new)
+    }
+
     pub fn run_json(&self) -> PathBuf {
         self.0.join(RUN_JSON)
     }
@@ -158,6 +168,17 @@ impl RunDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_dir_knows_its_pipeline_dir() {
+        let pipeline = PipelineDir::new("/logs/p-abc");
+        let run = pipeline
+            .run("0192a000-0000-7000-8000-000000000001")
+            .unwrap();
+        assert_eq!(run.pipeline_dir(), Some(pipeline));
+        assert_eq!(RunDir::from_path("/elsewhere/x").pipeline_dir(), None);
+        assert_eq!(RunDir::from_path("x").pipeline_dir(), None);
+    }
 
     #[test]
     fn new_run_id_is_lowercase_v7() {

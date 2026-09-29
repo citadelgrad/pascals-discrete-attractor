@@ -6,6 +6,7 @@ pub mod init;
 pub mod kill;
 pub mod launch;
 pub mod plan;
+mod plan_input;
 pub mod run;
 mod run_lock;
 pub mod runs;

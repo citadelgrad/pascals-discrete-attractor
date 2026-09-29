@@ -6,12 +6,12 @@ pub mod projection;
 pub mod security;
 pub mod sse;
 pub mod state;
+pub mod views;
 pub mod watcher;
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::Context;
-use axum::response::Html;
 use axum::routing::get;
 use axum::{middleware, Router};
 use state::AppState;
@@ -26,14 +26,11 @@ pub struct MonitorOpts {
     pub open: bool,
 }
 
-const INDEX: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><title>PAS Monitor</title>\
-<link rel=\"stylesheet\" href=\"/assets/monitor.css\"><script src=\"/assets/htmx.min.js\"></script>\
-</head><body><h1>PAS Monitor</h1></body></html>";
-
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/runs/:id/events", get(sse::run_events))
-        .route("/", get(|| async { Html(INDEX) }))
+        .route("/", get(views::runs::page_handler))
+        .route("/runs", get(views::runs::table_handler))
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn(security::host_guard))
         .with_state(state)

@@ -1,6 +1,7 @@
 //! PAS Monitor server. Binds 127.0.0.1 only; every request must carry a loopback Host.
 
 mod assets;
+pub mod controls;
 pub mod findings;
 pub mod projection;
 pub mod security;
@@ -13,7 +14,7 @@ pub mod watcher;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::Context;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{middleware, Router};
 use state::AppState;
 use tokio::net::TcpListener;
@@ -38,6 +39,10 @@ pub fn router(state: AppState) -> Router {
             "/runs/:id/transcripts/:inv",
             get(views::transcript::handler),
         )
+        .route("/runs/:id/stop", post(controls::stop))
+        .route("/runs/:id/kill", post(controls::kill))
+        .route("/runs/:id/resume", post(controls::resume))
+        .route("/runs/:id/rerun", post(controls::rerun))
         .route("/assets/:name", get(assets::serve_asset))
         .layer(middleware::from_fn_with_state(
             state.csrf_token().clone(),

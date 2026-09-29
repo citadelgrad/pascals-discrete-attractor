@@ -288,6 +288,27 @@ fn bars(view: &RunView) -> Markup {
     }
 }
 
+/// The buttons valid for `status`. The server re-checks on every POST.
+fn controls(run_id: &str, status: RunStatus) -> Markup {
+    let allowed = crate::controls::allowed(status);
+    let button = |action: &str, label: &str, confirm: Option<&str>| {
+        html! {
+            button type="button" data-action=(action)
+                hx-post=(format!("/runs/{run_id}/{action}")) hx-target="#control-result"
+                hx-confirm=[confirm] { (label) }
+            " "
+        }
+    };
+    html! {
+        div #controls {
+            @if allowed.stop { (button("stop", "Stop", None)) }
+            @if allowed.kill { (button("kill", "Kill", Some("Kill the process now? Work in the current stage is lost."))) }
+            @if allowed.resume { (button("resume", "Resume", None)) }
+            @if allowed.rerun { (button("rerun", "Run again", Some("Start a new Run from the beginning?"))) }
+        }
+    }
+}
+
 fn header(s: &RunSnapshot, status: RunStatus) -> Markup {
     let v = &s.view;
     html! {
@@ -301,6 +322,7 @@ fn header(s: &RunSnapshot, status: RunStatus) -> Markup {
             @if let Some(src) = &v.stop_requested { p.notice { "Stop requested by " (src) } }
             @if let Some(g) = &v.gate { p.notice { "Waiting for a human at " (g.node_id) ": " (g.text) } }
             @if let Some(e) = &v.pipeline_error { p.notice { "Pipeline failed: " (e) } }
+            (controls(&s.entry.run_id, status))
             (bars(v))
             p { "Current node: " code { (v.current_node.as_deref().unwrap_or("-")) } }
         }
@@ -441,6 +463,20 @@ fn findings(list: &[Finding]) -> Markup {
     }
 }
 
+/// The status the Run page shows now, for gating the controls.
+pub(crate) fn current_status(s: &RunSnapshot, now: DateTime<Utc>) -> RunStatus {
+    let env = Env {
+        pid_alive: &super::pid_alive,
+        node_timeout: &|_| None,
+        commit_nodes: None,
+    };
+    let crashed = !s.missing
+        && derive(&s.view, now, &env)
+            .iter()
+            .any(|f| f.rule == Rule::Crashed);
+    run_status(s, crashed)
+}
+
 /// Everything that changes while a Run is live, except the graph and the log.
 pub fn summary(s: &RunSnapshot, now: DateTime<Utc>, env: &Env) -> Markup {
     let list = if s.missing {
@@ -459,8 +495,12 @@ pub fn summary(s: &RunSnapshot, now: DateTime<Utc>, env: &Env) -> Markup {
     }
 }
 
+/// Shows the reply of a control even when it is a 409 or 502.
+const CONTROL_SCRIPT: &str = "document.body.addEventListener('htmx:beforeSwap',function(e){var s=e.detail.xhr.status;if(s===409||s===502){e.detail.shouldSwap=true;e.detail.isError=false;}});";
+
 pub fn page(
     s: &RunSnapshot,
+    csrf: &str,
     now: DateTime<Utc>,
     env: &Env,
     source: &GraphSource,
@@ -475,8 +515,9 @@ pub fn page(
                 link rel="stylesheet" href="/assets/monitor.css";
                 script src="/assets/htmx.min.js" {}
             }
-            body {
+            body hx-headers=(serde_json::json!({ "X-CSRF-Token": csrf }).to_string()) {
                 p { a href="/" { "All Runs" } }
+                div #control-result {}
                 div #summary hx-get=(format!("/runs/{}/summary", s.entry.run_id)) hx-trigger="every 2s" hx-swap="innerHTML" {
                     (summary(s, now, env))
                 }
@@ -486,6 +527,7 @@ pub fn page(
                     (event_log(&s.entry.run_id, log))
                 }
                 script { (PreEscaped(LOG_SCRIPT)) }
+                script { (PreEscaped(CONTROL_SCRIPT)) }
             }
         }
     }
@@ -529,8 +571,18 @@ pub async fn page_handler(State(state): State<AppState>, Path(id): Path<String>)
         node_timeout: &node_timeout,
         commit_nodes: None,
     };
-    Html(page(&snap, Utc::now(), &env, &source, &log_entries(&events)).into_string())
-        .into_response()
+    Html(
+        page(
+            &snap,
+            state.csrf_token().as_str(),
+            Utc::now(),
+            &env,
+            &source,
+            &log_entries(&events),
+        )
+        .into_string(),
+    )
+    .into_response()
 }
 
 pub async fn summary_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {

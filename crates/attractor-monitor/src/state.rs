@@ -20,6 +20,7 @@ struct Inner {
     index_path: PathBuf,
     capacity: usize,
     csrf: CsrfToken,
+    pas_exe: RwLock<Option<PathBuf>>,
     runs: RwLock<HashMap<String, RunSlot>>,
 }
 
@@ -48,12 +49,29 @@ impl AppState {
         &self.0.csrf
     }
 
+    /// The executable the controls run: the Monitor's own binary, unless a
+    /// test replaced it.
+    pub fn pas_exe(&self) -> std::io::Result<PathBuf> {
+        let over = self.0.pas_exe.read().unwrap_or_else(|e| e.into_inner());
+        match over.as_ref() {
+            Some(p) => Ok(p.clone()),
+            None => crate::spawn::pas_exe(),
+        }
+    }
+
+    /// Replace the executable the controls run (tests only).
+    #[doc(hidden)]
+    pub fn set_pas_exe(&self, exe: impl Into<PathBuf>) {
+        *self.0.pas_exe.write().unwrap_or_else(|e| e.into_inner()) = Some(exe.into());
+    }
+
     /// Like [`AppState::new`] with a custom broadcast capacity (for tests).
     pub fn with_capacity(index_path: impl Into<PathBuf>, capacity: usize) -> Self {
         Self(Arc::new(Inner {
             index_path: index_path.into(),
             capacity,
             csrf: CsrfToken::generate(),
+            pas_exe: RwLock::default(),
             runs: RwLock::default(),
         }))
     }

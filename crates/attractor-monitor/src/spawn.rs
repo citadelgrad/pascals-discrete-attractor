@@ -29,7 +29,9 @@ pub async fn run_pas(args: &[OsString]) -> io::Result<PasOutput> {
     run_at(&pas_exe()?, args).await
 }
 
-async fn run_at(exe: &Path, args: &[OsString]) -> io::Result<PasOutput> {
+/// Like [`run_pas`] with an explicit executable (tests only).
+#[doc(hidden)]
+pub async fn run_at(exe: &Path, args: &[OsString]) -> io::Result<PasOutput> {
     let out = tokio::process::Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
@@ -51,6 +53,20 @@ pub fn spawn_run_detached(args: &[OsString], console_log: &Path) -> io::Result<u
 /// Like [`spawn_run_detached`] with an explicit executable (tests only).
 #[doc(hidden)]
 pub fn spawn_detached_at(exe: &Path, args: &[OsString], console_log: &Path) -> io::Result<u32> {
+    spawn_detached_watch(exe, args, console_log, None).map(|(pid, _)| pid)
+}
+
+/// Spawn detached like [`spawn_detached_at`], in `cwd` when given. The
+/// receiver yields the child's exit code (`None` if killed by a signal) once
+/// it ends, so a caller can tell a Run that refused to start (lock held) from
+/// one that is running.
+#[doc(hidden)]
+pub fn spawn_detached_watch(
+    exe: &Path,
+    args: &[OsString],
+    console_log: &Path,
+    cwd: Option<&Path>,
+) -> io::Result<(u32, tokio::sync::oneshot::Receiver<Option<i32>>)> {
     if let Some(dir) = console_log.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -64,6 +80,9 @@ pub fn spawn_detached_at(exe: &Path, args: &[OsString], console_log: &Path) -> i
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -79,9 +98,11 @@ pub fn spawn_detached_at(exe: &Path, args: &[OsString], console_log: &Path) -> i
     }
     let mut child = cmd.spawn()?;
     let pid = child.id();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     // Reap the child so it leaves no zombie while the Monitor lives.
     std::thread::spawn(move || {
-        let _ = child.wait();
+        let code = child.wait().ok().and_then(|s| s.code());
+        let _ = tx.send(code);
     });
-    Ok(pid)
+    Ok((pid, rx))
 }

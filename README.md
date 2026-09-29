@@ -234,7 +234,6 @@ export GEMINI_API_KEY=...
 | `attractor-agent` | Agent session loop with steering and loop detection |
 | `attractor-pipeline` | Pipeline graph, engine, handlers, validation, stylesheets |
 | `attractor-cli` | CLI binary — `pas` (`run`, `validate`, `info`, `plan`, `decompose`, `scaffold`, `generate`, `launch`) |
-| `attractor-web` | Web interface (Leptos) |
 
 ## Reference
 

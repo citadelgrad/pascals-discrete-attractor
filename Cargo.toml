@@ -10,9 +10,7 @@ members = [
     "crates/attractor-pipeline",
     "crates/attractor-quality",
     "crates/attractor-cli",
-    "crates/attractor-web",
     "crates/attractor-monitor",
-    "crates/attractor-quality",
 ]
 
 [workspace.package]

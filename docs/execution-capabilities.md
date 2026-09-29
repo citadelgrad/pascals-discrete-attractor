@@ -1,6 +1,6 @@
 # Execution capability contract
 
-This table is the authoritative inventory for supported non-web execution behavior. “Supported” means the named production or library entry point consumes the setting and the named contract exercises that entry point. `attractor-web` is outside this contract.
+This table is the authoritative inventory for supported non-web execution behavior. “Supported” means the named production or library entry point consumes the setting and the named contract exercises that entry point.
 
 | Surface | Status | Production consumer | End-to-end contract |
 |---|---|---|---|

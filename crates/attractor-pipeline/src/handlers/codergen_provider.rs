@@ -659,6 +659,21 @@ pub(super) fn summarize_stream(provider: LlmCliProvider, stdout: &str) -> Invoca
     }
 }
 
+/// The cost of one pi stdout line: `usage.cost.total` of an assistant
+/// `message_end`, else `None`. Shares the line types with [`scan_pi`], so the
+/// budget hook and the usage summary agree on which lines carry cost.
+pub(super) fn pi_message_end_cost(line: &[u8]) -> Option<f64> {
+    let line: PiLine = serde_json::from_slice(line).ok()?;
+    if line.kind.as_deref() != Some("message_end") {
+        return None;
+    }
+    let message = line.message?;
+    if message.role.as_deref() != Some("assistant") {
+        return None;
+    }
+    message.usage?.cost?.total
+}
+
 /// What one pass over a pi JSONL stream found. Only assistant `message_end`
 /// events count: `message_update` repeats usage and `agent_end` repeats every
 /// message.

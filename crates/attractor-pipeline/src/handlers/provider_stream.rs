@@ -80,9 +80,22 @@ impl Transcript {
     }
 }
 
+/// What a stdout hook asks for after seeing one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LineAction {
+    Continue,
+    /// Kill the provider's process group and return the output so far.
+    Stop,
+}
+
+/// Called with each stdout line after it is written to the Transcript.
+pub(super) type LineHook<'a> = &'a mut (dyn FnMut(&[u8]) -> LineAction + Send);
+
 /// What the provider process produced.
 pub(super) struct StreamedOutput {
     pub(super) status: ExitStatus,
+    /// The hook asked for a stop and the process group was killed.
+    pub(super) stopped: bool,
     pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
 }
@@ -92,10 +105,16 @@ pub(super) struct StreamedOutput {
 /// stdout and stderr are drained concurrently so a provider that writes a lot
 /// to stderr cannot block on a full pipe. Dropping the returned future (e.g.
 /// on timeout) leaves everything already flushed in the Transcript.
+///
+/// When `hook` returns [`LineAction::Stop`] the process group is killed before
+/// waiting for the pipes, so a surviving grandchild cannot hold them open.
 pub(super) async fn run_streaming(
     mut child: Child,
     mut transcript: Option<Transcript>,
+    mut hook: Option<LineHook<'_>>,
 ) -> std::io::Result<StreamedOutput> {
+    let group = child.id();
+    let mut stopped = false;
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
 
@@ -113,6 +132,13 @@ pub(super) async fn run_streaming(
                     transcript.append(&line).await;
                 }
                 stdout.extend_from_slice(&line);
+                if let Some(hook) = hook.as_mut() {
+                    if hook(&line) == LineAction::Stop {
+                        stopped = true;
+                        super::process_group::kill(group);
+                        break;
+                    }
+                }
             }
         }
         Ok::<_, std::io::Error>(stdout)
@@ -128,6 +154,7 @@ pub(super) async fn run_streaming(
     let (stdout, stderr, status) = tokio::try_join!(read_stdout, read_stderr, child.wait())?;
     Ok(StreamedOutput {
         status,
+        stopped,
         stdout,
         stderr,
     })
@@ -146,6 +173,7 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
+            .process_group(0)
             .spawn()
             .unwrap()
     }
@@ -158,6 +186,7 @@ mod tests {
         let out = run_streaming(
             sh(r"printf 'a\r\n\303\251\tb\n\377\nlast'; printf 'err' >&2"),
             Some(transcript),
+            None,
         )
         .await
         .unwrap();
@@ -170,9 +199,13 @@ mod tests {
 
     #[tokio::test]
     async fn large_stderr_does_not_block() {
-        let out = run_streaming(sh("head -c 1048576 /dev/zero >&2; echo done; exit 4"), None)
-            .await
-            .unwrap();
+        let out = run_streaming(
+            sh("head -c 1048576 /dev/zero >&2; echo done; exit 4"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.status.code(), Some(4));
         assert_eq!(out.stdout, b"done\n");
         assert_eq!(out.stderr.len(), 1_048_576);
@@ -199,5 +232,103 @@ mod tests {
         assert!(path.exists());
         transcript.discard().await;
         assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn always_continue_hook_matches_no_hook() {
+        let script = r"printf 'a\nb\nlast'; printf 'err' >&2";
+        let tmp = tempfile::tempdir().unwrap();
+        let plain_path = tmp.path().join("plain.jsonl");
+        let hooked_path = tmp.path().join("hooked.jsonl");
+        let plain = run_streaming(
+            sh(script),
+            Transcript::create(plain_path.clone()).await,
+            None,
+        )
+        .await
+        .unwrap();
+        let mut seen = 0;
+        let mut hook = |_: &[u8]| {
+            seen += 1;
+            LineAction::Continue
+        };
+        let hooked = run_streaming(
+            sh(script),
+            Transcript::create(hooked_path.clone()).await,
+            Some(&mut hook),
+        )
+        .await
+        .unwrap();
+        assert!(!plain.stopped && !hooked.stopped);
+        assert_eq!(plain.stdout, hooked.stdout);
+        assert_eq!(plain.stderr, hooked.stderr);
+        assert_eq!(
+            std::fs::read(&plain_path).unwrap(),
+            std::fs::read(&hooked_path).unwrap()
+        );
+        assert_eq!(seen, 3, "the unterminated last line reaches the hook");
+    }
+
+    #[tokio::test]
+    async fn stop_returns_output_so_far_and_kills_the_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pidfile = tmp.path().join("pid");
+        let path = tmp.path().join("x.jsonl");
+        let script = format!(
+            "sleep 60 & echo $! > {}; printf 'one\\nstop\\n'; wait; printf 'never\\n'",
+            pidfile.display()
+        );
+        let mut hook = |line: &[u8]| {
+            if line == b"stop\n" {
+                LineAction::Stop
+            } else {
+                LineAction::Continue
+            }
+        };
+        let started = std::time::Instant::now();
+        let out = run_streaming(
+            sh(&script),
+            Transcript::create(path.clone()).await,
+            Some(&mut hook),
+        )
+        .await
+        .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert!(out.stopped);
+        assert!(!out.status.success());
+        assert_eq!(out.stdout, b"one\nstop\n");
+        assert_eq!(std::fs::read(&path).unwrap(), b"one\nstop\n");
+
+        let pid: libc::pid_t = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // SAFETY: signal 0 only checks that the process exists.
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "grandchild survived");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_on_unterminated_last_line_and_without_transcript() {
+        let mut hook = |line: &[u8]| {
+            if line == b"last" {
+                LineAction::Stop
+            } else {
+                LineAction::Continue
+            }
+        };
+        let out = run_streaming(sh("printf 'a\\nlast'"), None, Some(&mut hook))
+            .await
+            .unwrap();
+        assert!(out.stopped);
+        assert_eq!(out.stdout, b"a\nlast");
     }
 }

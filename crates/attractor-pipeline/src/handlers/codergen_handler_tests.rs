@@ -2477,6 +2477,7 @@ mod pi_command {
 mod pi_stream {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use super::provider::NormalizedCliResult;
     use super::transcripts::{run_observed, EventLog};
@@ -2790,5 +2791,262 @@ mod pi_stream {
         let event = events.only();
         assert_eq!(event["status"], "failed");
         assert_eq!(event["input_tokens"], 1604);
+    }
+
+    // --- node budget stop (spec C9) ---
+
+    fn cost_line(kind: &str, role: &str, total: f64, stop: &str) -> String {
+        format!(
+            r#"{{"type":"{kind}","message":{{"role":"{role}","content":[{{"type":"text","text":"ok"}}],"model":"m","usage":{{"input":1,"output":1,"cost":{{"total":{total}}}}},"stopReason":"{stop}"}}}}"#
+        )
+    }
+
+    fn echo_lines(lines: &[String]) -> String {
+        lines
+            .iter()
+            .map(|line| format!("echo '{line}'"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn budget_node(limit: &str) -> PipelineNode {
+        let mut node = make_node(
+            "step",
+            "box",
+            Some("do work"),
+            HashMap::from([(
+                "max_budget_usd".to_string(),
+                AttributeValue::String(limit.to_string()),
+            )]),
+        );
+        node.llm_model = Some("openai/gpt-5.5".into());
+        node
+    }
+
+    async fn run_budget(
+        node: &PipelineNode,
+        program: PathBuf,
+        run_dir: &Path,
+        events: &EventLog,
+    ) -> Result<Outcome> {
+        run_observed(
+            PI,
+            program,
+            Some(run_dir),
+            node,
+            &make_minimal_graph(),
+            false,
+            events,
+        )
+        .await
+    }
+
+    fn assert_dead(pid_file: &Path) {
+        let pid: libc::pid_t = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: signal 0 only checks that the process exists.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(Instant::now() < deadline, "grandchild {pid} is alive");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test]
+    async fn pi_budget_stop_fails_with_amounts_and_partial_cost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("pid");
+        let lines: Vec<String> = [0.10, 0.20, 0.30]
+            .iter()
+            .map(|c| cost_line("message_end", "assistant", *c, "toolUse"))
+            .collect();
+        let program = stub(
+            tmp.path(),
+            &format!(
+                "sleep 60 &\necho $! > '{}'\n{}\nwait\necho '{{\"type\":\"agent_end\"}}'",
+                pid_file.display(),
+                echo_lines(&lines)
+            ),
+        );
+        let run_dir = tmp.path().join("run");
+        let events = EventLog::default();
+        let started = Instant::now();
+        let outcome = run_budget(&budget_node("0.50"), program, &run_dir, &events)
+            .await
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert_eq!(outcome.status, StageStatus::Fail);
+        let result = outcome.context_updates["step.result"].as_str().unwrap();
+        assert!(
+            result.contains("0.60") && result.contains("0.50"),
+            "{result}"
+        );
+        assert_eq!(outcome.failure_reason.as_deref(), Some(result));
+        assert_close(outcome.context_updates["step.cost_usd"].as_f64(), 0.60);
+
+        let event = events.only();
+        assert_eq!(event["status"], "failed");
+        assert_close(event["cost_usd"].as_f64(), 0.60);
+        let transcript =
+            std::fs::read_to_string(run_dir.join(event["transcript"].as_str().unwrap())).unwrap();
+        assert_eq!(transcript, stream(&lines));
+        assert_dead(&pid_file);
+    }
+
+    #[tokio::test]
+    async fn pi_budget_equal_to_limit_does_not_stop() {
+        // 0.10 + 0.20 + 0.20 is 0.5000000000000001 in f64.
+        for costs in [vec![0.25, 0.25], vec![0.10, 0.20, 0.20]] {
+            let tmp = tempfile::tempdir().unwrap();
+            let last = costs.len() - 1;
+            let mut lines: Vec<String> = costs
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    cost_line(
+                        "message_end",
+                        "assistant",
+                        *c,
+                        if i == last { "stop" } else { "toolUse" },
+                    )
+                })
+                .collect();
+            lines.push(r#"{"type":"agent_end"}"#.to_string());
+            let program = stub(tmp.path(), &echo_lines(&lines));
+            let events = EventLog::default();
+            let outcome = run_budget(
+                &budget_node("0.50"),
+                program,
+                &tmp.path().join("run"),
+                &events,
+            )
+            .await
+            .unwrap();
+            assert_eq!(outcome.status, StageStatus::Success, "{costs:?}");
+            assert_close(outcome.context_updates["step.cost_usd"].as_f64(), 0.50);
+            assert_eq!(events.only()["status"], "success");
+        }
+    }
+
+    #[tokio::test]
+    async fn pi_without_budget_never_stops_and_matches_fixture_result() {
+        let events = EventLog::default();
+        let outcome = run_stub("pi-1.0.4.jsonl", 0, &events).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(events.only()["status"], "success");
+    }
+
+    #[tokio::test]
+    async fn pi_timeout_before_budget_is_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pid_file = tmp.path().join("pid");
+        let line = cost_line("message_end", "assistant", 0.10, "toolUse");
+        let program = stub(
+            tmp.path(),
+            &format!(
+                "sleep 60 &\necho $! > '{}'\necho '{line}'\nwait",
+                pid_file.display()
+            ),
+        );
+        let mut node = budget_node("0.50");
+        node.timeout = Some(Duration::from_millis(300));
+        let events = EventLog::default();
+        let err = run_budget(&node, program, &tmp.path().join("run"), &events)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AttractorError::CommandTimeout { .. }),
+            "{err}"
+        );
+        assert_eq!(events.only()["status"], "timeout");
+        assert_dead(&pid_file);
+    }
+
+    #[tokio::test]
+    async fn pi_message_update_cost_does_not_stop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut lines: Vec<String> = [0.40, 0.80, 1.20]
+            .iter()
+            .map(|c| cost_line("message_update", "assistant", *c, "toolUse"))
+            .collect();
+        lines.push(cost_line("message_end", "assistant", 0.10, "stop"));
+        lines.push(r#"{"type":"agent_end"}"#.to_string());
+        let program = stub(tmp.path(), &echo_lines(&lines));
+        let events = EventLog::default();
+        let outcome = run_budget(
+            &budget_node("0.50"),
+            program,
+            &tmp.path().join("run"),
+            &events,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_close(outcome.context_updates["step.cost_usd"].as_f64(), 0.10);
+    }
+
+    #[tokio::test]
+    async fn pi_zero_budget_stops_only_on_positive_cost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let free = cost_line("message_end", "assistant", 0.0, "toolUse");
+        let paid = cost_line("message_end", "assistant", 0.01, "toolUse");
+        let program = stub(
+            tmp.path(),
+            &format!("echo '{free}'\necho '{paid}'\nsleep 30"),
+        );
+        let events = EventLog::default();
+        let run_dir = tmp.path().join("run");
+        let outcome = run_budget(&budget_node("0"), program, &run_dir, &events)
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, StageStatus::Fail);
+        let transcript =
+            std::fs::read_to_string(run_dir.join(events.only()["transcript"].as_str().unwrap()))
+                .unwrap();
+        assert_eq!(transcript, format!("{free}\n{paid}\n"));
+    }
+
+    #[tokio::test]
+    async fn pi_invalid_budget_fails_closed_and_starts_no_process() {
+        for bad in ["abc", "-1", "NaN", "inf", ""] {
+            let tmp = tempfile::tempdir().unwrap();
+            let marker = tmp.path().join("started");
+            let program = stub(tmp.path(), &format!("touch '{}'", marker.display()));
+            let events = EventLog::default();
+            let err = run_budget(&budget_node(bad), program, &tmp.path().join("run"), &events)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("max_budget_usd"), "{bad}: {err}");
+            assert!(!marker.exists(), "{bad}: process started");
+        }
+    }
+
+    #[test]
+    fn budget_comparison_ignores_float_drift() {
+        assert!(!over_budget(0.1 + 0.2 + 0.2, 0.5));
+        assert!(over_budget(0.6, 0.5));
+        assert!(over_budget(0.01, 0.0));
+        assert!(!over_budget(0.0, 0.0));
+    }
+
+    #[test]
+    fn pi_message_end_cost_counts_only_assistant_message_end() {
+        let end = cost_line("message_end", "assistant", 0.25, "stop");
+        assert_close(pi_message_end_cost(end.as_bytes()), 0.25);
+        assert_close(pi_message_end_cost(format!("{end}\n").as_bytes()), 0.25);
+        for line in [
+            cost_line("message_update", "assistant", 0.25, "stop"),
+            cost_line("message_end", "user", 0.25, "stop"),
+            cost_line("message_end", "toolResult", 0.25, "stop"),
+            cost_line("agent_end", "assistant", 0.25, "stop"),
+            r#"{"type":"message_end","message":{"role":"assistant"}}"#.to_string(),
+            "not json".to_string(),
+            end[..end.len() / 2].to_string(),
+        ] {
+            assert_eq!(pi_message_end_cost(line.as_bytes()), None, "{line}");
+        }
     }
 }

@@ -16,7 +16,7 @@ use crate::graph::{PipelineGraph, PipelineNode};
 use crate::handler::{EventSink, HandlerExecutionContext, NodeHandler, ProviderNodeHandler};
 
 use super::process_group::{self, ProcessGroupGuard};
-use super::provider_stream::{run_streaming, Transcript};
+use super::provider_stream::{run_streaming, LineAction, LineHook, Transcript};
 
 #[path = "codergen_provider.rs"]
 mod provider;
@@ -27,8 +27,8 @@ use provider::{
 };
 use provider::{
     build_cli_command_with_program, gemini_output_format, has_final_result, parse_cli_output,
-    pi_tools, summarize_stream, ClaudeCliConfig, CliRunConfig, GeminiOutputFormat, InvocationUsage,
-    PiCliConfig,
+    pi_message_end_cost, pi_tools, summarize_stream, ClaudeCliConfig, CliRunConfig,
+    GeminiOutputFormat, InvocationUsage, NormalizedCliResult, PiCliConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -309,6 +309,14 @@ impl CodergenHandler {
                 })
         };
 
+        // pi has no budget flag; PAS stops the node itself (spec C9). Parse
+        // the limit before any process starts so a bad value fails closed.
+        let pi_budget = if provider == LlmProvider::Pi {
+            pi_budget_limit(node)?
+        } else {
+            None
+        };
+
         // Build the CLI command via the provider-specific builder
         let program = controls
             .program
@@ -403,37 +411,48 @@ impl CodergenHandler {
         // timeout or cancellation keeps the partial Transcript.
         let mut process_group = ProcessGroupGuard::new(child.id());
         let timeout_dur = node.timeout.unwrap_or(std::time::Duration::from_secs(600));
-        let output = match tokio::time::timeout(timeout_dur, run_streaming(child, transcript)).await
-        {
-            Ok(Ok(output)) => {
-                process_group.disarm();
-                output
+        let mut spent = 0.0_f64;
+        let mut budget_hook = |line: &[u8]| {
+            if let Some(cost) = pi_message_end_cost(line) {
+                spent += cost;
             }
-            Ok(Err(error)) => {
-                if let Some(invocation) = invocation {
-                    let usage = invocation.transcript_usage();
-                    invocation.finish(INVOKED_FAILED, usage);
-                }
-                return Err(AttractorError::HandlerError {
-                    handler: "codergen".into(),
-                    node: node.id.clone(),
-                    message: format!("{} execution failed: {error}", provider.display_name()),
-                });
-            }
-            Err(_elapsed) => {
-                tracing::warn!(
-                    node = %node.id,
-                    timeout_secs = timeout_dur.as_secs(),
-                    "Killing timed-out {} process group",
-                    provider.display_name()
-                );
-                // Dropping `invocation` emits `LlmInvoked` with status `timeout`.
-                drop(invocation);
-                return Err(AttractorError::CommandTimeout {
-                    timeout_ms: timeout_dur.as_millis() as u64,
-                });
+            match pi_budget {
+                Some(limit) if over_budget(spent, limit) => LineAction::Stop,
+                _ => LineAction::Continue,
             }
         };
+        let hook: Option<LineHook<'_>> = pi_budget.map(|_| &mut budget_hook as LineHook<'_>);
+        let output =
+            match tokio::time::timeout(timeout_dur, run_streaming(child, transcript, hook)).await {
+                Ok(Ok(output)) => {
+                    process_group.disarm();
+                    output
+                }
+                Ok(Err(error)) => {
+                    if let Some(invocation) = invocation {
+                        let usage = invocation.transcript_usage();
+                        invocation.finish(INVOKED_FAILED, usage);
+                    }
+                    return Err(AttractorError::HandlerError {
+                        handler: "codergen".into(),
+                        node: node.id.clone(),
+                        message: format!("{} execution failed: {error}", provider.display_name()),
+                    });
+                }
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        node = %node.id,
+                        timeout_secs = timeout_dur.as_secs(),
+                        "Killing timed-out {} process group",
+                        provider.display_name()
+                    );
+                    // Dropping `invocation` emits `LlmInvoked` with status `timeout`.
+                    drop(invocation);
+                    return Err(AttractorError::CommandTimeout {
+                        timeout_ms: timeout_dur.as_millis() as u64,
+                    });
+                }
+            };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -442,7 +461,10 @@ impl CodergenHandler {
         // answer; report the exit like an empty stdout, as before streaming.
         // pi exits 0 for model failures, so any non-zero exit is a failure
         // even when its stream looks complete (spec C2).
-        if !output.status.success()
+        // A budget stop SIGKILLs the child, so check it before the exit code:
+        // the stop is a failed outcome that keeps its partial cost.
+        if !output.stopped
+            && !output.status.success()
             && (provider == LlmProvider::Pi || !has_final_result(provider, &stdout))
         {
             finish(
@@ -463,7 +485,28 @@ impl CodergenHandler {
         }
 
         // Parse output via the provider-specific parser
-        let cli_result = match parse_cli_output(provider, &stdout, &stderr, &node.id) {
+        let budget_stop = output.stopped.then(|| {
+            let limit = pi_budget.unwrap_or_default();
+            format!(
+                "pi stopped at its budget: spent ${spent:.2} of the ${limit:.2} limit \
+                 (max_budget_usd)"
+            )
+        });
+        let parsed = match &budget_stop {
+            Some(message) => {
+                let usage = summarize_stream(provider, &stdout);
+                Ok(NormalizedCliResult {
+                    text: message.clone(),
+                    is_error: true,
+                    cost_usd: usage.cost_usd.or(Some(spent)),
+                    turns: None,
+                    usage,
+                    raw_output: stdout.to_string(),
+                })
+            }
+            None => parse_cli_output(provider, &stdout, &stderr, &node.id),
+        };
+        let cli_result = match parsed {
             Ok(cli_result) => cli_result,
             Err(error) => {
                 finish(
@@ -549,7 +592,9 @@ impl CodergenHandler {
             suggested_next_ids: vec![],
             context_updates: updates,
             notes: cli_result.text,
-            failure_reason: if status == StageStatus::Fail {
+            failure_reason: if let Some(message) = budget_stop {
+                Some(message)
+            } else if status == StageStatus::Fail {
                 Some(format!("{} returned an error", provider.display_name()))
             } else {
                 None
@@ -666,6 +711,33 @@ const CLAUDE_TOOLS_KEY: &str = "codergen.claude.tools";
 const CLAUDE_AGENTS_KEY: &str = "codergen.claude.agents";
 const CLAUDE_PLUGIN_DIRS_KEY: &str = "codergen.claude.plugin_dirs";
 const CLAUDE_MCP_CONFIG_KEY: &str = "codergen.claude.mcp_config";
+
+/// The pi node's `max_budget_usd` as a number, `None` when absent. A value
+/// that is not a finite non-negative number fails closed (spec C9).
+fn pi_budget_limit(node: &PipelineNode) -> Result<Option<f64>> {
+    let Some(value) = node.raw_attrs.get("max_budget_usd") else {
+        return Ok(None);
+    };
+    let limit = match value {
+        AttributeValue::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    };
+    match limit {
+        Some(limit) if limit.is_finite() && limit >= 0.0 => Ok(Some(limit)),
+        _ => Err(AttractorError::HandlerError {
+            handler: "codergen".into(),
+            node: node.id.clone(),
+            message: "max_budget_usd must be a non-negative number".into(),
+        }),
+    }
+}
+
+/// True when `spent` is above `limit`. Compared in whole nano-dollars so
+/// float drift (0.1 + 0.2 + 0.2 is 0.5000000000000001) never stops a node
+/// whose spend equals its limit.
+fn over_budget(spent: f64, limit: f64) -> bool {
+    (spent * 1e9).round() > (limit * 1e9).round()
+}
 
 fn resolve_claude_cli_config(
     snapshot: &HashMap<String, serde_json::Value>,

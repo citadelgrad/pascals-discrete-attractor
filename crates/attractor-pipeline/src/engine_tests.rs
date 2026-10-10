@@ -3833,3 +3833,78 @@ async fn direct_context_removal_reaches_later_stages() {
     assert!(!result.final_context.contains_key("task.id"));
     assert_eq!(result.final_context["keep"], "me");
 }
+
+// U6: a pi node stopped at its budget is a Fail outcome, not a retryable
+// error: the stub starts once and its 0.60 reaches the Run total.
+#[tokio::test]
+async fn pi_budget_stop_is_not_retried_and_cost_reaches_run_total() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let starts = tmp.path().join("starts");
+    let program = tmp.path().join("pi-stub");
+    let cost_line = |total: f64| {
+        format!(
+            r#"{{"type":"message_end","message":{{"role":"assistant","content":[],"model":"m","usage":{{"cost":{{"total":{total}}}}},"stopReason":"toolUse"}}}}"#
+        )
+    };
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\necho started >> '{}'\necho '{}'\necho '{}'\necho '{}'\nsleep 30\n",
+            starts.display(),
+            cost_line(0.10),
+            cost_line(0.20),
+            cost_line(0.30),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run_dir = tmp.path().join("runs").join(JOURNAL_RUN_ID);
+    let journal = JournalWriter::open(&run_dir, JOURNAL_RUN_ID, 1).unwrap();
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(StubbedCodergen(program));
+
+    let result = PipelineExecutor::new(registry)
+        .with_journal(journal)
+        .run_with_checkpoint(
+            &parse_graph(
+                r#"digraph G {
+                    start [shape="Mdiamond"]
+                    work  [shape="box", prompt="work", llm_provider="pi",
+                           llm_model="openai/gpt-5.5", max_budget_usd="0.50",
+                           max_retries=2]
+                    done  [shape="Msquare"]
+                    start -> work -> done
+                }"#,
+            ),
+            Context::new(),
+            &tmp.path().join("logs"),
+        )
+        .await;
+
+    assert_eq!(std::fs::read_to_string(&starts).unwrap().lines().count(), 1);
+    let journal = attractor_journal::read_all(run_dir.join(EVENTS_FILE)).unwrap();
+    let statuses: Vec<&str> = journal
+        .iter()
+        .filter_map(|event| match &event.data {
+            EventData::LlmInvoked { status, .. } => Some(status.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(statuses, ["failed"]);
+    assert!(
+        !journal
+            .iter()
+            .any(|event| matches!(event.data, EventData::StageRetrying { .. })),
+        "a budget stop must not be retried"
+    );
+    let result = result.unwrap();
+    assert!(
+        (result.total_cost - 0.60).abs() < 1e-9,
+        "{}",
+        result.total_cost
+    );
+}

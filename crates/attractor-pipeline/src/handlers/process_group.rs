@@ -8,6 +8,22 @@ pub(super) fn configure(command: &mut tokio::process::Command) {
     let _ = command;
 }
 
+/// SIGKILL the process group led by `pid`. Best-effort: the group may already
+/// be gone. A no-op off unix, where the drop guard stays the fallback.
+pub(super) fn kill(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(group) = pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) {
+        // SAFETY: the child was placed in a new process group whose ID is its
+        // PID. SIGKILL is best-effort; the group may already have exited.
+        unsafe {
+            libc::killpg(group, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
 pub(super) struct ProcessGroupGuard {
     #[cfg(unix)]
     process_group: Option<libc::pid_t>,

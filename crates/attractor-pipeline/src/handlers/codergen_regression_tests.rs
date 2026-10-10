@@ -159,6 +159,7 @@ mod legacy {
             LlmCliProvider::Claude => parse_claude_output(stdout, node_id),
             LlmCliProvider::Codex => parse_codex_output(stdout, node_id),
             LlmCliProvider::Gemini => parse_gemini_output(stdout, node_id),
+            LlmCliProvider::Pi => unreachable!("legacy regression parser never runs pi"),
         }
     }
 

@@ -33,16 +33,17 @@ use provider::{
 // ---------------------------------------------------------------------------
 // CodergenHandler — LLM task handler (box shape)
 //
-// Shells out to a CLI tool (Claude Code, Codex CLI, or Gemini CLI) for each
+// Shells out to a CLI tool (Claude Code, Codex CLI, Gemini CLI, or pi) for each
 // node, passing the node's prompt. The provider is supplied by the canonical
 // ExecutionPlan after strict validation.
 //
 // Supported node attributes:
 //   - prompt: Optional task prompt sent to the CLI
-//   - llm_provider: "claude", "codex", or "gemini" (required)
-//   - llm_model: Override the model (e.g. "sonnet", "o3", "gemini-2.5-pro")
-//   - allowed_tools: Comma-separated tool list (Claude only)
-//   - max_budget_usd: Spending cap for this node (Claude only)
+//   - llm_provider: "claude", "codex", "gemini", or "pi" (required)
+//   - llm_model: Override the model (e.g. "sonnet", "o3", "gemini-2.5-pro");
+//     pi requires "provider/model-id[:thinking]", e.g. "openai/gpt-5.5:high"
+//   - allowed_tools: Comma-separated tool list (Claude or pi)
+//   - max_budget_usd: Spending cap for this node (Claude or pi)
 //   - timeout: Duration before the CLI invocation is killed (default: 10m)
 //
 // The pipeline context key "workdir" controls the working directory.

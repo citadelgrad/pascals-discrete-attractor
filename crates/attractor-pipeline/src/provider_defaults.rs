@@ -35,6 +35,10 @@ pub fn fill_missing_llm_providers(dot_graph: &mut DotGraph, default_provider: &s
     let Some(provider) = LlmProvider::parse(default_provider) else {
         return Vec::new();
     };
+    // pi needs a node-level `llm_model`, so it is never a default.
+    if provider == LlmProvider::Pi {
+        return Vec::new();
+    }
     let Ok(compilation) = ExecutionPlan::compile_for_generation(pipeline_graph, provider) else {
         return Vec::new();
     };
@@ -297,5 +301,36 @@ mod tests {
             plan.node("work").unwrap().provider,
             Some(LlmProvider::Claude)
         );
+    }
+
+    #[test]
+    fn pi_is_never_written_as_a_default_provider() {
+        let (graph, defaulted) = fill(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                done [shape="Msquare"]
+                work [shape="box"]
+                start -> work -> done
+            }"#,
+            "pi",
+        );
+        assert!(defaulted.is_empty());
+        assert_eq!(provider_of(&graph, "work"), None);
+    }
+
+    #[test]
+    fn authored_pi_provider_survives_defaulting() {
+        let (graph, defaulted) = fill(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                done [shape="Msquare"]
+                work [shape="box", llm_provider="pi", llm_model="openai/gpt-5.5"]
+                other [shape="box"]
+                start -> work -> other -> done
+            }"#,
+            "claude",
+        );
+        assert_eq!(defaulted, vec!["other".to_string()]);
+        assert_eq!(provider_of(&graph, "work"), Some("pi"));
     }
 }

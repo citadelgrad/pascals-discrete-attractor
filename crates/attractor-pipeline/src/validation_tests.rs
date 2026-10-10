@@ -238,11 +238,19 @@ fn provider_valid_errors_on_unknown() {
 
 #[test]
 fn provider_valid_accepts_known_providers() {
-    for provider in &["claude", "anthropic", "codex", "openai", "gemini", "google"] {
+    for provider in &[
+        "claude",
+        "anthropic",
+        "codex",
+        "openai",
+        "gemini",
+        "google",
+        "pi",
+    ] {
         let dot = format!(
             r#"digraph G {{
                 start [shape="Mdiamond"]
-                step [llm_provider="{}", prompt="Do work"]
+                step [llm_provider="{}", llm_model="openai/gpt-5.5", prompt="Do work"]
                 done [shape="Msquare"]
                 start -> step -> done
             }}"#,

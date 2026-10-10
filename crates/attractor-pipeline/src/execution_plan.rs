@@ -17,6 +17,7 @@ pub enum LlmProvider {
     Claude,
     Codex,
     Gemini,
+    Pi,
 }
 
 impl LlmProvider {
@@ -25,6 +26,8 @@ impl LlmProvider {
             "claude" | "anthropic" => Some(Self::Claude),
             "codex" | "openai" => Some(Self::Codex),
             "gemini" | "google" => Some(Self::Gemini),
+            // pi has no alias: only the exact name selects it.
+            "pi" => Some(Self::Pi),
             _ => None,
         }
     }
@@ -34,6 +37,7 @@ impl LlmProvider {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Gemini => "gemini",
+            Self::Pi => "pi",
         }
     }
 
@@ -46,6 +50,7 @@ impl LlmProvider {
             Self::Claude => "Claude Code",
             Self::Codex => "Codex CLI",
             Self::Gemini => "Gemini CLI",
+            Self::Pi => "pi",
         }
     }
 }
@@ -618,15 +623,19 @@ fn validate_supported_execution_capabilities(
             ));
         }
 
-        let supports_claude_controls = resolved.handler == HandlerIdentity::Codergen
-            && resolved.provider == Some(LlmProvider::Claude);
-        if !supports_claude_controls {
+        let is_codergen = resolved.handler == HandlerIdentity::Codergen;
+        let supports_budget_and_tools = is_codergen
+            && matches!(
+                resolved.provider,
+                Some(LlmProvider::Claude | LlmProvider::Pi)
+            );
+        if !supports_budget_and_tools {
             for attribute in ["allowed_tools", "max_budget_usd"] {
                 if source.raw_attrs.contains_key(attribute) {
                     diagnostics.push(unsupported_node_capability(
                         node_id,
                         attribute,
-                        &format!("Remove '{attribute}' or use it on a Claude-backed codergen node"),
+                        &format!("Remove '{attribute}' or use it on a Claude or pi codergen node"),
                     ));
                 }
             }
@@ -639,7 +648,96 @@ fn validate_supported_execution_capabilities(
                 }
             }
         }
+
+        if is_codergen && resolved.provider == Some(LlmProvider::Pi) {
+            validate_pi_node(node_id, source, diagnostics);
+        }
     }
+}
+
+/// The thinking levels pi accepts after `:` in a model value.
+const PI_THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// The pi built-in tool names, quoted in fix texts.
+const PI_TOOL_NAMES: &str = "read, bash, edit, write, grep, find, ls";
+
+/// pi nodes need their own `provider/model-id[:thinking]` model and plain
+/// tool names. The graph-level `model` attribute never satisfies the rule.
+fn validate_pi_node(
+    node_id: &str,
+    source: &PipelineNode,
+    diagnostics: &mut Vec<SemanticDiagnostic>,
+) {
+    match source.llm_model.as_deref().map(str::trim) {
+        None | Some("") => diagnostics.push(SemanticDiagnostic {
+            kind: SemanticDiagnosticKind::MissingAttribute,
+            node_id: Some(node_id.to_string()),
+            message: format!("Node '{node_id}' uses llm_provider \"pi\" but has no llm_model"),
+            fix: "Add llm_model=\"openai/gpt-5.5\" (provider/model-id)".into(),
+        }),
+        Some(model) => {
+            if let Err(fix) = check_pi_model(model) {
+                diagnostics.push(SemanticDiagnostic {
+                    kind: SemanticDiagnosticKind::InvalidAttributeValue,
+                    node_id: Some(node_id.to_string()),
+                    message: format!("Node '{node_id}' has invalid llm_model '{model}' for pi"),
+                    fix,
+                });
+            }
+        }
+    }
+
+    if let Some(AttributeValue::String(tools)) = source.raw_attrs.get("allowed_tools") {
+        if let Err(name) = check_pi_tools(tools) {
+            diagnostics.push(SemanticDiagnostic {
+                kind: SemanticDiagnosticKind::InvalidAttributeValue,
+                node_id: Some(node_id.to_string()),
+                message: format!(
+                    "Node '{node_id}' has allowed_tools entry '{name}' that is not a pi tool name"
+                ),
+                fix: format!(
+                    "Use a comma-separated list of tool names such as {PI_TOOL_NAMES}; \
+                     Claude patterns like Bash(git:*) are not supported by pi"
+                ),
+            });
+        }
+    }
+}
+
+/// `provider/model-id` with an optional `:thinking` suffix. The first `/`
+/// splits the provider, so `openrouter/org/model` keeps `org/model` as its id.
+fn check_pi_model(value: &str) -> Result<(), String> {
+    let shape = "Use llm_model=\"provider/model-id\", for example \"openai/gpt-5.5\" \
+                 or \"openai/gpt-5.5:high\"";
+    let Some((provider, rest)) = value.split_once('/') else {
+        return Err(shape.into());
+    };
+    let (id, thinking) = match rest.rsplit_once(':') {
+        Some((id, level)) => (id, Some(level)),
+        None => (rest, None),
+    };
+    if provider.trim().is_empty() || id.trim().is_empty() {
+        return Err(shape.into());
+    }
+    if let Some(level) = thinking {
+        if !PI_THINKING_LEVELS.contains(&level) {
+            return Err(format!(
+                "The thinking suffix '{level}' is not valid; use one of: {}",
+                PI_THINKING_LEVELS.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every entry must be a bare tool name. Returns the first offending entry.
+fn check_pi_tools(value: &str) -> Result<(), String> {
+    for name in value.split(',').map(str::trim) {
+        if name.contains(['(', ')']) || name.contains(char::is_whitespace) {
+            return Err(name.to_string());
+        }
+    }
+    Ok(())
 }
 
 /// `beads.select` cannot run without the Epic it claims Tasks from, so a
@@ -972,7 +1070,7 @@ fn resolve_node(
                 kind: SemanticDiagnosticKind::UnknownProvider,
                 node_id: Some(node.id.clone()),
                 message: format!("Node '{}' has unknown llm_provider '{provider}'", node.id),
-                fix: "Use claude/anthropic, codex/openai, or gemini/google".into(),
+                fix: "Use claude/anthropic, codex/openai, gemini/google, or pi".into(),
             });
         }
     }
@@ -1033,7 +1131,7 @@ fn resolve_node(
                             "Node '{}' resolves to handler '{}' but has no llm_provider",
                             node.id, handler
                         ),
-                        fix: "Add llm_provider=\"claude\", \"codex\", or \"gemini\"".into(),
+                        fix: "Add llm_provider=\"claude\", \"codex\", \"gemini\", or \"pi\"".into(),
                     }]);
                 }
                 MissingProviderPolicy::Insert(provider) => (Some(provider), true),
@@ -2091,5 +2189,197 @@ mod tests {
             MissingProviderPolicy::Reject,
         )
         .unwrap();
+    }
+
+    fn one_node(attrs: &str) -> String {
+        format!(
+            "digraph G {{ start [shape=\"Mdiamond\"] work [shape=\"box\", prompt=\"work\", {attrs}] \
+             done [shape=\"Msquare\"] start -> work -> done }}"
+        )
+    }
+
+    fn compile_node(attrs: &str) -> Result<ExecutionPlan, SemanticError> {
+        ExecutionPlan::compile(graph(&one_node(attrs)))
+    }
+
+    fn pi_diagnostic(attrs: &str) -> SemanticDiagnostic {
+        compile_node(attrs)
+            .expect_err("node must fail validation")
+            .diagnostics
+            .into_iter()
+            .next()
+            .expect("at least one diagnostic")
+    }
+
+    #[test]
+    fn pi_node_with_model_compiles_with_provider_pi_in_fingerprint() {
+        let plan =
+            compile_node(r#"llm_provider="pi", llm_model="openai/gpt-5.5""#).expect("pi compiles");
+        // The fingerprint is a hash of `provider:{as_str}`, so check both parts.
+        assert_eq!(plan.nodes["work"].provider, Some(LlmProvider::Pi));
+        assert_eq!(LlmProvider::Pi.to_string(), "pi");
+        let claude = compile_node(r#"llm_provider="claude""#).expect("claude compiles");
+        assert_ne!(plan.fingerprint(), claude.fingerprint());
+    }
+
+    #[test]
+    fn pi_provider_parse_is_trimmed_case_insensitive_without_aliases() {
+        assert_eq!(LlmProvider::parse(" PI "), Some(LlmProvider::Pi));
+        assert_eq!(LlmProvider::parse("pi"), Some(LlmProvider::Pi));
+        for value in ["pi-agent", "pi.dev", "PiAgent", "", "p i"] {
+            assert_eq!(LlmProvider::parse(value), None, "{value}");
+        }
+        assert_eq!(LlmProvider::parse("openai"), Some(LlmProvider::Codex));
+        compile_node(r#"llm_provider=" PI ", llm_model="openai/gpt-5.5""#)
+            .expect("padded uppercase pi compiles");
+
+        let diagnostic = pi_diagnostic(r#"llm_provider="pi-agent", llm_model="openai/gpt-5.5""#);
+        assert_eq!(diagnostic.kind, SemanticDiagnosticKind::UnknownProvider);
+    }
+
+    #[test]
+    fn pi_node_without_llm_model_fails_naming_node_and_example() {
+        let diagnostic = pi_diagnostic(r#"llm_provider="pi""#);
+        assert_eq!(diagnostic.kind, SemanticDiagnosticKind::MissingAttribute);
+        assert_eq!(diagnostic.node_id.as_deref(), Some("work"));
+        assert!(diagnostic.message.contains("work"));
+        assert!(diagnostic.fix.contains("openai/gpt-5.5"));
+
+        let blank = pi_diagnostic(r#"llm_provider="pi", llm_model="  ""#);
+        assert_eq!(blank.kind, SemanticDiagnosticKind::MissingAttribute);
+    }
+
+    #[test]
+    fn graph_model_attribute_does_not_satisfy_pi_model_rule() {
+        let source = r#"digraph G {
+            model="openai/gpt-5.5"
+            start [shape="Mdiamond"]
+            work [shape="box", prompt="work", llm_provider="pi"]
+            done [shape="Msquare"]
+            start -> work -> done
+        }"#;
+        let error = ExecutionPlan::compile(graph(source)).expect_err("graph model is not enough");
+        let diagnostic = &error.diagnostics[0];
+        assert_eq!(diagnostic.kind, SemanticDiagnosticKind::MissingAttribute);
+        assert_eq!(diagnostic.node_id.as_deref(), Some("work"));
+        assert!(diagnostic.fix.contains("openai/gpt-5.5"));
+    }
+
+    #[test]
+    fn pi_model_shape_is_provider_slash_id_with_optional_thinking() {
+        for bad in [
+            "gpt-5.5",
+            "openai/",
+            "/gpt-5.5",
+            "openai/gpt-5.5:",
+            "openai/:high",
+            "openai/gpt-5.5:turbo",
+        ] {
+            let diagnostic = pi_diagnostic(&format!(r#"llm_provider="pi", llm_model="{bad}""#));
+            assert_eq!(
+                diagnostic.kind,
+                SemanticDiagnosticKind::InvalidAttributeValue,
+                "{bad}"
+            );
+            assert_eq!(diagnostic.node_id.as_deref(), Some("work"));
+        }
+        for good in [
+            "openai/gpt-5.5",
+            "openai/gpt-5.5:high",
+            "openrouter/org/model",
+            "openrouter/org/model:off",
+            "anthropic/claude-sonnet-4:max",
+        ] {
+            compile_node(&format!(r#"llm_provider="pi", llm_model="{good}""#))
+                .unwrap_or_else(|error| panic!("{good} must compile: {error:?}"));
+        }
+    }
+
+    #[test]
+    fn pi_unknown_thinking_level_lists_every_level() {
+        let diagnostic = pi_diagnostic(r#"llm_provider="pi", llm_model="openai/gpt-5.5:turbo""#);
+        let text = format!("{} {}", diagnostic.message, diagnostic.fix);
+        for level in ["off", "minimal", "low", "medium", "high", "xhigh", "max"] {
+            assert!(text.contains(level), "missing {level}: {text}");
+        }
+    }
+
+    #[test]
+    fn pi_allowed_tools_take_plain_names_while_claude_keeps_patterns() {
+        compile_node(r#"llm_provider="pi", llm_model="openai/gpt-5.5", allowed_tools="read,bash""#)
+            .expect("plain names compile");
+        compile_node(
+            r#"llm_provider="pi", llm_model="openai/gpt-5.5", allowed_tools="read, bash, my-ext""#,
+        )
+        .expect("padded and extension names compile");
+
+        for bad in ["Bash(git:*)", "bash cmd"] {
+            let diagnostic = pi_diagnostic(&format!(
+                r#"llm_provider="pi", llm_model="openai/gpt-5.5", allowed_tools="{bad}""#
+            ));
+            assert_eq!(
+                diagnostic.kind,
+                SemanticDiagnosticKind::InvalidAttributeValue
+            );
+            assert!(diagnostic
+                .fix
+                .contains("read, bash, edit, write, grep, find, ls"));
+        }
+
+        compile_node(r#"llm_provider="claude", allowed_tools="Bash(git:*)""#)
+            .expect("Claude accepts tool patterns");
+    }
+
+    #[test]
+    fn pi_rejects_non_string_tools_and_budget() {
+        for attrs in [
+            r#"llm_provider="pi", llm_model="openai/gpt-5.5", allowed_tools=true"#,
+            r#"llm_provider="pi", llm_model="openai/gpt-5.5", max_budget_usd=1.0"#,
+        ] {
+            let diagnostic = pi_diagnostic(attrs);
+            assert_eq!(
+                diagnostic.kind,
+                SemanticDiagnosticKind::InvalidAttributeType
+            );
+        }
+    }
+
+    #[test]
+    fn max_budget_usd_is_allowed_on_claude_and_pi_only() {
+        compile_node(r#"llm_provider="pi", llm_model="openai/gpt-5.5", max_budget_usd="0.50""#)
+            .expect("pi accepts a budget");
+        compile_node(r#"llm_provider="claude", max_budget_usd="0.50""#)
+            .expect("Claude accepts a budget");
+
+        for provider in ["codex", "gemini"] {
+            let diagnostic = pi_diagnostic(&format!(
+                r#"llm_provider="{provider}", max_budget_usd="0.50""#
+            ));
+            assert_eq!(
+                diagnostic.kind,
+                SemanticDiagnosticKind::UnsupportedExecutionCapability
+            );
+            assert!(diagnostic.message.contains("max_budget_usd"));
+            assert!(diagnostic.fix.contains("Claude"), "{}", diagnostic.fix);
+            assert!(diagnostic.fix.contains("pi"), "{}", diagnostic.fix);
+        }
+
+        let tools = pi_diagnostic(r#"llm_provider="codex", allowed_tools="read""#);
+        assert!(tools.fix.contains("Claude") && tools.fix.contains("pi"));
+    }
+
+    #[test]
+    fn provider_fix_texts_list_all_four_providers() {
+        let unknown = pi_diagnostic(r#"llm_provider="mystery""#);
+        assert_eq!(unknown.kind, SemanticDiagnosticKind::UnknownProvider);
+        let missing = ExecutionPlan::compile(graph(&one_node(r#"label="x""#)))
+            .expect_err("missing provider is rejected");
+        let missing = &missing.diagnostics[0];
+        assert_eq!(missing.kind, SemanticDiagnosticKind::MissingProvider);
+        for fix in [&unknown.fix, &missing.fix] {
+            for name in ["claude", "codex", "gemini", "pi"] {
+                assert!(fix.contains(name), "{name} missing from {fix}");
+            }
+        }
     }
 }

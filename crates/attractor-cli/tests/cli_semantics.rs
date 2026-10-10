@@ -27,7 +27,7 @@ fn write_pipeline(dir: &Path, name: &str, source: &str) -> PathBuf {
 }
 
 fn provider_shims(dir: &Path) {
-    for provider in ["claude", "codex", "gemini"] {
+    for provider in ["claude", "codex", "gemini", "pi"] {
         let path = dir.join(provider);
         let script = format!(
             "#!/bin/sh\nprintf '%s\\n' '{provider}' >> \"$PAS_TEST_PROVIDER_MARKER\"\nresponse=\"${{PAS_TEST_PROVIDER_RESPONSE:-ok}}\"\nprintf '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\"%s\"}}}}\\n' \"$response\"\n"
@@ -714,7 +714,7 @@ fn run_renders_missing_provider_as_typed_diagnostic_before_side_effects() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.contains("Fix: Add llm_provider=\"claude\", \"codex\", or \"gemini\""),
+        stdout.contains("Fix: Add llm_provider=\"claude\", \"codex\", \"gemini\", or \"pi\""),
         "{stdout}"
     );
     assert!(
@@ -754,7 +754,7 @@ fn validate_renders_every_semantic_error_with_rule_node_and_fix() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("Fix: Use claude/anthropic, codex/openai, or gemini/google"),
+        stdout.contains("Fix: Use claude/anthropic, codex/openai, gemini/google, or pi"),
         "{stdout}"
     );
     assert!(
@@ -765,6 +765,46 @@ fn validate_renders_every_semantic_error_with_rule_node_and_fix() {
         stdout.contains("Fix: Use a supported shape or name a registered handler with type="),
         "{stdout}"
     );
+}
+
+#[test]
+fn validate_accepts_pi_node_and_rejects_pi_without_model() {
+    let fixture = tempfile::tempdir().unwrap();
+    let pipeline = |attrs: &str| {
+        format!(
+            r#"digraph G {{
+                start [shape="Mdiamond"]
+                work [shape="box", prompt="work", llm_provider="pi"{attrs}]
+                done [shape="Msquare"]
+                start -> work -> done
+            }}"#
+        )
+    };
+
+    let good = write_pipeline(
+        fixture.path(),
+        "pi_good.dot",
+        &pipeline(r#", llm_model="openai/gpt-5.5""#),
+    );
+    let output = pas_command()
+        .args(["validate", good.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let bad = write_pipeline(fixture.path(), "pi_bad.dot", &pipeline(""));
+    let output = pas_command()
+        .args(["validate", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(node: work)"), "{stdout}");
+    assert!(stdout.contains("openai/gpt-5.5"), "{stdout}");
 }
 
 #[test]

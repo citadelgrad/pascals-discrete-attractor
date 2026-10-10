@@ -454,7 +454,7 @@ Pipeline is valid
 If issues found:
 ```
 [ERROR] provider_valid (node: analyze): Node 'analyze' has unknown llm_provider 'llama'
-  Fix: Use claude/anthropic, codex/openai, or gemini/google
+  Fix: Use claude/anthropic, codex/openai, gemini/google, or pi
 [WARN] prompt_on_llm_nodes (node: review): Node 'review' (handler=codergen) has no prompt and label matches id
   Fix: Add a prompt or a descriptive label attribute
 ```

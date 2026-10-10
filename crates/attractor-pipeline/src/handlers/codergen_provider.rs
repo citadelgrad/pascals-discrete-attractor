@@ -434,6 +434,8 @@ pub(super) fn build_cli_command_with_program(
             // Gemini has NO --cwd flag — working dir set via cmd.current_dir() only
             cmd
         }
+        // U4 builds the pi argv; until then a pi node starts a bare program.
+        LlmCliProvider::Pi => tokio::process::Command::new(program),
     };
 
     if let Some(dir) = cfg.workdir {
@@ -483,6 +485,12 @@ pub(super) fn parse_cli_output(
             parse_gemini_stream_output(stdout, node_id)
         }
         LlmCliProvider::Gemini => parse_gemini_output(stdout, node_id),
+        // U5 parses the pi JSONL stream; fail closed until then.
+        LlmCliProvider::Pi => Err(AttractorError::HandlerError {
+            handler: "codergen".into(),
+            node: node_id.into(),
+            message: "pi output parsing is not implemented yet".into(),
+        }),
     }?;
     result.usage = summarize_stream(provider, stdout);
     Ok(result)
@@ -498,6 +506,8 @@ pub(super) fn has_final_result(provider: LlmCliProvider, stdout: &str) -> bool {
                 .any(|line| line.kind.as_deref() == Some("result"))
         }
         LlmCliProvider::Codex | LlmCliProvider::Gemini => !stdout.is_empty(),
+        // U5 reads the pi `agent_end` event.
+        LlmCliProvider::Pi => false,
     }
 }
 
@@ -541,6 +551,8 @@ pub(super) fn summarize_stream(provider: LlmCliProvider, stdout: &str) -> Invoca
         LlmCliProvider::Codex => summarize_codex(stdout),
         LlmCliProvider::Gemini if is_gemini_stream(stdout) => summarize_gemini_stream(stdout),
         LlmCliProvider::Gemini => summarize_gemini_json(stdout),
+        // U5 reads pi `message_end` usage.
+        LlmCliProvider::Pi => InvocationUsage::default(),
     }
 }
 

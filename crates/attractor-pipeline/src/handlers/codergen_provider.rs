@@ -540,7 +540,7 @@ pub(super) fn build_cli_command_with_program(
                 cmd.arg(cfg.prompt);
             }
             // The only variable PAS sets for any provider.
-            cmd.env("PI_TELEMETRY", "0");
+            cmd.envs(crate::provider_readiness::PI_NODE_ENV);
             // pi in print mode reads stdin to EOF and prepends it to the
             // message; an inherited open pipe hangs the node (probe, pi 1.0.4).
             cmd.stdin(std::process::Stdio::null());

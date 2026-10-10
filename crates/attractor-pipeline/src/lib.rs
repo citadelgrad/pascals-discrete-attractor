@@ -18,6 +18,7 @@ pub mod handlers;
 pub mod interviewer;
 pub mod preflight;
 pub mod provider_defaults;
+pub mod provider_readiness;
 mod retry;
 mod run_commits;
 pub mod run_configuration;
@@ -59,6 +60,9 @@ pub use preflight::{
     run_with_budget as preflight_run_with_budget, PreflightFinding, Severity as PreflightSeverity,
 };
 pub use provider_defaults::fill_missing_llm_providers;
+pub use provider_readiness::{
+    check_pi_readiness, pi_models, ReadinessError, ReadinessOptions as PiReadinessOptions,
+};
 pub use run_configuration::{
     ClaudeExecutionOptions, ConfigurationError, ConfigurationSource, ExecutionOptions,
     ResolvedClaudeConfig, ResolvedConfig, ResolvedValue, RunConfiguration,

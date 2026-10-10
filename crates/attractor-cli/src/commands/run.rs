@@ -304,6 +304,23 @@ fn prepare_run_configuration(
     .map_err(anyhow::Error::msg)
 }
 
+/// Check that pi is installed, new enough and logged in for every pi model of
+/// `configs`, with one deduplicated sweep. Makes no call when no config has a
+/// pi node. The caller decides whether the Run is a dry run.
+async fn ensure_pi_ready(
+    configs: &[&attractor_pipeline::RunConfiguration],
+) -> Result<(), attractor_pipeline::ReadinessError> {
+    let models: std::collections::BTreeSet<String> = configs
+        .iter()
+        .flat_map(|config| attractor_pipeline::pi_models(config.plan()))
+        .collect();
+    attractor_pipeline::check_pi_readiness(
+        &models,
+        &attractor_pipeline::PiReadinessOptions::default(),
+    )
+    .await
+}
+
 /// A `pas run` failure that happened before the Run could be reported. In
 /// `--json` mode it is printed as `{"v":1,"ok":false,"error":{..}}` (C6).
 #[derive(Debug)]
@@ -824,6 +841,14 @@ async fn prepare_run(
         }
     }
 
+    // A dry run starts no node, so it needs no pi. The check sits before the
+    // first disk write, so a refused Run leaves no trace.
+    if !*configured.controls().dry_run().value() {
+        ensure_pi_ready(&[&configured])
+            .await
+            .map_err(|e| SetupError::new("pi_not_ready", e))?;
+    }
+
     let setup = |e: &dyn std::fmt::Display| SetupError::new("run_setup_failed", e);
     let index_path = match &invocation.index_path {
         Some(path) => path.clone(),
@@ -1034,8 +1059,9 @@ pub async fn cmd_run_dir(
 
     // Prepare every plan before mutating the batch manifest or starting the
     // first pipeline. A later unsafe file must fail the whole batch closed.
+    let mut configured = Vec::with_capacity(dot_files.len());
     for dot_file in &dot_files {
-        prepare_run_configuration(
+        configured.push(prepare_run_configuration(
             dot_file,
             workdir,
             dry_run,
@@ -1043,7 +1069,15 @@ pub async fn cmd_run_dir(
             max_steps,
             codergen_claude,
             false,
-        )?;
+        )?);
+    }
+    // One readiness sweep over every Pipeline, so a missing pi in a late file
+    // stops the batch before the first Pipeline spends anything.
+    if !configured.iter().any(|c| *c.controls().dry_run().value()) {
+        let refs: Vec<&attractor_pipeline::RunConfiguration> = configured.iter().collect();
+        ensure_pi_ready(&refs)
+            .await
+            .map_err(|e| anyhow::anyhow!("pi is not ready: {e}"))?;
     }
 
     // Manifest tracks cross-file progress

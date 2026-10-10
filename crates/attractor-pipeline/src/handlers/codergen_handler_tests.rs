@@ -170,6 +170,7 @@ fn build_cli_command_claude_has_stream_json_output() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
@@ -202,6 +203,7 @@ fn build_cli_command_claude_strict_bare_is_opt_in() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig {
             settings_mode: ClaudeSettingsMode::StrictBare,
             ..ClaudeCliConfig::default()
@@ -231,6 +233,7 @@ fn build_cli_command_claude_inherit_uses_setting_sources() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig {
             settings_mode: ClaudeSettingsMode::Inherit,
             setting_sources: vec!["user".into(), "project".into()],
@@ -262,6 +265,7 @@ fn build_cli_command_claude_emits_explicit_pas_owned_config() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig {
             settings: Some(r#"{"enabledPlugins":{}}"#.into()),
             tools: Some("Read,Edit".into()),
@@ -371,6 +375,7 @@ fn build_cli_command_codex_uses_exec_with_positional_prompt() {
         workdir: Some("/tmp"),
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
@@ -399,6 +404,7 @@ fn build_cli_command_gemini_matches_documented_invocation() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig::default(),
     };
     let cmd = build_cli_command(&cfg);
@@ -609,6 +615,7 @@ mod transcripts {
                 CodergenExecutionControls {
                     dry_run,
                     workdir: None,
+                    pi: PiCliConfig::default(),
                     claude: ClaudeCliConfig::default(),
                     run_dir: run_dir.map(Path::to_path_buf),
                     program: Some(program),
@@ -1016,6 +1023,7 @@ mod transcripts {
                 CodergenExecutionControls {
                     dry_run,
                     workdir: None,
+                    pi: PiCliConfig::default(),
                     claude: ClaudeCliConfig::default(),
                     run_dir: run_dir.map(Path::to_path_buf),
                     program: Some(program),
@@ -1730,6 +1738,7 @@ fn build_cli_command_gemini_stream_json_replaces_json() {
         workdir: None,
         node: &node,
         graph: &graph,
+        pi: PiCliConfig::default(),
         claude: ClaudeCliConfig::default(),
     };
     let args = |format| {
@@ -1803,6 +1812,7 @@ mod stream_formats {
                 CodergenExecutionControls {
                     dry_run: false,
                     workdir: None,
+                    pi: PiCliConfig::default(),
                     claude: ClaudeCliConfig::default(),
                     run_dir: None,
                     program: Some(program),
@@ -1957,4 +1967,507 @@ mod stream_formats {
 
     // AC1 at the stage level: each recorded fixture gives the same Outcome
     // text through the handler as through the parser.
+}
+
+// --- pi command (spec C1, task U4) ---
+
+mod pi_command {
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use attractor_types::{AttractorError, Context, Outcome, Result};
+
+    use super::*;
+
+    const PROMPT: &str = "the prompt";
+    const FIXED_PREFIX: [&str; 13] = [
+        "-p",
+        "--mode",
+        "json",
+        "--no-session",
+        "-ne",
+        "-ns",
+        "-np",
+        "-nc",
+        "--no-mcp",
+        "-na",
+        "--offline",
+        "--model",
+        "openai/gpt-5.5",
+    ];
+
+    fn attrs(pairs: &[(&str, &str)]) -> HashMap<String, AttributeValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), AttributeValue::String(v.to_string())))
+            .collect()
+    }
+
+    fn command(
+        provider: LlmCliProvider,
+        model: Option<&str>,
+        prompt: &str,
+        node_attrs: HashMap<String, AttributeValue>,
+        pi: PiCliConfig,
+    ) -> tokio::process::Command {
+        let node = make_node("n", "box", Some("do work"), node_attrs);
+        let graph = make_minimal_graph();
+        build_cli_command(&CliRunConfig {
+            provider,
+            prompt,
+            model,
+            workdir: None,
+            node: &node,
+            graph: &graph,
+            claude: ClaudeCliConfig::default(),
+            pi,
+        })
+    }
+
+    fn args_of(cmd: &tokio::process::Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn pi_args(node_attrs: HashMap<String, AttributeValue>, pi: PiCliConfig) -> Vec<String> {
+        args_of(&command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5"),
+            PROMPT,
+            node_attrs,
+            pi,
+        ))
+    }
+
+    #[test]
+    fn pi_has_exact_c1_argv() {
+        let args = pi_args(HashMap::new(), PiCliConfig::default());
+        let mut expected: Vec<&str> = FIXED_PREFIX.to_vec();
+        expected.extend(["--", PROMPT]);
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn pi_command_sets_only_pi_telemetry_env() {
+        let cmd = command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5"),
+            PROMPT,
+            HashMap::new(),
+            PiCliConfig::default(),
+        );
+        let envs: Vec<(OsString, Option<OsString>)> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned())))
+            .collect();
+        assert_eq!(envs, vec![("PI_TELEMETRY".into(), Some("0".into()))]);
+    }
+
+    #[test]
+    fn claude_codex_gemini_commands_set_no_environment() {
+        for provider in [
+            LlmCliProvider::Claude,
+            LlmCliProvider::Codex,
+            LlmCliProvider::Gemini,
+        ] {
+            let cmd = command(
+                provider,
+                Some("m"),
+                PROMPT,
+                HashMap::new(),
+                PiCliConfig::default(),
+            );
+            assert_eq!(cmd.as_std().get_envs().count(), 0, "{provider:?}");
+        }
+    }
+
+    #[test]
+    fn pi_allowed_tools_become_tools_flag() {
+        let args = pi_args(
+            attrs(&[("allowed_tools", "read,grep")]),
+            PiCliConfig::default(),
+        );
+        let at = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[at + 1], "read,grep");
+        assert!(at < args.iter().position(|a| a == "--").unwrap());
+        assert_eq!(args.iter().filter(|a| *a == "--tools").count(), 1);
+    }
+
+    #[test]
+    fn pi_without_allowed_tools_has_no_tools_flag() {
+        let args = pi_args(HashMap::new(), PiCliConfig::default());
+        assert!(!args.iter().any(|a| a == "--tools"));
+    }
+
+    #[test]
+    fn pi_allowed_tools_trims_and_drops_empty_names() {
+        let args = pi_args(
+            attrs(&[("allowed_tools", " read, ,grep,")]),
+            PiCliConfig::default(),
+        );
+        let at = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[at + 1], "read,grep");
+    }
+
+    #[test]
+    fn pi_resource_flags_follow_list_order_before_separator() {
+        let args = pi_args(
+            attrs(&[("allowed_tools", "read")]),
+            PiCliConfig {
+                skills: vec!["/s/a".into(), "/s/b".into()],
+                extensions: vec!["/e/one.ts".into()],
+                prompt_templates: vec!["/t/tpl.md".into()],
+            },
+        );
+        let mut expected: Vec<&str> = FIXED_PREFIX.to_vec();
+        expected.extend([
+            "--tools",
+            "read",
+            "--skill",
+            "/s/a",
+            "--skill",
+            "/s/b",
+            "-e",
+            "/e/one.ts",
+            "--prompt-template",
+            "/t/tpl.md",
+            "--",
+            PROMPT,
+        ]);
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn pi_prompt_starting_with_dash_follows_separator() {
+        let args = args_of(&command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5"),
+            "--help -p",
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        assert_eq!(args[args.len() - 2..], ["--", "--help -p"]);
+    }
+
+    // Q5, observed with pi 1.0.4: an argv entry that starts with `@` is read
+    // as a file and its content is put in the request, even after `--` and
+    // with `--tools grep`. A leading space (or newline) keeps it literal. The
+    // builder therefore emits one prompt entry and never lets it start with `@`.
+    #[test]
+    fn pi_prompt_starting_with_at_is_not_expanded_by_pi() {
+        let args = args_of(&command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5"),
+            "@/etc/hosts",
+            attrs(&[("allowed_tools", "grep")]),
+            PiCliConfig::default(),
+        ));
+        let sep = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(args.len(), sep + 2, "the prompt is one entry");
+        assert_eq!(args[sep + 1], " @/etc/hosts");
+        assert!(args.iter().all(|a| !a.starts_with('@')));
+    }
+
+    #[test]
+    fn pi_prompt_without_leading_at_is_unchanged() {
+        let args = args_of(&command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5"),
+            "Read @/etc/hosts",
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        assert_eq!(args.last().unwrap(), "Read @/etc/hosts");
+    }
+
+    #[test]
+    fn pi_command_never_gets_budget_or_credential_flags() {
+        let args = pi_args(
+            attrs(&[("max_budget_usd", "1.0"), ("allowed_tools", "read")]),
+            PiCliConfig::default(),
+        );
+        for banned in [
+            "--max-budget-usd",
+            "--credentials",
+            "--api-key",
+            "--thinking",
+        ] {
+            assert!(!args.iter().any(|a| a == banned), "{banned}");
+        }
+    }
+
+    #[test]
+    fn pi_thinking_suffix_stays_inside_model() {
+        let args = args_of(&command(
+            LlmCliProvider::Pi,
+            Some("openai/gpt-5.5:high"),
+            PROMPT,
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        let at = args.iter().position(|a| a == "--model").unwrap();
+        assert_eq!(args[at + 1], "openai/gpt-5.5:high");
+    }
+
+    #[test]
+    fn pi_resource_config_does_not_change_other_providers() {
+        let pi = PiCliConfig {
+            skills: vec!["/s".into()],
+            extensions: vec!["/e".into()],
+            prompt_templates: vec!["/t".into()],
+        };
+        for provider in [
+            LlmCliProvider::Claude,
+            LlmCliProvider::Codex,
+            LlmCliProvider::Gemini,
+        ] {
+            let with = args_of(&command(
+                provider,
+                Some("m"),
+                PROMPT,
+                HashMap::new(),
+                pi.clone(),
+            ));
+            let without = args_of(&command(
+                provider,
+                Some("m"),
+                PROMPT,
+                HashMap::new(),
+                PiCliConfig::default(),
+            ));
+            assert_eq!(with, without, "{provider:?}");
+        }
+    }
+
+    // Golden vectors, captured from the code before U4 touched it.
+    #[test]
+    fn claude_codex_gemini_argv_golden() {
+        let claude = args_of(&command(
+            LlmCliProvider::Claude,
+            Some("sonnet"),
+            PROMPT,
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        assert_eq!(claude, GOLDEN_CLAUDE);
+        let codex = args_of(&command(
+            LlmCliProvider::Codex,
+            Some("gpt-5"),
+            PROMPT,
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        assert_eq!(codex, GOLDEN_CODEX);
+        let gemini = args_of(&command(
+            LlmCliProvider::Gemini,
+            Some("gemini-2.5-pro"),
+            PROMPT,
+            HashMap::new(),
+            PiCliConfig::default(),
+        ));
+        assert_eq!(gemini, GOLDEN_GEMINI);
+    }
+
+    const GOLDEN_CLAUDE: &[&str] = &[
+        "--safe-mode",
+        "-p",
+        "the prompt",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--model",
+        "sonnet",
+    ];
+    const GOLDEN_CODEX: &[&str] = &[
+        "exec",
+        "--json",
+        "--yolo",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--model",
+        "gpt-5",
+        "the prompt",
+    ];
+    const GOLDEN_GEMINI: &[&str] = &[
+        "--output-format",
+        "json",
+        "--approval-mode",
+        "yolo",
+        "--model",
+        "gemini-2.5-pro",
+        "the prompt",
+    ];
+
+    // --- handler level, with stub programs ---
+
+    fn stub(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("pi-stub");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/providers")
+            .join(name)
+    }
+
+    async fn run(
+        node: PipelineNode,
+        graph: PipelineGraph,
+        program: PathBuf,
+        run_dir: Option<&Path>,
+    ) -> Result<Outcome> {
+        let resolved = ResolvedNode {
+            node_id: node.id.clone(),
+            kind: ResolvedNodeKind::Task,
+            handler: crate::HandlerIdentity::Codergen,
+            provider: Some(LlmCliProvider::Pi),
+            invocation: Default::default(),
+        };
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            CodergenHandler.execute_with_controls(
+                &node,
+                &resolved,
+                &Context::default(),
+                &graph,
+                CodergenExecutionControls {
+                    dry_run: false,
+                    workdir: None,
+                    pi: PiCliConfig::default(),
+                    claude: ClaudeCliConfig::default(),
+                    run_dir: run_dir.map(Path::to_path_buf),
+                    program: Some(program),
+                    events: None,
+                },
+            ),
+        )
+        .await
+        .expect("the pi node must not hang")
+    }
+
+    fn pi_node(model: Option<&str>) -> PipelineNode {
+        let mut node = make_node("step", "box", Some("do work"), HashMap::new());
+        node.llm_model = model.map(str::to_owned);
+        node
+    }
+
+    fn graph_with_model(model: &str) -> PipelineGraph {
+        let dot = format!(r#"digraph G {{ model="{model}"; A -> B }}"#);
+        PipelineGraph::from_dot(attractor_dot::parse(&dot).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn pi_stub_receives_c1_argv_and_stdout_reaches_transcript() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("argv.log");
+        let run_dir = tmp.path().join("run");
+        let program = stub(
+            tmp.path(),
+            &format!(
+                "for a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\ncat '{}'",
+                log.display(),
+                fixture("pi-1.0.4.jsonl").display()
+            ),
+        );
+
+        // The pi stream parser is U5's; only argv and the Transcript matter.
+        let _ = run(
+            pi_node(Some("openai/gpt-5.5")),
+            make_minimal_graph(),
+            program,
+            Some(&run_dir),
+        )
+        .await;
+
+        let logged = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = logged.lines().collect();
+        assert_eq!(lines[..FIXED_PREFIX.len()], FIXED_PREFIX);
+        assert_eq!(lines[FIXED_PREFIX.len()], "--");
+        assert!(lines[FIXED_PREFIX.len() + 1].starts_with("Task (step): do work"));
+        let transcripts: Vec<_> = std::fs::read_dir(run_dir.join("transcripts"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(
+            std::fs::read(&transcripts[0]).unwrap(),
+            std::fs::read(fixture("pi-1.0.4.jsonl")).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn pi_stdin_is_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(tmp.path(), "cat >/dev/null; echo '{}'");
+        // Completing at all (not timing out) is the assertion; the result
+        // itself is U5's.
+        let _ = run(
+            pi_node(Some("openai/gpt-5.5")),
+            make_minimal_graph(),
+            program,
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pi_node_ignores_graph_model_and_uses_trimmed_llm_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("argv.log");
+        let program = stub(
+            tmp.path(),
+            &format!("printf '%s\\n' \"$@\" > '{}'; echo '{{}}'", log.display()),
+        );
+        let _ = run(
+            pi_node(Some(" openai/gpt-5.5 ")),
+            graph_with_model("sonnet"),
+            program,
+            None,
+        )
+        .await;
+        let logged = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = logged.lines().collect();
+        let at = lines.iter().position(|l| *l == "--model").unwrap();
+        assert_eq!(lines[at + 1], "openai/gpt-5.5");
+        assert!(!lines.contains(&"sonnet"));
+    }
+
+    #[tokio::test]
+    async fn pi_node_without_llm_model_fails_closed_and_starts_no_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("started");
+        let program = stub(tmp.path(), &format!("touch '{}'", marker.display()));
+        let err = run(pi_node(None), graph_with_model("sonnet"), program, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AttractorError::HandlerError { .. }));
+        assert!(err.to_string().contains("llm_model"));
+        assert!(!marker.exists());
+    }
+
+    #[tokio::test]
+    async fn pi_node_with_empty_tool_list_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("started");
+        let program = stub(tmp.path(), &format!("touch '{}'", marker.display()));
+        let mut node = pi_node(Some("openai/gpt-5.5"));
+        node.raw_attrs = attrs(&[("allowed_tools", " , ")]);
+        let err = run(node, make_minimal_graph(), program, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("allowed_tools"));
+        assert!(!marker.exists());
+    }
 }

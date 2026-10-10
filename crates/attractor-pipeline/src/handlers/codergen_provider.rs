@@ -238,6 +238,33 @@ pub(super) struct CliRunConfig<'a> {
     #[allow(dead_code)]
     pub(super) graph: &'a PipelineGraph,
     pub(super) claude: ClaudeCliConfig,
+    pub(super) pi: PiCliConfig,
+}
+
+/// Resource paths a pi node loads, one flag per entry, in list order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct PiCliConfig {
+    pub(super) skills: Vec<String>,
+    pub(super) extensions: Vec<String>,
+    pub(super) prompt_templates: Vec<String>,
+}
+
+/// The pi `--tools` list of a node: `allowed_tools` split on `,`, trimmed,
+/// empty names dropped. `None` without the attribute; `Some("")` when the
+/// attribute names no tool, which callers must reject rather than drop
+/// `--tools` (pi would then allow every tool).
+pub(super) fn pi_tools(node: &PipelineNode) -> Option<String> {
+    match node.raw_attrs.get("allowed_tools") {
+        Some(AttributeValue::String(tools)) => Some(
+            tools
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,8 +461,52 @@ pub(super) fn build_cli_command_with_program(
             // Gemini has NO --cwd flag — working dir set via cmd.current_dir() only
             cmd
         }
-        // U4 builds the pi argv; until then a pi node starts a bare program.
-        LlmCliProvider::Pi => tokio::process::Command::new(program),
+        LlmCliProvider::Pi => {
+            let mut cmd = tokio::process::Command::new(program);
+            cmd.args([
+                "-p",
+                "--mode",
+                "json",
+                "--no-session",
+                "-ne",
+                "-ns",
+                "-np",
+                "-nc",
+                "--no-mcp",
+                "-na",
+                "--offline",
+            ]);
+            if let Some(model) = cfg.model.filter(|model| !model.is_empty()) {
+                cmd.arg("--model").arg(model);
+            }
+            if let Some(tools) = pi_tools(cfg.node) {
+                cmd.arg("--tools").arg(tools);
+            }
+            for skill in &cfg.pi.skills {
+                cmd.arg("--skill").arg(skill);
+            }
+            for extension in &cfg.pi.extensions {
+                cmd.arg("-e").arg(extension);
+            }
+            for template in &cfg.pi.prompt_templates {
+                cmd.arg("--prompt-template").arg(template);
+            }
+            cmd.arg("--");
+            // pi 1.0.4 expands any message argument that starts with `@` into
+            // file content, even after `--` and past `--tools` (Q5). One
+            // leading space keeps it a literal message.
+            if cfg.prompt.starts_with('@') {
+                cmd.arg(format!(" {}", cfg.prompt));
+            } else {
+                cmd.arg(cfg.prompt);
+            }
+            // The only variable PAS sets for any provider.
+            cmd.env("PI_TELEMETRY", "0");
+            // pi in print mode reads stdin to EOF and prepends it to the
+            // message; an inherited open pipe hangs the node (probe, pi 1.0.4).
+            cmd.stdin(std::process::Stdio::null());
+            cmd
+        }
     };
 
     if let Some(dir) = cfg.workdir {

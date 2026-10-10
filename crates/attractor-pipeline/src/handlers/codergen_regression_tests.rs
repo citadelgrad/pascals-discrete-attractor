@@ -605,6 +605,7 @@ async fn run_both(
             CodergenExecutionControls {
                 dry_run: false,
                 workdir: None,
+                pi: PiCliConfig::default(),
                 claude: ClaudeCliConfig::default(),
                 run_dir: with_run_dir.then(|| run_dir.clone()),
                 program: Some(program),

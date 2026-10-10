@@ -27,7 +27,8 @@ use provider::{
 };
 use provider::{
     build_cli_command_with_program, gemini_output_format, has_final_result, parse_cli_output,
-    summarize_stream, ClaudeCliConfig, CliRunConfig, GeminiOutputFormat, InvocationUsage,
+    pi_tools, summarize_stream, ClaudeCliConfig, CliRunConfig, GeminiOutputFormat, InvocationUsage,
+    PiCliConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ struct CodergenExecutionControls<'a> {
     dry_run: bool,
     workdir: Option<String>,
     claude: ClaudeCliConfig,
+    pi: PiCliConfig,
     /// Run folder that receives Transcripts; `None` writes no Transcript.
     run_dir: Option<PathBuf>,
     /// Executable to start instead of the provider's binary (test stubs).
@@ -276,14 +278,36 @@ impl CodergenHandler {
             }
         }
 
-        // Resolve model: node attribute, then graph-level fallback
-        let model = node
-            .llm_model
-            .as_deref()
-            .or_else(|| match graph.attrs.get("model") {
-                Some(AttributeValue::String(m)) => Some(m.as_str()),
-                _ => None,
-            });
+        // Resolve model: node attribute, then graph-level fallback. A pi
+        // node uses its own `llm_model` only (spec C1): the graph `model` is
+        // a Claude-style alias that pi cannot route.
+        let model = if provider == LlmProvider::Pi {
+            let model = node
+                .llm_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .ok_or_else(|| AttractorError::HandlerError {
+                    handler: "codergen".into(),
+                    node: node.id.clone(),
+                    message: "pi node has no llm_model (provider/model-id)".into(),
+                })?;
+            if pi_tools(node).is_some_and(|tools| tools.is_empty()) {
+                return Err(AttractorError::HandlerError {
+                    handler: "codergen".into(),
+                    node: node.id.clone(),
+                    message: "allowed_tools names no tool; omit it to allow every pi tool".into(),
+                });
+            }
+            Some(model)
+        } else {
+            node.llm_model
+                .as_deref()
+                .or_else(|| match graph.attrs.get("model") {
+                    Some(AttributeValue::String(m)) => Some(m.as_str()),
+                    _ => None,
+                })
+        };
 
         // Build the CLI command via the provider-specific builder
         let program = controls
@@ -304,6 +328,7 @@ impl CodergenHandler {
                 node,
                 graph,
                 claude: controls.claude,
+                pi: controls.pi,
             },
             program.as_os_str(),
             gemini_format,
@@ -557,6 +582,7 @@ impl ProviderNodeHandler for CodergenHandler {
                 dry_run,
                 workdir,
                 claude,
+                pi: PiCliConfig::default(),
                 run_dir: None,
                 program: None,
                 events: None,
@@ -619,6 +645,7 @@ impl CodergenHandler {
                 dry_run: *config.dry_run().value(),
                 workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
                 claude,
+                pi: PiCliConfig::default(),
                 run_dir: execution.run_dir().map(Path::to_path_buf),
                 program,
                 events: execution.events(),

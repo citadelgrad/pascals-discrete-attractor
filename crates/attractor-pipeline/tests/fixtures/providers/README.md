@@ -174,3 +174,14 @@ Gemini: not verified: not installed.
 - `inherit`: KTD10 plugin-dir confirmed. `--add-dir` works only for the `.claude/skills` layout.
 - `strict_bare`: not tested: no API key. `claude --help` states that `--bare` reads `--plugin-dir`, so
   C10 passes the copy root in this mode.
+
+## Q5 and stdin (pi 1.0.4, U4 probes, no cost)
+
+- Q5: pi expands any message argument whose first character is `@` into
+  `<file name="…">…</file>` content, even after `--` and with `--tools grep`.
+  A leading space or newline, or text before the `@`, keeps it literal. PAS
+  puts one space before a prompt that starts with `@` and sends the prompt as a
+  single argument.
+- stdin: in print mode with a non-TTY stdin, pi reads to EOF and prepends the
+  data to the message. An open pipe hangs it; `/dev/null` runs at once. PAS
+  starts pi with stdin closed (`Stdio::null()`).

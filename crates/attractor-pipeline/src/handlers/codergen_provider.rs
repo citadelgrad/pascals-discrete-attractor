@@ -202,6 +202,45 @@ struct CodexTokenUsage {
     output_tokens: Option<u64>,
 }
 
+/// The parts of a pi `--mode json` line read for status and usage.
+#[derive(Deserialize)]
+struct PiLine {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    message: Option<PiMessage>,
+}
+
+#[derive(Deserialize)]
+struct PiMessage {
+    role: Option<String>,
+    /// A string for the system message, a list of parts for the others.
+    content: Option<serde_json::Value>,
+    usage: Option<PiUsage>,
+    model: Option<String>,
+    #[serde(rename = "responseModel")]
+    response_model: Option<String>,
+    #[serde(rename = "stopReason")]
+    stop_reason: Option<String>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PiUsage {
+    input: Option<u64>,
+    output: Option<u64>,
+    #[serde(rename = "cacheRead")]
+    cache_read: Option<u64>,
+    #[serde(rename = "cacheWrite")]
+    cache_write: Option<u64>,
+    cost: Option<PiCost>,
+}
+
+#[derive(Deserialize)]
+struct PiCost {
+    total: Option<f64>,
+}
+
 /// Facts about one Model Invocation read from its provider stream.
 /// Every field is optional: data the stream does not carry is `None`.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -556,12 +595,7 @@ pub(super) fn parse_cli_output(
             parse_gemini_stream_output(stdout, node_id)
         }
         LlmCliProvider::Gemini => parse_gemini_output(stdout, node_id),
-        // U5 parses the pi JSONL stream; fail closed until then.
-        LlmCliProvider::Pi => Err(AttractorError::HandlerError {
-            handler: "codergen".into(),
-            node: node_id.into(),
-            message: "pi output parsing is not implemented yet".into(),
-        }),
+        LlmCliProvider::Pi => Ok(parse_pi_output(stdout)),
     }?;
     result.usage = summarize_stream(provider, stdout);
     Ok(result)
@@ -577,8 +611,7 @@ pub(super) fn has_final_result(provider: LlmCliProvider, stdout: &str) -> bool {
                 .any(|line| line.kind.as_deref() == Some("result"))
         }
         LlmCliProvider::Codex | LlmCliProvider::Gemini => !stdout.is_empty(),
-        // U5 reads the pi `agent_end` event.
-        LlmCliProvider::Pi => false,
+        LlmCliProvider::Pi => scan_pi(stdout).saw_agent_end,
     }
 }
 
@@ -622,8 +655,109 @@ pub(super) fn summarize_stream(provider: LlmCliProvider, stdout: &str) -> Invoca
         LlmCliProvider::Codex => summarize_codex(stdout),
         LlmCliProvider::Gemini if is_gemini_stream(stdout) => summarize_gemini_stream(stdout),
         LlmCliProvider::Gemini => summarize_gemini_json(stdout),
-        // U5 reads pi `message_end` usage.
-        LlmCliProvider::Pi => InvocationUsage::default(),
+        LlmCliProvider::Pi => scan_pi(stdout).usage(),
+    }
+}
+
+/// What one pass over a pi JSONL stream found. Only assistant `message_end`
+/// events count: `message_update` repeats usage and `agent_end` repeats every
+/// message.
+#[derive(Debug, Default, PartialEq)]
+struct PiScan {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cost_usd: Option<f64>,
+    model_actual: Option<String>,
+    saw_agent_end: bool,
+    saw_assistant_end: bool,
+    stop_reason: Option<String>,
+    error_message: Option<String>,
+    text: String,
+}
+
+impl PiScan {
+    fn usage(&self) -> InvocationUsage {
+        InvocationUsage {
+            model_actual: self.model_actual.clone(),
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cost_usd: self.cost_usd,
+        }
+    }
+}
+
+fn scan_pi(stdout: &str) -> PiScan {
+    let mut scan = PiScan::default();
+    for line in json_lines::<PiLine>(stdout) {
+        match line.kind.as_deref() {
+            Some("agent_end") => scan.saw_agent_end = true,
+            Some("message_end") => {
+                let Some(message) = line.message else {
+                    continue;
+                };
+                if message.role.as_deref() != Some("assistant") {
+                    continue;
+                }
+                scan.saw_assistant_end = true;
+                if let Some(usage) = &message.usage {
+                    scan.input_tokens = sum_present([
+                        scan.input_tokens,
+                        sum_present([usage.input, usage.cache_read, usage.cache_write]),
+                    ]);
+                    scan.output_tokens = sum_present([scan.output_tokens, usage.output]);
+                    if let Some(total) = usage.cost.as_ref().and_then(|cost| cost.total) {
+                        scan.cost_usd = Some(scan.cost_usd.unwrap_or(0.0) + total);
+                    }
+                }
+                scan.model_actual = message.response_model.or(message.model);
+                scan.stop_reason = message.stop_reason;
+                scan.error_message = message.error_message;
+                scan.text = match message.content {
+                    Some(serde_json::Value::Array(parts)) => parts
+                        .iter()
+                        .filter(|part| part.get("type").and_then(|t| t.as_str()) == Some("text"))
+                        .filter_map(|part| part.get("text").and_then(|t| t.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    Some(serde_json::Value::String(text)) => text,
+                    _ => String::new(),
+                };
+            }
+            _ => {}
+        }
+    }
+    scan
+}
+
+/// pi: status from the last assistant `message_end` (spec C2). Model failures
+/// are `is_error` results, not `Err`, so the partial cost reaches the Run.
+fn parse_pi_output(stdout: &str) -> NormalizedCliResult {
+    let scan = scan_pi(stdout);
+    let failure = if !scan.saw_agent_end {
+        Some("pi produced no final result (no agent_end event)".to_string())
+    } else if !scan.saw_assistant_end {
+        Some("pi ended with an unexpected end (no assistant message)".to_string())
+    } else {
+        match scan.stop_reason.as_deref() {
+            Some("stop") => None,
+            Some("length") => Some("pi output truncated (stopReason length)".to_string()),
+            Some(reason @ ("error" | "aborted")) => Some(format!(
+                "pi finished with an error: {}",
+                head(scan.error_message.as_deref().unwrap_or(reason), 500)
+            )),
+            other => Some(format!(
+                "pi ended with an unexpected end (stopReason {})",
+                other.unwrap_or("missing")
+            )),
+        }
+    };
+    NormalizedCliResult {
+        is_error: failure.is_some(),
+        text: failure.unwrap_or_else(|| scan.text.clone()),
+        cost_usd: scan.cost_usd,
+        turns: None,
+        usage: scan.usage(),
+        raw_output: stdout.to_string(),
     }
 }
 

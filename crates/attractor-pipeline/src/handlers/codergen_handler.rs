@@ -440,7 +440,11 @@ impl CodergenHandler {
 
         // A stream that ends without its final `result` line carries no
         // answer; report the exit like an empty stdout, as before streaming.
-        if !output.status.success() && !has_final_result(provider, &stdout) {
+        // pi exits 0 for model failures, so any non-zero exit is a failure
+        // even when its stream looks complete (spec C2).
+        if !output.status.success()
+            && (provider == LlmProvider::Pi || !has_final_result(provider, &stdout))
+        {
             finish(
                 invocation,
                 INVOKED_FAILED,

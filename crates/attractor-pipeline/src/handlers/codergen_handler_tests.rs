@@ -959,7 +959,7 @@ mod transcripts {
     const CLAUDE_USAGE_RESULT_LINE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.25,"num_turns":1,"usage":{"input_tokens":10,"cache_read_input_tokens":5,"output_tokens":7}}"#;
 
     #[derive(Default)]
-    struct EventLog(std::sync::Mutex<Vec<crate::events::PipelineEvent>>);
+    pub(super) struct EventLog(std::sync::Mutex<Vec<crate::events::PipelineEvent>>);
 
     impl crate::handler::EventSink for EventLog {
         fn emit(&self, event: crate::events::PipelineEvent) {
@@ -984,7 +984,7 @@ mod transcripts {
                 .collect()
         }
 
-        fn only(&self) -> serde_json::Value {
+        pub(super) fn only(&self) -> serde_json::Value {
             let events = self.llm_invoked();
             assert_eq!(events.len(), 1, "expected one LlmInvoked: {events:?}");
             events.into_iter().next().unwrap()
@@ -998,7 +998,7 @@ mod transcripts {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn run_observed(
+    pub(super) async fn run_observed(
         provider: LlmCliProvider,
         program: PathBuf,
         run_dir: Option<&Path>,
@@ -2469,5 +2469,326 @@ mod pi_command {
             .unwrap_err();
         assert!(err.to_string().contains("allowed_tools"));
         assert!(!marker.exists());
+    }
+}
+
+// --- pi JSONL status and usage (U5) ---
+
+mod pi_stream {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    use super::provider::NormalizedCliResult;
+    use super::transcripts::{run_observed, EventLog};
+    use super::*;
+
+    const SUCCESS: &str = include_str!("../../tests/fixtures/providers/pi-1.0.4.jsonl");
+    const ERROR: &str = include_str!("../../tests/fixtures/providers/pi-1.0.4.error.jsonl");
+    const KILLED: &str = include_str!("../../tests/fixtures/providers/pi-1.0.4.killed.jsonl");
+    const LENGTH: &str = include_str!("../../tests/fixtures/providers/pi-1.0.4.length.jsonl");
+
+    const PI: LlmCliProvider = LlmCliProvider::Pi;
+
+    fn parse(stdout: &str) -> NormalizedCliResult {
+        parse_cli_output(PI, stdout, "", "n").unwrap()
+    }
+
+    fn assert_close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("cost present");
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Lines of the success fixture whose `message_end` is the assistant one
+    /// (the last). Used to build derived streams.
+    fn last_assistant_end_index(stdout: &str) -> usize {
+        stdout
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| {
+                l.contains("\"type\":\"message_end\"") && l.contains("\"role\":\"assistant\"")
+            })
+            .map(|(i, _)| i)
+            .last()
+            .unwrap()
+    }
+
+    fn assistant_end(stop: &str, extra: &str, usage: &str) -> String {
+        format!(
+            r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"hi"}}],"model":"m1",{extra}"stopReason":"{stop}"{usage}}}}}"#
+        )
+    }
+
+    fn stream(lines: &[String]) -> String {
+        let mut s = lines.join("\n");
+        s.push('\n');
+        s
+    }
+
+    #[test]
+    fn pi_success_fixture_maps_status_usage_and_response() {
+        let result = parse(SUCCESS);
+        assert!(!result.is_error, "{}", result.text);
+        assert_eq!(result.text, "done");
+        assert_eq!(result.usage.input_tokens, Some(1604));
+        assert_eq!(result.usage.output_tokens, Some(28));
+        assert_close(result.usage.cost_usd, 0.00886);
+        assert_close(result.cost_usd, 0.00886);
+        assert_eq!(result.usage.model_actual.as_deref(), Some("gpt-5.5"));
+        assert!(has_final_result(PI, SUCCESS));
+    }
+
+    // Derived stream: only the last assistant message_end gets responseModel.
+    #[test]
+    fn pi_actual_model_prefers_last_response_model() {
+        let mut lines: Vec<String> = SUCCESS.lines().map(str::to_owned).collect();
+        let at = last_assistant_end_index(SUCCESS);
+        lines[at] = lines[at].replacen(
+            "\"message\":{",
+            "\"message\":{\"responseModel\":\"gpt-5.5-2026-01-01\",",
+            1,
+        );
+        let result = parse(&stream(&lines));
+        assert_eq!(
+            result.usage.model_actual.as_deref(),
+            Some("gpt-5.5-2026-01-01")
+        );
+        assert_eq!(result.usage.input_tokens, Some(1604));
+    }
+
+    #[test]
+    fn pi_cache_tokens_count_as_input() {
+        let usage =
+            r#","usage":{"input":10,"output":3,"cacheRead":5,"cacheWrite":2,"cost":{"total":0.5}}"#;
+        let out = stream(&[
+            assistant_end("stop", "", usage),
+            r#"{"type":"agent_end"}"#.into(),
+        ]);
+        let result = parse(&out);
+        assert_eq!(result.usage.input_tokens, Some(17));
+        assert_eq!(result.usage.output_tokens, Some(3));
+        assert_close(result.cost_usd, 0.5);
+    }
+
+    #[test]
+    fn pi_without_cost_data_reports_no_cost() {
+        let out = stream(&[
+            assistant_end("stop", "", r#","usage":{"input":1,"output":1}"#),
+            r#"{"type":"agent_end"}"#.into(),
+        ]);
+        let result = parse(&out);
+        assert!(!result.is_error);
+        assert_eq!(result.cost_usd, None);
+        assert_eq!(result.usage.cost_usd, None);
+    }
+
+    #[test]
+    fn pi_multiple_text_parts_are_joined_by_newline() {
+        let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"a"},{"type":"thinking","thinking":"x"},{"type":"text","text":"b"}],"stopReason":"stop"}}"#;
+        let result = parse(&stream(&[line.into(), r#"{"type":"agent_end"}"#.into()]));
+        assert_eq!(result.text, "a\nb");
+    }
+
+    #[test]
+    fn pi_error_fixture_is_failed_with_error_message() {
+        let result = parse(ERROR);
+        assert!(result.is_error);
+        assert!(
+            result.text.contains("OpenAI API error (400)"),
+            "{}",
+            result.text
+        );
+    }
+
+    #[test]
+    fn pi_aborted_without_error_message_is_failed() {
+        let out = stream(&[
+            assistant_end("aborted", "", ""),
+            r#"{"type":"agent_end"}"#.into(),
+        ]);
+        let result = parse(&out);
+        assert!(result.is_error);
+        assert!(result.text.contains("aborted"), "{}", result.text);
+    }
+
+    #[test]
+    fn pi_long_multibyte_error_message_is_cut_without_panic() {
+        let message = "é".repeat(800);
+        let extra = format!(r#""errorMessage":"{message}","#);
+        let out = stream(&[
+            assistant_end("error", &extra, ""),
+            r#"{"type":"agent_end"}"#.into(),
+        ]);
+        let result = parse(&out);
+        assert!(result.is_error);
+        assert!(result.text.chars().count() < 600);
+    }
+
+    #[test]
+    fn pi_killed_fixture_has_no_final_result() {
+        assert!(!has_final_result(PI, KILLED));
+        let result = parse(KILLED);
+        assert!(result.is_error);
+        assert!(result.text.contains("no final result"), "{}", result.text);
+    }
+
+    #[test]
+    fn pi_partial_stream_summary_keeps_completed_message_totals() {
+        let at = last_assistant_end_index(SUCCESS);
+        let partial: String = SUCCESS.lines().take(at).map(|l| format!("{l}\n")).collect();
+        let usage = summarize_stream(PI, &partial);
+        assert_eq!(usage.input_tokens, Some(784));
+        assert_eq!(usage.output_tokens, Some(23));
+        assert_close(usage.cost_usd, 0.00461);
+    }
+
+    #[test]
+    fn pi_length_fixture_is_failed_output_truncated() {
+        let result = parse(LENGTH);
+        assert!(result.is_error);
+        assert!(result.text.contains("output truncated"), "{}", result.text);
+    }
+
+    #[test]
+    fn pi_unexpected_stop_reasons_and_missing_assistant_are_failed() {
+        let tool_use = stream(&[
+            assistant_end("toolUse", "", ""),
+            r#"{"type":"agent_end"}"#.into(),
+        ]);
+        let result = parse(&tool_use);
+        assert!(result.is_error);
+        assert!(result.text.contains("unexpected end"), "{}", result.text);
+
+        let none = parse(&stream(&[r#"{"type":"agent_end"}"#.into()]));
+        assert!(none.is_error);
+        assert!(none.text.contains("unexpected end"), "{}", none.text);
+    }
+
+    #[test]
+    fn pi_unknown_event_and_non_json_lines_do_not_change_result() {
+        let base = parse(SUCCESS);
+        let mut lines: Vec<String> = SUCCESS.lines().map(str::to_owned).collect();
+        lines.insert(
+            2,
+            r#"{"type":"brand_new_event","message":{"role":"assistant","usage":{"input":999}}}"#
+                .into(),
+        );
+        lines.insert(3, "not json at all".into());
+        lines.insert(
+            4,
+            r#"{"type":"message_update","usage":{"input":500,"output":500,"cost":{"total":9}}}"#
+                .into(),
+        );
+        lines.insert(
+            5,
+            r#"{"type":"message_update","message":{"role":"assistant","usage":{"input":7}}}"#
+                .into(),
+        );
+        let noisy = parse(&stream(&lines));
+        assert_eq!(noisy.is_error, base.is_error);
+        assert_eq!(noisy.text, base.text);
+        assert_eq!(noisy.usage, base.usage);
+        assert_eq!(noisy.cost_usd, base.cost_usd);
+
+        let without_updates: Vec<&str> = SUCCESS
+            .lines()
+            .filter(|l| !l.contains("\"type\":\"message_update\""))
+            .collect();
+        let stripped = parse(&(without_updates.join("\n") + "\n"));
+        assert_eq!(stripped.usage, base.usage);
+    }
+
+    #[test]
+    fn pi_empty_stdout_exit_zero_is_failed() {
+        let err = parse_cli_output(PI, "  \n", "boom", "n").unwrap_err();
+        assert!(err.to_string().contains("produced no output"), "{err}");
+    }
+
+    // --- handler level ---
+
+    fn stub(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("pi-stub");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/providers")
+            .join(name)
+    }
+
+    async fn run_stub(fixture_name: &str, exit: i32, events: &EventLog) -> Result<Outcome> {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = stub(
+            tmp.path(),
+            &format!("cat '{}'\nexit {exit}", fixture(fixture_name).display()),
+        );
+        let mut node = make_node("step", "box", Some("do work"), HashMap::new());
+        node.llm_model = Some("openai/gpt-5.5".into());
+        run_observed(
+            PI,
+            program,
+            Some(&tmp.path().join("run")),
+            &node,
+            &make_minimal_graph(),
+            false,
+            events,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn pi_stub_node_emits_llm_invoked_with_provider_status_usage() {
+        let events = EventLog::default();
+        let outcome = run_stub("pi-1.0.4.jsonl", 0, &events).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Success);
+        assert_eq!(
+            outcome.context_updates.get("step.result"),
+            Some(&serde_json::json!("done"))
+        );
+        assert_eq!(
+            outcome.context_updates.get("step.provider"),
+            Some(&serde_json::json!("pi"))
+        );
+        let cost = outcome.context_updates["step.cost_usd"].as_f64().unwrap();
+        assert!((cost - 0.00886).abs() < 1e-9, "{cost}");
+        let event = events.only();
+        assert_eq!(event["provider"], "pi");
+        assert_eq!(event["status"], "success");
+        assert_eq!(event["model_actual"], "gpt-5.5");
+        assert_eq!(event["input_tokens"], 1604);
+        assert_eq!(event["output_tokens"], 28);
+        assert!((event["cost_usd"].as_f64().unwrap() - 0.00886).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn pi_error_fixture_exit_zero_is_fail_outcome_and_failed_event() {
+        let events = EventLog::default();
+        let outcome = run_stub("pi-1.0.4.error.jsonl", 0, &events).await.unwrap();
+        assert_eq!(outcome.status, StageStatus::Fail);
+        let result = outcome.context_updates["step.result"].as_str().unwrap();
+        assert!(result.contains("OpenAI API error (400)"), "{result}");
+        assert_eq!(events.only()["status"], "failed");
+    }
+
+    #[tokio::test]
+    async fn pi_killed_fixture_exit_143_is_failed_event_and_error() {
+        let events = EventLog::default();
+        let err = run_stub("pi-1.0.4.killed.jsonl", 143, &events)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("pi exited with"), "{err}");
+        assert_eq!(events.only()["status"], "failed");
+    }
+
+    #[tokio::test]
+    async fn pi_nonzero_exit_with_complete_success_stream_is_failed() {
+        let events = EventLog::default();
+        let err = run_stub("pi-1.0.4.jsonl", 1, &events).await.unwrap_err();
+        assert!(err.to_string().contains("pi exited with"), "{err}");
+        let event = events.only();
+        assert_eq!(event["status"], "failed");
+        assert_eq!(event["input_tokens"], 1604);
     }
 }

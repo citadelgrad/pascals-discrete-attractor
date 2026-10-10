@@ -185,3 +185,11 @@ Gemini: not verified: not installed.
 - stdin: in print mode with a non-TTY stdin, pi reads to EOF and prepends the
   data to the message. An open pipe hangs it; `/dev/null` runs at once. PAS
   starts pi with stdin closed (`Stdio::null()`).
+
+## Derived test inputs (U5)
+
+- No recorded pi stream carries `responseModel`. The test
+  `pi_actual_model_prefers_last_response_model` derives its input in code from
+  `pi-1.0.4.jsonl` by inserting that one field into the last assistant
+  `message_end`. Other U5 stream tests derive small hand-written streams; none
+  of these is a recording.

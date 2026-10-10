@@ -698,6 +698,35 @@ mod tests {
         assert_eq!(findings[0].code, "PROVIDER_COST_UNTRACKED");
     }
 
+    /// pi reports cost, so pi nodes produce no PROVIDER_COST_UNTRACKED warning
+    /// and do not hide the warning for providers that lack cost.
+    #[test]
+    fn pi_provider_nodes_produce_no_cost_warning() {
+        let dot = r#"digraph G {
+            start [shape="Mdiamond"]
+            a [label="A", timeout="60s", llm_provider="pi", llm_model="openai/gpt-5.5"]
+            b [label="B", timeout="60s", llm_provider="pi", llm_model="openai/gpt-5.5"]
+            done [shape="Msquare"]
+            start -> a -> b -> done
+        }"#;
+        let graph = PipelineGraph::from_dot(attractor_dot::parse(dot).unwrap()).unwrap();
+        let findings = run_no_manifest(&graph);
+        assert!(findings.is_empty(), "expected no findings: {findings:?}");
+
+        let mixed = r#"digraph G {
+            start [shape="Mdiamond"]
+            a [label="A", timeout="60s", llm_provider="pi", llm_model="openai/gpt-5.5"]
+            b [label="B", timeout="60s", llm_provider="codex"]
+            done [shape="Msquare"]
+            start -> a -> b -> done
+        }"#;
+        let graph = PipelineGraph::from_dot(attractor_dot::parse(mixed).unwrap()).unwrap();
+        let findings = run_no_manifest(&graph);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].message.contains("1 Codex node"));
+        assert!(!findings[0].message.contains("pi"));
+    }
+
     /// An explicit Claude provider reports cost, so it produces no
     /// PROVIDER_COST_UNTRACKED warning.
     #[test]

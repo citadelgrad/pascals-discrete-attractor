@@ -684,6 +684,7 @@ impl CodergenHandler {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
             mcp_config: config.claude().mcp_config().value().clone(),
+            skill_plugin_dir: skill_copy_plugin_dir(execution.run_dir(), config.skills().value()),
         };
         self.execute_with_controls(
             node,
@@ -725,6 +726,13 @@ fn pi_skill_paths(run_dir: Option<&Path>, skills: &[PathBuf]) -> Vec<String> {
         }
     }
     path_strings(skills)
+}
+
+/// The Run's skill copy root for Claude nodes: `Some` only with a Run
+/// directory, a non-empty skill list and a copy on disk (same rule as pi).
+fn skill_copy_plugin_dir(run_dir: Option<&Path>, skills: &[PathBuf]) -> Option<String> {
+    let root = crate::agent_resources::skill_copy_root(run_dir?);
+    (!skills.is_empty() && root.is_dir()).then(|| root.to_string_lossy().into_owned())
 }
 
 fn path_strings(paths: &[PathBuf]) -> Vec<String> {

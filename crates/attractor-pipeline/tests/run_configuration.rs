@@ -1471,3 +1471,140 @@ fn extension_trust_rejects_symlink_inside_extension_directory() {
         .unwrap_err();
     assert!(error.to_string().contains("symbolic link"), "{error}");
 }
+
+// --- CODERGEN_SKILLS_NOT_LOADED (U9, spec C8) ---
+
+const MIXED_PROVIDERS_DOT: &str = r#"digraph G {
+    start [shape="Mdiamond"]
+    cx_b [label="B", timeout="60s", llm_provider="codex"]
+    cx_a [label="A", timeout="60s", llm_provider="codex"]
+    gm [label="G", timeout="60s", llm_provider="gemini"]
+    cl_1 [label="C1", timeout="60s", llm_provider="claude"]
+    cl_2 [label="C2", timeout="60s", llm_provider="claude"]
+    pi_1 [label="P", timeout="60s", llm_provider="pi", llm_model="openai/gpt-5.5"]
+    done [shape="Msquare"]
+    start -> cx_b -> cx_a -> gm -> cl_1 -> cl_2 -> pi_1 -> done
+}"#;
+
+fn skills_not_loaded(
+    dot: &str,
+    mode: Option<ClaudeSettingsMode>,
+    with_skills: bool,
+) -> Vec<attractor_pipeline::PreflightFinding> {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let skills = with_skills.then(|| vec![skill_dir(&base, "skills/review")]);
+    let configured = RunConfiguration::prepare(
+        plan(dot),
+        ExecutionOptions {
+            workdir: Some(base),
+            skills,
+            claude: ClaudeExecutionOptions {
+                settings_mode: mode,
+                setting_sources: Some(vec![attractor_quality::ClaudeSettingSource::Project]),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    preflight_run_configuration(&configured)
+        .into_iter()
+        .filter(|finding| finding.code == "CODERGEN_SKILLS_NOT_LOADED")
+        .collect()
+}
+
+#[test]
+fn codex_and_gemini_nodes_get_one_skills_warning_each_with_their_node_ids() {
+    let findings = skills_not_loaded(MIXED_PROVIDERS_DOT, Some(ClaudeSettingsMode::Inherit), true);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    let codex = findings
+        .iter()
+        .find(|f| f.message.contains("Codex"))
+        .unwrap();
+    assert!(
+        codex.message.contains("'cx_a', 'cx_b'"),
+        "{}",
+        codex.message
+    );
+    assert!(!codex.message.contains("gm"));
+    let gemini = findings
+        .iter()
+        .find(|f| f.message.contains("Gemini"))
+        .unwrap();
+    assert!(gemini.message.contains("'gm'"), "{}", gemini.message);
+    assert!(!gemini.message.contains("cx_"));
+}
+
+#[test]
+fn claude_in_subscription_bare_gets_one_skills_warning_with_its_node_ids() {
+    for mode in [None, Some(ClaudeSettingsMode::SubscriptionBare)] {
+        let findings = skills_not_loaded(MIXED_PROVIDERS_DOT, mode, true);
+        assert_eq!(findings.len(), 3, "{findings:?}");
+        let claude = findings
+            .iter()
+            .find(|f| f.message.contains("Claude"))
+            .unwrap();
+        assert!(
+            claude.message.contains("'cl_1', 'cl_2'"),
+            "{}",
+            claude.message
+        );
+        assert!(!claude.message.contains("cx_") && !claude.message.contains("gm"));
+    }
+}
+
+#[test]
+fn claude_in_inherit_or_strict_bare_gets_no_skills_warning() {
+    for mode in [ClaudeSettingsMode::Inherit, ClaudeSettingsMode::StrictBare] {
+        let findings = skills_not_loaded(MIXED_PROVIDERS_DOT, Some(mode), true);
+        assert!(
+            findings.iter().all(|f| !f.message.contains("Claude")),
+            "{mode:?}: {findings:?}"
+        );
+        // Codex and Gemini still warn, so the check is per provider.
+        assert_eq!(findings.len(), 2, "{mode:?}");
+    }
+}
+
+#[test]
+fn empty_skill_list_gets_no_skills_warning_for_any_provider() {
+    for mode in [
+        None,
+        Some(ClaudeSettingsMode::StrictBare),
+        Some(ClaudeSettingsMode::Inherit),
+    ] {
+        let findings = skills_not_loaded(MIXED_PROVIDERS_DOT, mode, false);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+}
+
+#[test]
+fn pi_node_id_never_appears_in_a_skills_warning() {
+    for mode in [
+        ClaudeSettingsMode::SubscriptionBare,
+        ClaudeSettingsMode::StrictBare,
+        ClaudeSettingsMode::Inherit,
+    ] {
+        let findings = skills_not_loaded(MIXED_PROVIDERS_DOT, Some(mode), true);
+        for finding in &findings {
+            assert!(!finding.message.contains("pi_1"), "{finding:?}");
+            assert!(
+                !finding
+                    .suggestion
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("pi_1"),
+                "{finding:?}"
+            );
+        }
+    }
+    // A Pipeline of only pi nodes gets no warning at all.
+    let only_pi = r#"digraph G {
+        start [shape="Mdiamond"]
+        pi_1 [label="P", timeout="60s", llm_provider="pi", llm_model="openai/gpt-5.5"]
+        done [shape="Msquare"]
+        start -> pi_1 -> done
+    }"#;
+    assert!(skills_not_loaded(only_pi, None, true).is_empty());
+}

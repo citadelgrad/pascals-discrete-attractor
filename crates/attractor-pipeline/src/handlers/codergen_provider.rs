@@ -315,6 +315,10 @@ pub(super) struct ClaudeCliConfig {
     pub(super) agents: Option<String>,
     pub(super) plugin_dirs: Vec<String>,
     pub(super) mcp_config: Option<String>,
+    /// Root of the Run's skill copy, set when named skills exist for this
+    /// node. Ignored in `subscription_bare`, where `--safe-mode` disables
+    /// skills (spec C10).
+    pub(super) skill_plugin_dir: Option<String>,
 }
 
 impl Default for ClaudeCliConfig {
@@ -327,6 +331,7 @@ impl Default for ClaudeCliConfig {
             agents: None,
             plugin_dirs: vec![],
             mcp_config: None,
+            skill_plugin_dir: None,
         }
     }
 }
@@ -419,6 +424,11 @@ pub(super) fn build_cli_command_with_program(
     let mut cmd = match cfg.provider {
         LlmCliProvider::Claude => {
             let mut cmd = tokio::process::Command::new(program);
+            let skill_dir = cfg
+                .claude
+                .skill_plugin_dir
+                .as_deref()
+                .filter(|_| cfg.claude.settings_mode != ClaudeSettingsMode::SubscriptionBare);
             match cfg.claude.settings_mode {
                 ClaudeSettingsMode::SubscriptionBare => {
                     cmd.arg("--safe-mode");
@@ -441,8 +451,12 @@ pub(super) fn build_cli_command_with_program(
                 .arg("--verbose")
                 .arg("--no-session-persistence")
                 .arg("--dangerously-skip-permissions")
-                .arg("--strict-mcp-config")
-                .arg("--disable-slash-commands");
+                .arg("--strict-mcp-config");
+            // Loading the skill copy needs slash commands on, which also
+            // enables Claude's built-in slash commands for the node.
+            if skill_dir.is_none() {
+                cmd.arg("--disable-slash-commands");
+            }
             if let Some(mcp_config) = &cfg.claude.mcp_config {
                 cmd.arg("--mcp-config").arg(mcp_config);
             }
@@ -457,6 +471,9 @@ pub(super) fn build_cli_command_with_program(
             }
             for plugin_dir in &cfg.claude.plugin_dirs {
                 cmd.arg("--plugin-dir").arg(plugin_dir);
+            }
+            if let Some(dir) = skill_dir {
+                cmd.arg("--plugin-dir").arg(dir);
             }
             if let Some(model) = cfg.model {
                 cmd.arg("--model").arg(model);

@@ -649,3 +649,34 @@ fn resumed_run_with_one_skill_fewer_leaves_nothing_of_the_removed_skill() {
         .iter()
         .any(|p| p.file_name().is_some_and(|n| n == "only-b.txt")));
 }
+
+// U9: Codex, Gemini and subscription_bare Claude nodes ignore named skills.
+#[test]
+fn skills_not_loaded_warning_is_printed_for_ignoring_providers_only() {
+    let fx = Fixture::new();
+    let a = fx.skill("a");
+    let dot = fx.path("mixed.dot");
+    fs::write(
+        &dot,
+        r#"digraph G {
+            start [shape="Mdiamond"]
+            cx [shape="box", prompt="w", llm_provider="codex", timeout=30s]
+            pi_node [shape="box", prompt="w", llm_provider="pi", llm_model="openai/gpt-5.5", timeout=30s]
+            done [shape="Msquare"]
+            start -> cx -> pi_node -> done
+        }"#,
+    )
+    .unwrap();
+
+    let with = text(&fx.pas(&["run", arg(&dot), "--dry-run", "--codergen-skill", arg(&a)]));
+    let warnings: Vec<&str> = with
+        .lines()
+        .filter(|line| line.contains("CODERGEN_SKILLS_NOT_LOADED"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{with}");
+    assert!(warnings[0].contains("[WARN]") && warnings[0].contains("'cx'"));
+    assert!(!warnings[0].contains("pi_node"));
+
+    let without = text(&fx.pas(&["run", arg(&dot), "--dry-run", "--fresh"]));
+    assert!(!without.contains("CODERGEN_SKILLS_NOT_LOADED"), "{without}");
+}

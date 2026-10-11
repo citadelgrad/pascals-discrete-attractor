@@ -3079,3 +3079,250 @@ fn pi_skill_paths_use_the_run_copy_only_when_it_exists() {
         ]
     );
 }
+
+// --- Claude skill copy (U9) ---
+
+mod claude_skill_copy {
+    use super::*;
+
+    const COPY: &str = "/run/agent-resources/claude-plugin";
+
+    fn args(mode: ClaudeSettingsMode, plugin_dirs: &[&str], copy: Option<&str>) -> Vec<String> {
+        let node = make_node("n", "box", Some("do work"), HashMap::new());
+        let graph = make_minimal_graph();
+        build_cli_command(&CliRunConfig {
+            provider: LlmCliProvider::Claude,
+            prompt: "the prompt",
+            model: Some("sonnet"),
+            workdir: None,
+            node: &node,
+            graph: &graph,
+            pi: PiCliConfig::default(),
+            claude: ClaudeCliConfig {
+                settings_mode: mode,
+                plugin_dirs: plugin_dirs.iter().map(|d| (*d).to_owned()).collect(),
+                skill_plugin_dir: copy.map(str::to_owned),
+                ..ClaudeCliConfig::default()
+            },
+        })
+        .as_std()
+        .get_args()
+        .map(|a| a.to_str().unwrap().to_owned())
+        .collect()
+    }
+
+    fn plugin_dirs(args: &[String]) -> Vec<&str> {
+        args.windows(2)
+            .filter(|w| w[0] == "--plugin-dir")
+            .map(|w| w[1].as_str())
+            .collect()
+    }
+
+    fn has(args: &[String], flag: &str) -> bool {
+        args.iter().any(|a| a == flag)
+    }
+
+    const COMMON: &[&str] = &[
+        "-p",
+        "the prompt",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--model",
+        "sonnet",
+    ];
+
+    fn golden(mode_flag: Option<&str>) -> Vec<String> {
+        mode_flag
+            .into_iter()
+            .chain(COMMON.iter().copied())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    // Golden vectors captured from the code before U9 touched it.
+    #[test]
+    fn argv_without_skill_copy_is_unchanged_in_each_mode() {
+        assert_eq!(
+            args(ClaudeSettingsMode::SubscriptionBare, &[], None),
+            golden(Some("--safe-mode"))
+        );
+        assert_eq!(
+            args(ClaudeSettingsMode::StrictBare, &[], None),
+            golden(Some("--bare"))
+        );
+        assert_eq!(args(ClaudeSettingsMode::Inherit, &[], None), golden(None));
+    }
+
+    #[test]
+    fn inherit_with_skill_copy_adds_plugin_dir_and_drops_disable_slash_commands() {
+        let got = args(ClaudeSettingsMode::Inherit, &[], Some(COPY));
+        assert!(!has(&got, "--disable-slash-commands"));
+        assert_eq!(plugin_dirs(&got), [COPY]);
+        let mut expected = golden(None);
+        expected.retain(|a| a != "--disable-slash-commands");
+        let at = expected.iter().position(|a| a == "--model").unwrap();
+        expected.splice(at..at, ["--plugin-dir".to_owned(), COPY.to_owned()]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn strict_bare_with_skill_copy_adds_plugin_dir_and_drops_disable_slash_commands() {
+        let got = args(ClaudeSettingsMode::StrictBare, &[], Some(COPY));
+        assert!(!has(&got, "--disable-slash-commands"));
+        assert!(has(&got, "--bare"));
+        assert_eq!(plugin_dirs(&got), [COPY]);
+    }
+
+    #[test]
+    fn subscription_bare_with_skill_copy_equals_argv_without_skills() {
+        let got = args(ClaudeSettingsMode::SubscriptionBare, &[], Some(COPY));
+        assert!(has(&got, "--disable-slash-commands"));
+        assert!(plugin_dirs(&got).is_empty());
+        assert_eq!(got, args(ClaudeSettingsMode::SubscriptionBare, &[], None));
+    }
+
+    #[test]
+    fn user_plugin_dirs_come_before_the_skill_copy_root() {
+        for mode in [ClaudeSettingsMode::Inherit, ClaudeSettingsMode::StrictBare] {
+            let got = args(mode, &["/u/one", "/u/two"], Some(COPY));
+            assert_eq!(plugin_dirs(&got), ["/u/one", "/u/two", COPY], "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn user_plugin_dirs_alone_keep_disable_slash_commands() {
+        let got = args(ClaudeSettingsMode::Inherit, &["/u/one"], None);
+        assert!(has(&got, "--disable-slash-commands"));
+        assert_eq!(plugin_dirs(&got), ["/u/one"]);
+    }
+
+    #[test]
+    fn copy_plugin_dir_needs_run_dir_skills_and_a_copy_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skills = vec![PathBuf::from("/src/a")];
+
+        assert_eq!(skill_copy_plugin_dir(None, &skills), None);
+        assert_eq!(skill_copy_plugin_dir(Some(tmp.path()), &skills), None);
+
+        let root = crate::agent_resources::skill_copy_root(tmp.path());
+        std::fs::create_dir_all(root.join("skills")).unwrap();
+        assert_eq!(skill_copy_plugin_dir(Some(tmp.path()), &[]), None);
+        let first = skill_copy_plugin_dir(Some(tmp.path()), &skills);
+        assert_eq!(first, Some(root.to_string_lossy().into_owned()));
+        // Two nodes of one Run get the same path.
+        assert_eq!(first, skill_copy_plugin_dir(Some(tmp.path()), &skills));
+    }
+
+    #[cfg(unix)]
+    mod stubbed {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        async fn logged_argv(
+            tmp: &Path,
+            mode: ClaudeSettingsMode,
+            run_dir: Option<&Path>,
+            skills: &[PathBuf],
+            name: &str,
+        ) -> Vec<String> {
+            // The node id is part of the prompt, so every call uses "step"
+            // and only the log and stub file names differ.
+            let log = tmp.join(format!("{name}.log"));
+            let program = tmp.join(format!("{name}-stub"));
+            std::fs::write(
+                &program,
+                format!(
+                    "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\n",
+                    log.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let node = make_node("step", "box", Some("do work"), HashMap::new());
+            let resolved = ResolvedNode {
+                node_id: node.id.clone(),
+                kind: ResolvedNodeKind::Task,
+                handler: crate::HandlerIdentity::Codergen,
+                provider: Some(LlmCliProvider::Claude),
+                invocation: Default::default(),
+            };
+            let _ = CodergenHandler
+                .execute_with_controls(
+                    &node,
+                    &resolved,
+                    &attractor_types::Context::default(),
+                    &make_minimal_graph(),
+                    CodergenExecutionControls {
+                        dry_run: false,
+                        workdir: None,
+                        pi: PiCliConfig::default(),
+                        claude: ClaudeCliConfig {
+                            settings_mode: mode,
+                            skill_plugin_dir: skill_copy_plugin_dir(run_dir, skills),
+                            ..ClaudeCliConfig::default()
+                        },
+                        run_dir: run_dir.map(Path::to_path_buf),
+                        program: Some(program),
+                        events: None,
+                    },
+                )
+                .await;
+            std::fs::read_to_string(log)
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn two_claude_nodes_in_one_run_get_the_same_copy_path() {
+            let tmp = tempfile::tempdir().unwrap();
+            let run_dir = tmp.path().join("run");
+            let root = crate::agent_resources::skill_copy_root(&run_dir);
+            std::fs::create_dir_all(root.join("skills/a")).unwrap();
+            let skills = vec![PathBuf::from("/src/a")];
+
+            let first = logged_argv(
+                tmp.path(),
+                ClaudeSettingsMode::Inherit,
+                Some(&run_dir),
+                &skills,
+                "one",
+            )
+            .await;
+            let second = logged_argv(
+                tmp.path(),
+                ClaudeSettingsMode::Inherit,
+                Some(&run_dir),
+                &skills,
+                "two",
+            )
+            .await;
+            let expected = root.to_string_lossy().into_owned();
+            assert_eq!(plugin_dirs(&first), [expected.as_str()]);
+            assert_eq!(plugin_dirs(&second), [expected.as_str()]);
+        }
+
+        #[tokio::test]
+        async fn named_skills_without_a_run_dir_leave_argv_unchanged() {
+            let tmp = tempfile::tempdir().unwrap();
+            let skills = vec![PathBuf::from("/src/a")];
+            for mode in [
+                ClaudeSettingsMode::SubscriptionBare,
+                ClaudeSettingsMode::StrictBare,
+                ClaudeSettingsMode::Inherit,
+            ] {
+                let with = logged_argv(tmp.path(), mode, None, &skills, "with").await;
+                let without = logged_argv(tmp.path(), mode, None, &[], "without").await;
+                assert_eq!(with, without, "{mode:?}");
+                assert!(has(&with, "--disable-slash-commands"), "{mode:?}");
+                assert!(plugin_dirs(&with).is_empty(), "{mode:?}");
+            }
+        }
+    }
+}

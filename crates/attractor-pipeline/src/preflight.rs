@@ -17,6 +17,7 @@ use crate::execution_plan::{ExecutionPlan, HandlerIdentity, LlmProvider, Resolve
 use crate::graph::PipelineGraph;
 use crate::run_configuration::{ConfigurationSource, RunConfiguration};
 use crate::DEFAULT_MAX_BUDGET_USD;
+use attractor_quality::ClaudeSettingsMode;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,7 +85,7 @@ pub fn run_plan_with_budget(
         Some(budget) => (budget, ConfigurationSource::Caller),
         None => (DEFAULT_MAX_BUDGET_USD, ConfigurationSource::BuiltIn),
     };
-    run_plan_inner(plan, workdir, budget, source, None)
+    run_plan_inner(plan, workdir, budget, source, None, None)
 }
 
 /// Run preflight against the exact immutable configuration used by execution.
@@ -95,6 +96,9 @@ pub fn run_configuration(configured: &RunConfiguration) -> Vec<PreflightFinding>
         *configured.controls().max_budget_usd().value(),
         configured.controls().max_budget_usd().source(),
         Some(configured.controls().manifest().is_some()),
+        // `Some(mode)` only when the Run names skills.
+        (!configured.controls().skills().value().is_empty())
+            .then(|| *configured.controls().claude().settings_mode().value()),
     )
 }
 
@@ -104,6 +108,7 @@ fn run_plan_inner(
     max_budget_usd: f64,
     budget_source: ConfigurationSource,
     prepared_manifest_present: Option<bool>,
+    named_skills: Option<ClaudeSettingsMode>,
 ) -> Vec<PreflightFinding> {
     let mut findings = Vec::new();
 
@@ -154,6 +159,35 @@ fn run_plan_inner(
             ),
             workdir: None,
         });
+    }
+
+    // Providers that ignore the Run's named skills (spec C8). pi nodes load
+    // them and are never listed; Claude ignores them in `subscription_bare`.
+    if let Some(mode) = named_skills {
+        let claude_ignores = mode == ClaudeSettingsMode::SubscriptionBare;
+        for (provider_name, node_ids) in skill_ignoring_nodes(plan, claude_ignores) {
+            let display_name = provider_display_name(&provider_name);
+            let ids = node_ids
+                .iter()
+                .map(|id| format!("'{id}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let node_label = if node_ids.len() == 1 { "node" } else { "nodes" };
+            let suggestion = if provider_name == "claude" {
+                "Claude's subscription_bare mode (--safe-mode) turns off all skills; use --codergen-claude-settings-mode inherit or strict-bare to load the named skills"
+            } else {
+                "This provider loads its own personal skills and ignores the skills named for the Run; use llm_provider=\"pi\" or Claude in inherit or strict-bare mode to load them"
+            };
+            findings.push(PreflightFinding {
+                severity: Severity::Warn,
+                code: "CODERGEN_SKILLS_NOT_LOADED".into(),
+                message: format!(
+                    "{display_name} {node_label} {ids} will not load the skills named for this Run"
+                ),
+                suggestion: Some(suggestion.into()),
+                workdir: None,
+            });
+        }
     }
 
     // Only proceed with quality-manifest checks if the graph has a quality node.
@@ -256,8 +290,34 @@ fn uncosted_provider_counts(plan: &ExecutionPlan) -> BTreeMap<String, usize> {
     })
 }
 
+/// Sorted node ids per provider that ignore named skills. Claude is included
+/// only when `claude_ignores`; pi never is.
+fn skill_ignoring_nodes(
+    plan: &ExecutionPlan,
+    claude_ignores: bool,
+) -> BTreeMap<String, Vec<String>> {
+    let mut by_provider: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for node in plan.all_nodes() {
+        let name = match node.provider {
+            Some(LlmProvider::Codex) => "codex",
+            Some(LlmProvider::Gemini) => "gemini",
+            Some(LlmProvider::Claude) if claude_ignores => "claude",
+            _ => continue,
+        };
+        by_provider
+            .entry(name.to_string())
+            .or_default()
+            .push(node.node_id.clone());
+    }
+    for ids in by_provider.values_mut() {
+        ids.sort();
+    }
+    by_provider
+}
+
 fn provider_display_name(provider: &str) -> &str {
     match provider {
+        "claude" => "Claude",
         "codex" => "Codex",
         "gemini" => "Gemini",
         _ => provider,

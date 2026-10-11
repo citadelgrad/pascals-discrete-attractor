@@ -460,6 +460,41 @@ mod tests {
     }
 
     #[test]
+    fn resource_flags_keep_their_values_in_order() {
+        let m = meta(&[
+            "pas",
+            "run",
+            "p.dot",
+            "--codergen-skill",
+            "/s/a",
+            "--codergen-pi-extension",
+            "/e/guard.ts",
+            "--codergen-skill",
+            "/s/b",
+            "--codergen-pi-prompt-template=/t/review.md",
+        ]);
+        let got = s(reissue_args(&m, Reissue::Resume).unwrap());
+        assert_eq!(
+            got,
+            [
+                "run",
+                "/abs/p.dot",
+                "--codergen-skill",
+                "/s/a",
+                "--codergen-pi-extension",
+                "/e/guard.ts",
+                "--codergen-skill",
+                "/s/b",
+                "--codergen-pi-prompt-template=/t/review.md",
+                "--run-id",
+                &m.run_id,
+                "--logs",
+                "/abs/logs/p-1"
+            ]
+        );
+    }
+
+    #[test]
     fn short_logs_forms_are_stripped() {
         for argv in [
             &["pas", "run", "p.dot", "-l", "d"][..],

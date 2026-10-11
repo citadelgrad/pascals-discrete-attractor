@@ -454,6 +454,99 @@ impl RunConfiguration {
     pub fn graph_context_defaults(&self) -> &HashMap<String, Value> {
         &self.graph_context_defaults
     }
+
+    /// The `pas.toml` and trust hash to check before pi loads the extensions
+    /// it names (spec C7). `None` unless the extension list came from
+    /// `pas.toml` and is not empty; flag lists need no trust.
+    ///
+    /// The hash is BLAKE3 over the `pas.toml` bytes, then the bytes of each
+    /// extension in list order. A directory adds its files in sorted
+    /// relative-path order. The bytes are read now, not at `prepare`, so the
+    /// hash covers what pi will load.
+    pub fn manifest_extension_trust(
+        &self,
+    ) -> Result<Option<ManifestExtensionTrust>, ConfigurationError> {
+        let extensions = self.controls.pi_extensions();
+        if extensions.source() != ConfigurationSource::Manifest || extensions.value().is_empty() {
+            return Ok(None);
+        }
+        let Some(manifest) = self.controls.manifest() else {
+            return Ok(None);
+        };
+        let unreadable = |path: &Path, error: std::io::Error| {
+            ConfigurationError::Invalid(format!(
+                "cannot read {} for the trust check: {error}",
+                path.display()
+            ))
+        };
+        let mut hasher = blake3::Hasher::new();
+        let bytes = std::fs::read(&manifest.path).map_err(|e| unreadable(&manifest.path, e))?;
+        hasher.update(&bytes);
+        for extension in extensions.value() {
+            hash_extension(&mut hasher, extension, &unreadable)?;
+        }
+        Ok(Some(ManifestExtensionTrust {
+            manifest_path: manifest.path.clone(),
+            hash: hasher.finalize().to_hex().to_string(),
+        }))
+    }
+}
+
+/// A `pas.toml` that names pi extensions, with the hash to trust (spec C7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestExtensionTrust {
+    pub manifest_path: PathBuf,
+    pub hash: String,
+}
+
+fn hash_extension(
+    hasher: &mut blake3::Hasher,
+    path: &Path,
+    unreadable: &dyn Fn(&Path, std::io::Error) -> ConfigurationError,
+) -> Result<(), ConfigurationError> {
+    let meta = std::fs::metadata(path).map_err(|e| unreadable(path, e))?;
+    if !meta.is_dir() {
+        hasher.update(&std::fs::read(path).map_err(|e| unreadable(path, e))?);
+        return Ok(());
+    }
+    let mut files = Vec::new();
+    collect_files(path, Path::new(""), &mut files, unreadable)?;
+    files.sort();
+    for relative in files {
+        let full = path.join(&relative);
+        hasher.update(&std::fs::read(&full).map_err(|e| unreadable(&full, e))?);
+    }
+    Ok(())
+}
+
+/// Collect regular files under `root/relative`. A symbolic link inside an
+/// extension directory is an error, never followed.
+fn collect_files(
+    root: &Path,
+    relative: &Path,
+    out: &mut Vec<PathBuf>,
+    unreadable: &dyn Fn(&Path, std::io::Error) -> ConfigurationError,
+) -> Result<(), ConfigurationError> {
+    let dir = root.join(relative);
+    for entry in std::fs::read_dir(&dir).map_err(|e| unreadable(&dir, e))? {
+        let entry = entry.map_err(|e| unreadable(&dir, e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| unreadable(&entry.path(), e))?;
+        let child = relative.join(entry.file_name());
+        if file_type.is_symlink() {
+            return Err(ConfigurationError::Invalid(format!(
+                "pi extension directory contains a symbolic link: {}",
+                entry.path().display()
+            )));
+        }
+        if file_type.is_dir() {
+            collect_files(root, &child, out, unreadable)?;
+        } else {
+            out.push(child);
+        }
+    }
+    Ok(())
 }
 
 fn resolve_quality_limits(

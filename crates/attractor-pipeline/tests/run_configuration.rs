@@ -1376,3 +1376,98 @@ async fn node_context_update_of_pi_extensions_is_filtered_or_fails_closed() {
     );
     assert!(configured.controls().pi_extensions().value().is_empty());
 }
+
+fn extension_trust_hash(base: &Path, options: ExecutionOptions) -> Option<String> {
+    prepare_in(base, options)
+        .unwrap()
+        .manifest_extension_trust()
+        .unwrap()
+        .map(|trust| trust.hash)
+}
+
+#[test]
+fn extension_trust_is_none_without_manifest_extensions_or_for_flag_lists() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    std::fs::write(base.join("guard.ts"), "export default {}").unwrap();
+
+    assert_eq!(
+        extension_trust_hash(&base, ExecutionOptions::default()),
+        None
+    );
+
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"guard.ts\"]");
+    assert!(extension_trust_hash(&base, ExecutionOptions::default()).is_some());
+    let caller = ExecutionOptions {
+        pi_extensions: Some(vec![base.join("guard.ts")]),
+        ..Default::default()
+    };
+    assert_eq!(extension_trust_hash(&base, caller), None);
+}
+
+#[test]
+fn extension_trust_hash_covers_manifest_extension_bytes_and_list_order() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    std::fs::write(base.join("a.ts"), "aaa").unwrap();
+    std::fs::write(base.join("b.ts"), "bbb").unwrap();
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"a.ts\", \"b.ts\"]");
+
+    let manifest = std::fs::read(base.join("pas.toml")).unwrap();
+    let mut expected = blake3::Hasher::new();
+    expected.update(&manifest);
+    expected.update(b"aaa");
+    expected.update(b"bbb");
+    let first = extension_trust_hash(&base, ExecutionOptions::default()).unwrap();
+    assert_eq!(first, expected.finalize().to_hex().to_string());
+
+    std::fs::write(base.join("b.ts"), "changed").unwrap();
+    let changed = extension_trust_hash(&base, ExecutionOptions::default()).unwrap();
+    assert_ne!(first, changed);
+
+    std::fs::write(base.join("b.ts"), "bbb").unwrap();
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"b.ts\", \"a.ts\"]");
+    let reordered = extension_trust_hash(&base, ExecutionOptions::default()).unwrap();
+    assert_ne!(first, reordered);
+}
+
+#[test]
+fn extension_trust_hash_walks_directories_in_sorted_order() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let dir = base.join("ext");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("z.ts"), "zzz").unwrap();
+    std::fs::write(dir.join("a.ts"), "aaa").unwrap();
+    std::fs::write(dir.join("sub/m.ts"), "mmm").unwrap();
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"ext\"]");
+
+    let manifest = std::fs::read(base.join("pas.toml")).unwrap();
+    let mut expected = blake3::Hasher::new();
+    expected.update(&manifest);
+    expected.update(b"aaa");
+    expected.update(b"mmm");
+    expected.update(b"zzz");
+    assert_eq!(
+        extension_trust_hash(&base, ExecutionOptions::default()).unwrap(),
+        expected.finalize().to_hex().to_string()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn extension_trust_rejects_symlink_inside_extension_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let dir = base.join("ext");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(base.join("real.ts"), "x").unwrap();
+    std::os::unix::fs::symlink(base.join("real.ts"), dir.join("link.ts")).unwrap();
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"ext\"]");
+
+    let error = prepare_in(&base, ExecutionOptions::default())
+        .unwrap()
+        .manifest_extension_trust()
+        .unwrap_err();
+    assert!(error.to_string().contains("symbolic link"), "{error}");
+}

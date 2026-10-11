@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     cmd_answer, cmd_decompose, cmd_generate, cmd_generate_dir, cmd_info, cmd_init, cmd_kill,
     cmd_launch, cmd_plan, cmd_run, cmd_run_dir, cmd_runs, cmd_scaffold, cmd_stop, cmd_validate,
-    heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenClaudeCliOpts,
+    heartbeat_interval_from_env, validate_decomposition, AnswerSourceArg, CodergenCliOpts,
     DecomposeSource, GenerateInput, InitOpts, RunInvocation, RunRefused,
 };
 
@@ -93,6 +93,18 @@ enum Commands {
         /// Claude MCP config JSON or file path for codergen nodes
         #[arg(long)]
         codergen_claude_mcp_config: Option<String>,
+
+        /// Skill directory for codergen nodes (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_skill: Vec<PathBuf>,
+
+        /// pi extension file or directory (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_pi_extension: Vec<PathBuf>,
+
+        /// pi prompt template file (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_pi_prompt_template: Vec<PathBuf>,
 
         /// Use this Run ID (a UUID) instead of generating one
         #[arg(long)]
@@ -408,6 +420,18 @@ enum Commands {
         /// Claude MCP config JSON or file path for codergen nodes
         #[arg(long)]
         codergen_claude_mcp_config: Option<String>,
+
+        /// Skill directory for codergen nodes (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_skill: Vec<PathBuf>,
+
+        /// pi extension file or directory (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_pi_extension: Vec<PathBuf>,
+
+        /// pi prompt template file (repeatable). Replaces the pas.toml list
+        #[arg(long)]
+        codergen_pi_prompt_template: Vec<PathBuf>,
     },
 }
 
@@ -483,11 +507,14 @@ async fn run_cli() -> anyhow::Result<()> {
             codergen_claude_agents,
             codergen_claude_plugin_dir,
             codergen_claude_mcp_config,
+            codergen_skill,
+            codergen_pi_extension,
+            codergen_pi_prompt_template,
             run_id,
             json,
             allow_shared_workdir,
         } => {
-            let codergen_claude = CodergenClaudeCliOpts {
+            let codergen_claude = CodergenCliOpts {
                 settings_mode: codergen_claude_settings_mode,
                 setting_sources: codergen_claude_setting_sources,
                 settings: codergen_claude_settings,
@@ -495,6 +522,9 @@ async fn run_cli() -> anyhow::Result<()> {
                 agents: codergen_claude_agents,
                 plugin_dirs: codergen_claude_plugin_dir,
                 mcp_config: codergen_claude_mcp_config,
+                skills: codergen_skill,
+                pi_extensions: codergen_pi_extension,
+                pi_prompt_templates: codergen_pi_prompt_template,
             };
             let invocation = RunInvocation {
                 argv: std::env::args().collect(),
@@ -685,8 +715,11 @@ async fn run_cli() -> anyhow::Result<()> {
             codergen_claude_agents,
             codergen_claude_plugin_dir,
             codergen_claude_mcp_config,
+            codergen_skill,
+            codergen_pi_extension,
+            codergen_pi_prompt_template,
         } => {
-            let codergen_claude = CodergenClaudeCliOpts {
+            let codergen_claude = CodergenCliOpts {
                 settings_mode: codergen_claude_settings_mode,
                 setting_sources: codergen_claude_setting_sources,
                 settings: codergen_claude_settings,
@@ -694,6 +727,9 @@ async fn run_cli() -> anyhow::Result<()> {
                 agents: codergen_claude_agents,
                 plugin_dirs: codergen_claude_plugin_dir,
                 mcp_config: codergen_claude_mcp_config,
+                skills: codergen_skill,
+                pi_extensions: codergen_pi_extension,
+                pi_prompt_templates: codergen_pi_prompt_template,
             };
             cmd_launch(
                 &docs_dir,

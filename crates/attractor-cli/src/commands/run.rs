@@ -108,7 +108,7 @@ impl Drop for Heartbeat {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CodergenClaudeCliOpts {
+pub struct CodergenCliOpts {
     pub settings_mode: Option<String>,
     pub setting_sources: Option<String>,
     pub settings: Option<String>,
@@ -116,9 +116,32 @@ pub struct CodergenClaudeCliOpts {
     pub agents: Option<String>,
     pub plugin_dirs: Vec<PathBuf>,
     pub mcp_config: Option<String>,
+    /// `--codergen-skill`; an empty list means the flag was not given.
+    pub skills: Vec<PathBuf>,
+    /// `--codergen-pi-extension`
+    pub pi_extensions: Vec<PathBuf>,
+    /// `--codergen-pi-prompt-template`
+    pub pi_prompt_templates: Vec<PathBuf>,
 }
 
-impl CodergenClaudeCliOpts {
+impl CodergenCliOpts {
+    /// A flag list replaces the `pas.toml` list; no flag leaves it alone.
+    /// Paths are made absolute against this process's directory, because pi
+    /// runs with the Run workdir as its directory.
+    fn resource_list(paths: &[PathBuf]) -> anyhow::Result<Option<Vec<PathBuf>>> {
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        paths
+            .iter()
+            .map(|path| {
+                std::path::absolute(path)
+                    .map_err(|e| anyhow::anyhow!("cannot resolve {}: {e}", path.display()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Some)
+    }
+
     fn to_execution_options(&self) -> anyhow::Result<attractor_pipeline::ClaudeExecutionOptions> {
         let settings_mode = self
             .settings_mode
@@ -269,7 +292,7 @@ fn prepare_run_configuration(
     dry_run: bool,
     max_budget_usd: Option<f64>,
     max_steps: Option<u64>,
-    codergen_claude: &CodergenClaudeCliOpts,
+    codergen_claude: &CodergenCliOpts,
     json: bool,
 ) -> anyhow::Result<attractor_pipeline::RunConfiguration> {
     let graph = crate::load_pipeline(path)?;
@@ -298,6 +321,11 @@ fn prepare_run_configuration(
             max_budget_usd,
             workdir: workdir.map(std::path::Path::to_path_buf),
             claude: codergen_claude.to_execution_options()?,
+            skills: CodergenCliOpts::resource_list(&codergen_claude.skills)?,
+            pi_extensions: CodergenCliOpts::resource_list(&codergen_claude.pi_extensions)?,
+            pi_prompt_templates: CodergenCliOpts::resource_list(
+                &codergen_claude.pi_prompt_templates,
+            )?,
             ..Default::default()
         },
     )
@@ -319,6 +347,52 @@ async fn ensure_pi_ready(
         &attractor_pipeline::PiReadinessOptions::default(),
     )
     .await
+}
+
+/// Check the trust of every `pas.toml` that names pi extensions (spec C7):
+/// `is_trusted`, then `prompt_and_add` on a terminal, else an error with the
+/// exact `pas trust add` command. One check for each distinct (path, hash).
+/// Flag lists need no trust, so those configurations are skipped.
+fn ensure_manifest_extensions_trusted(
+    configs: &[&attractor_pipeline::RunConfiguration],
+) -> Result<(), SetupError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for config in configs {
+        let trust = config
+            .manifest_extension_trust()
+            .map_err(|e| SetupError::new("manifest_untrusted", e))?;
+        let Some(trust) = trust else { continue };
+        let path = trust.manifest_path;
+        if !seen.insert((path.clone(), trust.hash.clone())) {
+            continue;
+        }
+        if attractor_quality::is_trusted(&path, &trust.hash) {
+            continue;
+        }
+        match attractor_quality::prompt_and_add(&path, &trust.hash) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(SetupError::new(
+                    "manifest_untrusted",
+                    format!(
+                        "pas.toml at {} names pi extensions and is not trusted. The hash covers \
+                         the pas.toml and the extension files, so a changed extension needs new \
+                         trust. Run `pas trust add {} {}` or set PAS_TRUST_THIS=1",
+                        path.display(),
+                        path.display(),
+                        trust.hash
+                    ),
+                ))
+            }
+            Err(e) => {
+                return Err(SetupError::new(
+                    "manifest_untrusted",
+                    format!("failed to check pas.toml trust: {e}"),
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A `pas run` failure that happened before the Run could be reported. In
@@ -599,6 +673,38 @@ fn setup_failed(json: bool, error: SetupError) -> anyhow::Error {
     anyhow::anyhow!(error.message)
 }
 
+/// The non-empty resource lists of a Run: display label, JSON key, list.
+fn resource_lists(
+    configured: &attractor_pipeline::RunConfiguration,
+) -> Vec<(
+    &'static str,
+    &'static str,
+    &attractor_pipeline::ResolvedValue<Vec<PathBuf>>,
+)> {
+    let controls = configured.controls();
+    [
+        ("Skills", "skills", controls.skills()),
+        ("pi extensions", "pi_extensions", controls.pi_extensions()),
+        (
+            "pi prompt templates",
+            "pi_prompt_templates",
+            controls.pi_prompt_templates(),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, _, list)| !list.value().is_empty())
+    .collect()
+}
+
+fn source_label(source: attractor_pipeline::ConfigurationSource) -> &'static str {
+    match source {
+        attractor_pipeline::ConfigurationSource::Caller => "caller",
+        attractor_pipeline::ConfigurationSource::Manifest => "manifest",
+        attractor_pipeline::ConfigurationSource::Graph => "graph",
+        attractor_pipeline::ConfigurationSource::BuiltIn => "built-in",
+    }
+}
+
 /// Everything `cmd_run` sets up before the engine runs.
 struct PreparedRun {
     configured: attractor_pipeline::RunConfiguration,
@@ -628,7 +734,7 @@ pub async fn cmd_run(
     max_budget_usd: Option<f64>,
     max_steps: Option<u64>,
     fresh: bool,
-    codergen_claude: &CodergenClaudeCliOpts,
+    codergen_claude: &CodergenCliOpts,
     invocation: &RunInvocation,
 ) -> anyhow::Result<RunEnd> {
     let json = invocation.json;
@@ -670,15 +776,29 @@ pub async fn cmd_run(
     );
 
     if json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "v": 1,
-                "ok": true,
-                "run_id": run_id,
-                "run_dir": run_dir.path(),
+        let mut first_line = serde_json::json!({
+            "v": 1,
+            "ok": true,
+            "run_id": run_id,
+            "run_dir": run_dir.path(),
+        });
+        // Additive: present only when a Run names resources.
+        let resources: serde_json::Map<String, serde_json::Value> = resource_lists(&configured)
+            .into_iter()
+            .map(|(_, key, list)| {
+                (
+                    key.to_string(),
+                    serde_json::json!({
+                        "source": source_label(list.source()),
+                        "paths": list.value(),
+                    }),
+                )
             })
-        );
+            .collect();
+        if !resources.is_empty() {
+            first_line["resources"] = resources.into();
+        }
+        println!("{first_line}");
         use std::io::Write;
         std::io::stdout().flush()?;
     }
@@ -721,6 +841,18 @@ pub async fn cmd_run(
         "Step limit: {}",
         configured.controls().max_steps().value()
     );
+    for (label, _, list) in resource_lists(&configured) {
+        say!(
+            json,
+            "{label} ({}): {}",
+            source_label(list.source()),
+            list.value()
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 
     // Human Gates answer from the terminal (only when stdin is a TTY) or from
     // `answers/<question-id>.json`, e.g. written by `pas answer`.
@@ -802,7 +934,7 @@ async fn prepare_run(
     max_budget_usd: Option<f64>,
     max_steps: Option<u64>,
     fresh: bool,
-    codergen_claude: &CodergenClaudeCliOpts,
+    codergen_claude: &CodergenCliOpts,
     invocation: &RunInvocation,
 ) -> Result<PreparedRun, SetupError> {
     let json = invocation.json;
@@ -841,9 +973,10 @@ async fn prepare_run(
         }
     }
 
-    // A dry run starts no node, so it needs no pi. The check sits before the
-    // first disk write, so a refused Run leaves no trace.
+    // A dry run starts no node, so it needs no pi and loads no extension. The
+    // checks sit before the first disk write, so a refused Run leaves no trace.
     if !*configured.controls().dry_run().value() {
+        ensure_manifest_extensions_trusted(&[&configured])?;
         ensure_pi_ready(&[&configured])
             .await
             .map_err(|e| SetupError::new("pi_not_ready", e))?;
@@ -1024,7 +1157,7 @@ pub async fn cmd_run_dir(
     max_budget_usd: Option<f64>,
     max_steps: Option<u64>,
     fresh: bool,
-    codergen_claude: &CodergenClaudeCliOpts,
+    codergen_claude: &CodergenCliOpts,
     invocation: &RunInvocation,
 ) -> anyhow::Result<()> {
     // One Run ID or one JSON first line cannot describe several Runs.
@@ -1071,10 +1204,12 @@ pub async fn cmd_run_dir(
             false,
         )?);
     }
-    // One readiness sweep over every Pipeline, so a missing pi in a late file
-    // stops the batch before the first Pipeline spends anything.
+    // One trust sweep and one readiness sweep over every Pipeline, so an
+    // untrusted extension or a missing pi in a late file stops the batch
+    // before the first Pipeline spends anything.
     if !configured.iter().any(|c| *c.controls().dry_run().value()) {
         let refs: Vec<&attractor_pipeline::RunConfiguration> = configured.iter().collect();
+        ensure_manifest_extensions_trusted(&refs).map_err(|e| anyhow::anyhow!("{}", e.message))?;
         ensure_pi_ready(&refs)
             .await
             .map_err(|e| anyhow::anyhow!("pi is not ready: {e}"))?;
@@ -1237,7 +1372,7 @@ mod tests {
             None,
             Some(100),
             false,
-            &CodergenClaudeCliOpts::default(),
+            &CodergenCliOpts::default(),
             &test_invocation(logs_dir.path()),
         )
         .await;
@@ -1287,7 +1422,7 @@ mod tests {
             None,
             Some(100),
             false,
-            &CodergenClaudeCliOpts::default(),
+            &CodergenCliOpts::default(),
             &test_invocation(logs_dir.path()),
         )
         .await;
@@ -1443,7 +1578,7 @@ mod tests {
             None,
             Some(10),
             false,
-            &CodergenClaudeCliOpts::default(),
+            &CodergenCliOpts::default(),
             &invocation,
         )
         .await

@@ -25,8 +25,7 @@ pub use kill::cmd_kill;
 pub use launch::cmd_launch;
 pub use plan::cmd_plan;
 pub use run::{
-    cmd_run, cmd_run_dir, heartbeat_interval_from_env, CodergenClaudeCliOpts, RunInvocation,
-    RunRefused,
+    cmd_run, cmd_run_dir, heartbeat_interval_from_env, CodergenCliOpts, RunInvocation, RunRefused,
 };
 pub use runs::cmd_runs;
 pub use scaffold::cmd_scaffold;

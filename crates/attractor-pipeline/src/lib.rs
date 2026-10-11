@@ -65,7 +65,7 @@ pub use provider_readiness::{
 };
 pub use run_configuration::{
     ClaudeExecutionOptions, ConfigurationError, ConfigurationSource, ExecutionOptions,
-    ResolvedClaudeConfig, ResolvedConfig, ResolvedValue, RunConfiguration,
+    ManifestExtensionTrust, ResolvedClaudeConfig, ResolvedConfig, ResolvedValue, RunConfiguration,
 };
 pub use stylesheet::{apply_stylesheet, parse_stylesheet, Declaration, Rule, Selector, Stylesheet};
 pub use transforms::{apply_transforms, expand_variables};

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use attractor_quality::{
     ClaudeCodergenConfig, ClaudeSettingSource, ClaudeSettingsMode, ResolutionError,
@@ -105,6 +105,12 @@ pub struct ExecutionOptions {
     pub workdir: Option<PathBuf>,
     pub quality_disabled: Option<bool>,
     pub quality_max_fix_iterations: Option<u32>,
+    /// Skill directories. `Some` replaces the manifest list, even when empty.
+    pub skills: Option<Vec<PathBuf>>,
+    /// pi extensions. `Some` replaces the manifest list, even when empty.
+    pub pi_extensions: Option<Vec<PathBuf>>,
+    /// pi prompt templates. `Some` replaces the manifest list, even when empty.
+    pub pi_prompt_templates: Option<Vec<PathBuf>>,
     pub claude: ClaudeExecutionOptions,
 }
 
@@ -181,6 +187,9 @@ pub struct ResolvedConfig {
     quality_disabled: ResolvedValue<bool>,
     quality_max_fix_iterations: HashMap<String, ResolvedValue<u32>>,
     claude: ResolvedClaudeConfig,
+    skills: ResolvedValue<Vec<PathBuf>>,
+    pi_extensions: ResolvedValue<Vec<PathBuf>>,
+    pi_prompt_templates: ResolvedValue<Vec<PathBuf>>,
     manifest: Option<ResolvedManifest>,
 }
 
@@ -215,6 +224,18 @@ impl ResolvedConfig {
         &self.claude
     }
 
+    pub fn skills(&self) -> &ResolvedValue<Vec<PathBuf>> {
+        &self.skills
+    }
+
+    pub fn pi_extensions(&self) -> &ResolvedValue<Vec<PathBuf>> {
+        &self.pi_extensions
+    }
+
+    pub fn pi_prompt_templates(&self) -> &ResolvedValue<Vec<PathBuf>> {
+        &self.pi_prompt_templates
+    }
+
     /// The cached raw manifest is intentionally unavailable to API consumers.
     ///
     /// ```compile_fail
@@ -242,6 +263,9 @@ impl fmt::Debug for ResolvedConfig {
                 &self.quality_max_fix_iterations,
             )
             .field("claude", &self.claude)
+            .field("skills", &self.skills)
+            .field("pi_extensions", &self.pi_extensions)
+            .field("pi_prompt_templates", &self.pi_prompt_templates)
             .field("manifest", &self.manifest.as_ref().map(|m| &m.path))
             .finish()
     }
@@ -327,6 +351,31 @@ impl RunConfiguration {
             .and_then(|resolved| resolved.manifest.codergen.as_ref())
             .and_then(|codergen| codergen.claude.as_ref());
 
+        let manifest_codergen = manifest
+            .as_ref()
+            .and_then(|resolved| resolved.manifest.codergen.as_ref());
+        let manifest_pi = manifest_codergen.and_then(|codergen| codergen.pi.as_ref());
+        let manifest_dir = manifest
+            .as_ref()
+            .and_then(|resolved| resolved.path.parent())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let skills = resolve_path_list(
+            &options.skills,
+            manifest_codergen.map_or(&[][..], |c| c.skills.as_slice()),
+            &manifest_dir,
+        );
+        let pi_extensions = resolve_path_list(
+            &options.pi_extensions,
+            manifest_pi.map_or(&[][..], |c| c.extensions.as_slice()),
+            &manifest_dir,
+        );
+        let pi_prompt_templates = resolve_path_list(
+            &options.pi_prompt_templates,
+            manifest_pi.map_or(&[][..], |c| c.prompt_templates.as_slice()),
+            &manifest_dir,
+        );
+
         let caller = ConfigurationSource::Caller;
         let built_in = ConfigurationSource::BuiltIn;
         let controls = ResolvedConfig {
@@ -365,8 +414,15 @@ impl RunConfiguration {
             ),
             quality_max_fix_iterations: resolve_quality_limits(&plan, &options, manifest.as_ref())?,
             claude: resolve_claude(&options.claude, manifest_claude, manifest.as_ref())?,
+            skills,
+            pi_extensions,
+            pi_prompt_templates,
             manifest,
         };
+
+        validate_skills(&controls.skills)?;
+        validate_existing("pi extension", &controls.pi_extensions)?;
+        validate_existing("pi prompt template", &controls.pi_prompt_templates)?;
 
         if *controls.max_steps.value() == 0 {
             return Err(ConfigurationError::Invalid(
@@ -545,6 +601,113 @@ fn resolve_claude(
     })
 }
 
+/// Caller entries are kept as given (flag paths are relative to the process
+/// directory); manifest entries are joined to the `pas.toml` directory. Paths
+/// are not canonicalized so an absolute path stays unchanged and a symbolic
+/// link entry keeps its own name.
+fn resolve_path_list(
+    caller: &Option<Vec<PathBuf>>,
+    manifest: &[PathBuf],
+    manifest_dir: &Path,
+) -> ResolvedValue<Vec<PathBuf>> {
+    if let Some(value) = caller {
+        ResolvedValue::new(value.clone(), ConfigurationSource::Caller)
+    } else if !manifest.is_empty() {
+        let values = manifest
+            .iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    manifest_dir.join(path)
+                }
+            })
+            .collect();
+        ResolvedValue::new(values, ConfigurationSource::Manifest)
+    } else {
+        ResolvedValue::new(Vec::new(), ConfigurationSource::BuiltIn)
+    }
+}
+
+fn invalid_path(
+    kind: &str,
+    path: &Path,
+    source: ConfigurationSource,
+    problem: &str,
+) -> ConfigurationError {
+    ConfigurationError::Invalid(format!(
+        "{kind} path '{}' (from {source:?}) {problem}",
+        path.display()
+    ))
+}
+
+/// `metadata` follows links, so a broken link counts as missing.
+fn validate_existing(
+    kind: &str,
+    list: &ResolvedValue<Vec<PathBuf>>,
+) -> Result<(), ConfigurationError> {
+    for path in list.value() {
+        if std::fs::metadata(path).is_err() {
+            return Err(invalid_path(kind, path, list.source(), "does not exist"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_skills(list: &ResolvedValue<Vec<PathBuf>>) -> Result<(), ConfigurationError> {
+    const KIND: &str = "skill";
+    let source = list.source();
+    let mut names: HashMap<std::ffi::OsString, &Path> = HashMap::new();
+    for path in list.value() {
+        let metadata = std::fs::metadata(path)
+            .map_err(|_| invalid_path(KIND, path, source, "does not exist"))?;
+        if !metadata.is_dir() {
+            return Err(invalid_path(KIND, path, source, "is not a directory"));
+        }
+        let skill_md = std::fs::metadata(path.join("SKILL.md"));
+        if !skill_md.map(|m| m.is_file()).unwrap_or(false) {
+            return Err(invalid_path(KIND, path, source, "has no SKILL.md"));
+        }
+        if let Some(name) = path.file_name() {
+            if let Some(first) = names.insert(name.to_os_string(), path) {
+                return Err(ConfigurationError::Invalid(format!(
+                    "skill paths '{}' and '{}' (from {source:?}) have the same directory name",
+                    first.display(),
+                    path.display()
+                )));
+            }
+        }
+        reject_inner_links(path, source)?;
+    }
+    Ok(())
+}
+
+fn reject_inner_links(dir: &Path, source: ConfigurationSource) -> Result<(), ConfigurationError> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| invalid_path("skill", dir, source, &format!("cannot be read: {error}")))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            invalid_path("skill", dir, source, &format!("cannot be read: {error}"))
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            invalid_path("skill", &path, source, &format!("cannot be read: {error}"))
+        })?;
+        if file_type.is_symlink() {
+            return Err(invalid_path(
+                "skill",
+                &path,
+                source,
+                "is a symbolic link inside a skill directory",
+            ));
+        }
+        if file_type.is_dir() {
+            reject_inner_links(&path, source)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn is_reserved_key(key: &str) -> bool {
     matches!(
         key,
@@ -557,6 +720,8 @@ pub fn is_reserved_key(key: &str) -> bool {
             | "outcome"
             | "preferred_label"
     ) || key.starts_with("codergen.claude.")
+        || key.starts_with("codergen.pi.")
+        || key == "codergen.skills"
         || key.starts_with("__pas.")
         || key.starts_with("__pas::")
 }
@@ -568,5 +733,19 @@ fn attr_to_json(value: &attractor_dot::AttributeValue) -> Value {
         attractor_dot::AttributeValue::Float(value) => serde_json::json!(value),
         attractor_dot::AttributeValue::Boolean(value) => Value::Bool(*value),
         attractor_dot::AttributeValue::Duration(value) => serde_json::json!(value.as_millis()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_reserved_key;
+
+    #[test]
+    fn resource_list_keys_are_reserved_and_other_codergen_keys_are_not() {
+        assert!(is_reserved_key("codergen.skills"));
+        assert!(is_reserved_key("codergen.pi.extensions"));
+        assert!(is_reserved_key("codergen.pi.prompt_templates"));
+        assert!(!is_reserved_key("codergen.other"));
+        assert!(!is_reserved_key("codergen.skills_note"));
     }
 }

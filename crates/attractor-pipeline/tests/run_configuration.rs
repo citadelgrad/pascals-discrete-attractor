@@ -949,3 +949,430 @@ fn graph_cannot_author_run_controls_or_provider_isolation() {
         assert!(error.to_string().contains("reserved"), "{key}: {error}");
     }
 }
+
+// --- U8: skill, pi extension and pi prompt template lists ---
+
+use attractor_pipeline::ConfigurationError;
+use std::path::{Path, PathBuf};
+
+fn trivial_plan() -> ExecutionPlan {
+    plan(r#"digraph G { start [shape="Mdiamond"] done [shape="Msquare"] start -> done }"#)
+}
+
+fn skill_dir(root: &Path, relative: &str) -> PathBuf {
+    let dir = root.join(relative);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("SKILL.md"), "---\nname: s\n---\nbody\n").unwrap();
+    dir
+}
+
+fn write_manifest(root: &Path, body: &str) {
+    std::fs::write(
+        root.join("pas.toml"),
+        format!("[project]\nname = \"u8\"\n\n{body}\n"),
+    )
+    .unwrap();
+}
+
+fn prepare_in(
+    root: &Path,
+    options: ExecutionOptions,
+) -> std::result::Result<RunConfiguration, ConfigurationError> {
+    RunConfiguration::prepare(
+        trivial_plan(),
+        ExecutionOptions {
+            workdir: Some(root.into()),
+            ..options
+        },
+    )
+}
+
+fn invalid_message(result: std::result::Result<RunConfiguration, ConfigurationError>) -> String {
+    match result {
+        Err(ConfigurationError::Invalid(message)) => message,
+        other => panic!("expected ConfigurationError::Invalid, got {other:?}"),
+    }
+}
+
+// Joined to the directory of the manifest that `resolve` found, whose form
+// is not the temp path on macOS (`/private/var`).
+fn canonical(root: &tempfile::TempDir) -> PathBuf {
+    root.path().canonicalize().unwrap()
+}
+
+#[test]
+fn manifest_skill_resolves_under_pas_toml_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    skill_dir(&base, "skills/review");
+    write_manifest(&base, "[codergen]\nskills = [\"skills/review\"]");
+
+    let configured = prepare_in(&base, ExecutionOptions::default()).unwrap();
+
+    let skills = configured.controls().skills();
+    assert_eq!(skills.value(), &vec![base.join("skills/review")]);
+    assert_eq!(skills.source(), ConfigurationSource::Manifest);
+}
+
+#[test]
+fn caller_skills_replace_manifest_list() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    skill_dir(&base, "skills/manifest-one");
+    let a = skill_dir(&base, "other/a");
+    let b = skill_dir(&base, "other/b");
+    write_manifest(&base, "[codergen]\nskills = [\"skills/manifest-one\"]");
+
+    let configured = prepare_in(
+        &base,
+        ExecutionOptions {
+            skills: Some(vec![a.clone(), b.clone()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let skills = configured.controls().skills();
+    assert_eq!(skills.value(), &vec![a, b]);
+    assert_eq!(skills.source(), ConfigurationSource::Caller);
+}
+
+#[test]
+fn empty_caller_list_replaces_manifest_list() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    skill_dir(&base, "skills/review");
+    write_manifest(&base, "[codergen]\nskills = [\"skills/review\"]");
+
+    let configured = prepare_in(
+        &base,
+        ExecutionOptions {
+            skills: Some(Vec::new()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert!(configured.controls().skills().value().is_empty());
+    assert_eq!(
+        configured.controls().skills().source(),
+        ConfigurationSource::Caller
+    );
+}
+
+#[test]
+fn absolute_manifest_skill_path_is_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let skill = skill_dir(outside.path(), "elsewhere/review");
+    write_manifest(
+        &canonical(&root),
+        &format!("[codergen]\nskills = [{:?}]", skill.display().to_string()),
+    );
+
+    let configured = prepare_in(&canonical(&root), ExecutionOptions::default()).unwrap();
+
+    assert_eq!(configured.controls().skills().value(), &vec![skill]);
+}
+
+#[test]
+fn list_order_is_kept() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    for name in ["z", "a", "m"] {
+        skill_dir(&base, &format!("skills/{name}"));
+    }
+    write_manifest(
+        &base,
+        "[codergen]\nskills = [\"skills/z\", \"skills/a\", \"skills/m\"]",
+    );
+
+    let configured = prepare_in(&base, ExecutionOptions::default()).unwrap();
+
+    assert_eq!(
+        configured.controls().skills().value(),
+        &vec![
+            base.join("skills/z"),
+            base.join("skills/a"),
+            base.join("skills/m")
+        ]
+    );
+}
+
+#[test]
+fn missing_skill_path_error_names_path_and_source() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    write_manifest(&base, "[codergen]\nskills = [\"skills/gone\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(
+        message.contains(&base.join("skills/gone").display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("Manifest"), "{message}");
+
+    let missing = base.join("caller/missing");
+    let message = invalid_message(prepare_in(
+        &base,
+        ExecutionOptions {
+            skills: Some(vec![missing.clone()]),
+            ..Default::default()
+        },
+    ));
+    assert!(
+        message.contains(&missing.display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("Caller"), "{message}");
+}
+
+#[test]
+fn skill_dir_without_skill_md_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    std::fs::create_dir_all(base.join("skills/empty")).unwrap();
+    write_manifest(&base, "[codergen]\nskills = [\"skills/empty\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains("SKILL.md"), "{message}");
+    assert!(message.contains("skills/empty"), "{message}");
+}
+
+#[test]
+fn skill_entry_that_is_a_file_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    std::fs::write(base.join("file-skill"), "x").unwrap();
+    write_manifest(&base, "[codergen]\nskills = [\"file-skill\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains("not a directory"), "{message}");
+}
+
+#[test]
+fn duplicate_skill_directory_names_fail() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    skill_dir(&base, "a/review");
+    skill_dir(&base, "b/review");
+    write_manifest(&base, "[codergen]\nskills = [\"a/review\", \"b/review\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains("same directory name"), "{message}");
+    assert!(
+        message.contains("a/review") && message.contains("b/review"),
+        "{message}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_skill_entry_resolves() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let target = skill_dir(&base, "real/target-name");
+    let link = base.join("linked-skill");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    write_manifest(&base, "[codergen]\nskills = [\"linked-skill\"]");
+
+    let configured = prepare_in(&base, ExecutionOptions::default()).unwrap();
+
+    assert_eq!(configured.controls().skills().value(), &vec![link]);
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_inside_skill_dir_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let skill = skill_dir(&base, "skills/review");
+    std::fs::create_dir_all(skill.join("nested")).unwrap();
+    std::fs::write(base.join("secret.txt"), "x").unwrap();
+    let link = skill.join("nested/leak");
+    std::os::unix::fs::symlink(base.join("secret.txt"), &link).unwrap();
+    write_manifest(&base, "[codergen]\nskills = [\"skills/review\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains(&link.display().to_string()), "{message}");
+    assert!(message.contains("symbolic link"), "{message}");
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_symlink_entry_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    let link = base.join("dangling");
+    std::os::unix::fs::symlink(base.join("nowhere"), &link).unwrap();
+    write_manifest(&base, "[codergen]\nskills = [\"dangling\"]");
+
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains("does not exist"), "{message}");
+}
+
+#[test]
+fn pi_extensions_and_prompt_templates_resolve_and_validate() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    std::fs::create_dir_all(base.join("ext")).unwrap();
+    std::fs::write(base.join("ext/guard.ts"), "export default {}").unwrap();
+    std::fs::create_dir_all(base.join("ext-dir")).unwrap();
+    std::fs::create_dir_all(base.join("prompts")).unwrap();
+    std::fs::write(base.join("prompts/review.md"), "review").unwrap();
+    write_manifest(
+        &base,
+        "[codergen.pi]\nextensions = [\"ext/guard.ts\", \"ext-dir\"]\nprompt_templates = [\"prompts/review.md\"]",
+    );
+
+    let configured = prepare_in(&base, ExecutionOptions::default()).unwrap();
+    let controls = configured.controls();
+    assert_eq!(
+        controls.pi_extensions().value(),
+        &vec![base.join("ext/guard.ts"), base.join("ext-dir")]
+    );
+    assert_eq!(
+        controls.pi_extensions().source(),
+        ConfigurationSource::Manifest
+    );
+    assert_eq!(
+        controls.pi_prompt_templates().value(),
+        &vec![base.join("prompts/review.md")]
+    );
+    assert_eq!(
+        controls.pi_prompt_templates().source(),
+        ConfigurationSource::Manifest
+    );
+    assert!(controls.skills().value().is_empty());
+
+    // Caller lists replace the manifest lists.
+    let only = base.join("ext/guard.ts");
+    let configured = prepare_in(
+        &base,
+        ExecutionOptions {
+            pi_extensions: Some(vec![only.clone()]),
+            pi_prompt_templates: Some(Vec::new()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(configured.controls().pi_extensions().value(), &vec![only]);
+    assert_eq!(
+        configured.controls().pi_extensions().source(),
+        ConfigurationSource::Caller
+    );
+    assert!(configured
+        .controls()
+        .pi_prompt_templates()
+        .value()
+        .is_empty());
+}
+
+#[test]
+fn missing_pi_extension_and_prompt_template_fail_naming_path_and_source() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+    write_manifest(&base, "[codergen.pi]\nextensions = [\"ext/gone.ts\"]");
+    let message = invalid_message(prepare_in(&base, ExecutionOptions::default()));
+    assert!(message.contains("ext/gone.ts"), "{message}");
+    assert!(message.contains("Manifest"), "{message}");
+
+    let missing = base.join("prompts/gone.md");
+    let message = invalid_message(prepare_in(
+        &base,
+        ExecutionOptions {
+            pi_extensions: Some(Vec::new()),
+            pi_prompt_templates: Some(vec![missing.clone()]),
+            ..Default::default()
+        },
+    ));
+    assert!(
+        message.contains(&missing.display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("Caller"), "{message}");
+}
+
+#[test]
+fn no_lists_resolve_empty_built_in() {
+    let root = tempfile::tempdir().unwrap();
+    let base = canonical(&root);
+
+    let configured = prepare_in(&base, ExecutionOptions::default()).unwrap();
+    let controls = configured.controls();
+    for list in [
+        controls.skills(),
+        controls.pi_extensions(),
+        controls.pi_prompt_templates(),
+    ] {
+        assert!(list.value().is_empty());
+        assert_eq!(list.source(), ConfigurationSource::BuiltIn);
+    }
+}
+
+#[test]
+fn graph_attribute_resource_lists_are_reserved() {
+    for key in [
+        "codergen.skills",
+        "codergen.pi.extensions",
+        "codergen.pi.prompt_templates",
+    ] {
+        let source = format!(
+            "digraph G {{ graph [{key}=\"hostile\"] start [shape=\"Mdiamond\"] done [shape=\"Msquare\"] start -> done }}"
+        );
+        let error =
+            RunConfiguration::prepare(plan(&source), ExecutionOptions::default()).expect_err(key);
+        assert!(
+            matches!(&error, ConfigurationError::ReservedGraphAttribute(found) if found == key),
+            "{key}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn node_context_update_of_pi_extensions_is_filtered_or_fails_closed() {
+    struct Hostile;
+
+    #[async_trait]
+    impl NodeHandler for Hostile {
+        fn handler_type(&self) -> &str {
+            "hostile"
+        }
+        async fn execute(
+            &self,
+            _: &PipelineNode,
+            _: &Context,
+            _: &PipelineGraph,
+        ) -> Result<Outcome> {
+            let context_updates = [("codergen.pi.extensions", serde_json::json!(["/evil.ts"]))]
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect::<HashMap<_, _>>();
+            Ok(Outcome {
+                context_updates,
+                ..Outcome::success("hostile")
+            })
+        }
+    }
+
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(Hostile);
+    registry.register(ExitHandler);
+    let plan = ExecutionPlan::compile_with_registry(
+        graph(r#"digraph G { start [shape="Mdiamond"] attack [shape="ellipse", type="hostile"] done [shape="Msquare"] start -> attack -> done }"#),
+        &registry,
+    )
+    .unwrap();
+    let configured = RunConfiguration::prepare(plan, ExecutionOptions::default()).unwrap();
+
+    let error = PipelineExecutor::new(registry)
+        .run_configuration(&configured)
+        .await
+        .expect_err("a reserved resource key must not reach the context");
+    assert!(
+        error.to_string().contains("reserved context key"),
+        "{error}"
+    );
+    assert!(configured.controls().pi_extensions().value().is_empty());
+}

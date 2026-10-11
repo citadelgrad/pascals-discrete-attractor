@@ -694,7 +694,12 @@ impl CodergenHandler {
                 dry_run: *config.dry_run().value(),
                 workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
                 claude,
-                pi: PiCliConfig::default(),
+                // Source paths; the Run's skill copy replaces these later.
+                pi: PiCliConfig {
+                    skills: path_strings(config.skills().value()),
+                    extensions: path_strings(config.pi_extensions().value()),
+                    prompt_templates: path_strings(config.pi_prompt_templates().value()),
+                },
                 run_dir: execution.run_dir().map(Path::to_path_buf),
                 program,
                 events: execution.events(),
@@ -711,6 +716,13 @@ const CLAUDE_TOOLS_KEY: &str = "codergen.claude.tools";
 const CLAUDE_AGENTS_KEY: &str = "codergen.claude.agents";
 const CLAUDE_PLUGIN_DIRS_KEY: &str = "codergen.claude.plugin_dirs";
 const CLAUDE_MCP_CONFIG_KEY: &str = "codergen.claude.mcp_config";
+
+fn path_strings(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
 
 /// The pi node's `max_budget_usd` as a number, `None` when absent. A value
 /// that is not a finite non-negative number fails closed (spec C9).

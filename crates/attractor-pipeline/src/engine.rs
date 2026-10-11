@@ -316,6 +316,9 @@ async fn legacy_options(context: Context) -> Result<(ExecutionOptions, Context)>
             .get("quality_max_fix_iterations")
             .and_then(|value| value.as_u64())
             .and_then(|value| u32::try_from(value).ok()),
+        skills: None,
+        pi_extensions: None,
+        pi_prompt_templates: None,
         claude: ClaudeExecutionOptions {
             settings_mode,
             setting_sources,

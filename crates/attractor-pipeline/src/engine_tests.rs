@@ -3908,3 +3908,108 @@ async fn pi_budget_stop_is_not_retried_and_cost_reaches_run_total() {
         result.total_cost
     );
 }
+
+// U8: the resolved resource lists reach the pi argv through the Run path. No
+// Run directory exists here, so the validated source paths are passed as is.
+async fn pi_argv_for_resources(manifest_body: &str) -> (Vec<String>, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    std::fs::create_dir_all(base.join("skills/review")).unwrap();
+    std::fs::write(
+        base.join("skills/review/SKILL.md"),
+        "---\nname: review\n---\n",
+    )
+    .unwrap();
+    std::fs::write(base.join("ext.ts"), "export default {}").unwrap();
+    std::fs::write(base.join("prompt.md"), "p").unwrap();
+    std::fs::write(
+        base.join("pas.toml"),
+        format!("[project]\nname = \"u8\"\n\n{manifest_body}\n"),
+    )
+    .unwrap();
+    let log = base.join("argv.log");
+    let program = base.join("pi-stub");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut registry = HandlerRegistry::new();
+    registry.register(StartHandler);
+    registry.register(ExitHandler);
+    registry.register(StubbedCodergen(program));
+    let plan = crate::execution_plan::ExecutionPlan::compile_with_registry(
+        parse_graph(
+            r#"digraph G {
+                start [shape="Mdiamond"]
+                work  [shape="box", prompt="work", llm_provider="pi", llm_model="openai/gpt-5.5"]
+                done  [shape="Msquare"]
+                start -> work -> done
+            }"#,
+        ),
+        &registry,
+    )
+    .unwrap();
+    let configured = crate::run_configuration::RunConfiguration::prepare(
+        plan,
+        crate::run_configuration::ExecutionOptions {
+            workdir: Some(base.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let _ = PipelineExecutor::new(registry)
+        .run_configuration(&configured)
+        .await;
+    let argv = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    (argv, base)
+}
+
+#[tokio::test]
+async fn pi_node_without_run_dir_gets_source_skill_path() {
+    let (argv, base) = pi_argv_for_resources(
+        "[codergen]\nskills = [\"skills/review\"]\n\n[codergen.pi]\nextensions = [\"ext.ts\"]\nprompt_templates = [\"prompt.md\"]",
+    )
+    .await;
+
+    let separator = argv.iter().position(|a| a == "--").unwrap();
+    let flags = &argv[..separator];
+    let value_after = |flag: &str| {
+        let at = flags.iter().position(|a| a == flag).unwrap();
+        flags[at + 1].clone()
+    };
+    assert_eq!(
+        value_after("--skill"),
+        base.join("skills/review").display().to_string()
+    );
+    assert!(std::path::Path::new(&value_after("--skill")).is_absolute());
+    assert_eq!(value_after("-e"), base.join("ext.ts").display().to_string());
+    assert_eq!(
+        value_after("--prompt-template"),
+        base.join("prompt.md").display().to_string()
+    );
+}
+
+#[tokio::test]
+async fn pi_without_resource_lists_has_no_resource_flags() {
+    let (argv, _) = pi_argv_for_resources("").await;
+
+    assert!(!argv.is_empty(), "the stub must have run");
+    for flag in ["--skill", "-e", "--prompt-template"] {
+        assert!(
+            !argv.iter().any(|a| a == flag),
+            "unexpected {flag}: {argv:?}"
+        );
+    }
+}

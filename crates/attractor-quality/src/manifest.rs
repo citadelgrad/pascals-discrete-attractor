@@ -42,6 +42,17 @@ pub struct HookConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CodergenSection {
     pub claude: Option<ClaudeCodergenConfig>,
+    #[serde(default)]
+    pub skills: Vec<PathBuf>,
+    pub pi: Option<PiCodergenConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PiCodergenConfig {
+    #[serde(default)]
+    pub extensions: Vec<PathBuf>,
+    #[serde(default)]
+    pub prompt_templates: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -292,5 +303,74 @@ settings_json = "not-json"
         .unwrap_err();
 
         assert!(err.to_string().contains("expected ident"));
+    }
+
+    #[test]
+    fn parses_skills_and_pi_resource_lists() {
+        let manifest = parse_manifest(
+            r#"
+[project]
+name = "test"
+
+[codergen]
+skills = ["skills/review", "/abs/skill"]
+
+[codergen.pi]
+extensions = ["ext/a.ts"]
+prompt_templates = ["prompts/review.md"]
+"#,
+        )
+        .unwrap();
+
+        let codergen = manifest.codergen.unwrap();
+        assert!(codergen.claude.is_none());
+        assert_eq!(
+            codergen.skills,
+            vec![PathBuf::from("skills/review"), PathBuf::from("/abs/skill")]
+        );
+        let pi = codergen.pi.unwrap();
+        assert_eq!(pi.extensions, vec![PathBuf::from("ext/a.ts")]);
+        assert_eq!(
+            pi.prompt_templates,
+            vec![PathBuf::from("prompts/review.md")]
+        );
+    }
+
+    #[test]
+    fn pi_section_alone_parses_with_empty_lists() {
+        let manifest = parse_manifest(
+            r#"
+[project]
+name = "test"
+
+[codergen.pi]
+"#,
+        )
+        .unwrap();
+
+        let codergen = manifest.codergen.unwrap();
+        assert!(codergen.claude.is_none());
+        assert!(codergen.skills.is_empty());
+        let pi = codergen.pi.unwrap();
+        assert!(pi.extensions.is_empty());
+        assert!(pi.prompt_templates.is_empty());
+    }
+
+    #[test]
+    fn absent_resource_lists_are_empty() {
+        let manifest = parse_manifest(
+            r#"
+[project]
+name = "test"
+
+[codergen.claude]
+tools = "Read"
+"#,
+        )
+        .unwrap();
+
+        let codergen = manifest.codergen.unwrap();
+        assert!(codergen.skills.is_empty());
+        assert!(codergen.pi.is_none());
     }
 }

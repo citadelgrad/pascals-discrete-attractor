@@ -10,7 +10,7 @@ pub(crate) mod enrich;
 
 pub use manifest::{
     ClaudeCodergenConfig, ClaudeSettingSource, ClaudeSettingsMode, CodergenSection, HookConfig,
-    Manifest, QualitySection, ResolvedManifest,
+    Manifest, PiCodergenConfig, QualitySection, ResolvedManifest,
 };
 pub use resolution::{resolve, ResolutionError};
 pub use trust::{

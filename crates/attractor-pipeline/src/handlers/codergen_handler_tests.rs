@@ -3050,3 +3050,32 @@ mod pi_stream {
         }
     }
 }
+
+// --- pi skill paths (U14) ---
+
+#[test]
+fn pi_skill_paths_use_the_run_copy_only_when_it_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skills = vec![PathBuf::from("/src/a"), PathBuf::from("/src/b")];
+
+    // No Run directory: source paths.
+    assert_eq!(pi_skill_paths(None, &skills), ["/src/a", "/src/b"]);
+    // A Run directory without a copy: source paths.
+    assert_eq!(
+        pi_skill_paths(Some(tmp.path()), &skills),
+        ["/src/a", "/src/b"]
+    );
+    // An empty list stays empty.
+    assert!(pi_skill_paths(Some(tmp.path()), &[]).is_empty());
+
+    let root = crate::agent_resources::skill_copy_root(tmp.path());
+    std::fs::create_dir_all(root.join("skills")).unwrap();
+    let got = pi_skill_paths(Some(tmp.path()), &skills);
+    assert_eq!(
+        got,
+        [
+            root.join("skills/a").to_string_lossy().into_owned(),
+            root.join("skills/b").to_string_lossy().into_owned(),
+        ]
+    );
+}

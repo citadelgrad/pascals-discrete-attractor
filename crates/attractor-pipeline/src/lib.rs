@@ -4,6 +4,7 @@
 //! handler dispatch, edge selection, goal gate enforcement, checkpoint/resume,
 //! and canonical semantic compilation followed by nine structural checks.
 
+pub mod agent_resources;
 pub mod beads_adapter;
 pub mod checkpoint;
 pub mod condition;

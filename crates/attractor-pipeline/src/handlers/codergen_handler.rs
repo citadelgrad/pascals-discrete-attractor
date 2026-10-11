@@ -694,9 +694,8 @@ impl CodergenHandler {
                 dry_run: *config.dry_run().value(),
                 workdir: Some(config.workdir().value().to_string_lossy().into_owned()),
                 claude,
-                // Source paths; the Run's skill copy replaces these later.
                 pi: PiCliConfig {
-                    skills: path_strings(config.skills().value()),
+                    skills: pi_skill_paths(execution.run_dir(), config.skills().value()),
                     extensions: path_strings(config.pi_extensions().value()),
                     prompt_templates: path_strings(config.pi_prompt_templates().value()),
                 },
@@ -716,6 +715,17 @@ const CLAUDE_TOOLS_KEY: &str = "codergen.claude.tools";
 const CLAUDE_AGENTS_KEY: &str = "codergen.claude.agents";
 const CLAUDE_PLUGIN_DIRS_KEY: &str = "codergen.claude.plugin_dirs";
 const CLAUDE_MCP_CONFIG_KEY: &str = "codergen.claude.mcp_config";
+
+/// The Run's skill copy when one was built, otherwise the source paths
+/// (library calls and Runs without a Run directory).
+fn pi_skill_paths(run_dir: Option<&Path>, skills: &[PathBuf]) -> Vec<String> {
+    if let Some(run_dir) = run_dir {
+        if !skills.is_empty() && crate::agent_resources::skill_copy_root(run_dir).is_dir() {
+            return path_strings(&crate::agent_resources::copied_skill_dirs(run_dir, skills));
+        }
+    }
+    path_strings(skills)
+}
 
 fn path_strings(paths: &[PathBuf]) -> Vec<String> {
     paths

@@ -1057,6 +1057,15 @@ async fn prepare_run(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => tracing::warn!(error = %e, "cannot remove the stale control/stop"),
     }
+    // Every Attempt rebuilds the skill copy from the lists it received. A dry
+    // run starts no node, so it makes none.
+    if !*configured.controls().dry_run().value() {
+        attractor_pipeline::agent_resources::build_skill_copy(
+            run_dir.path(),
+            configured.controls().skills().value(),
+        )
+        .map_err(|e| setup(&e))?;
+    }
     let attempt = last_attempt(&run_dir.events()) + 1;
     let pipeline_path = absolute(path);
     let pas_version = env!("CARGO_PKG_VERSION").to_string();

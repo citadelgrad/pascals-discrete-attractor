@@ -44,10 +44,11 @@ impl Fixture {
                  case \"$1\" in\n\
                  --version) echo 1.0.4 ;;\n\
                  auth) echo '{READY}' ;;\n\
-                 *) echo \"$*\" >> '{calls}.nodes'; /bin/cat '{fixture}' ;;\n\
+                 *) echo \"$*\" >> '{calls}.nodes'; [ -f '{fail}' ] && exit 1; /bin/cat '{fixture}' ;;\n\
                  esac\n",
                 calls = calls.display(),
                 fixture = fixture_jsonl().display(),
+                fail = self.path("fail-nodes").display(),
             ),
         )
         .unwrap();
@@ -196,10 +197,21 @@ fn two_skill_flags_replace_the_manifest_list_and_start_output_names_source() {
     assert!(!all.contains("from-manifest"), "{all}");
     let calls = fx.node_calls();
     assert_eq!(calls.len(), 1, "{calls:?}");
-    assert_eq!(
-        values_of(&calls[0], "--skill"),
-        [a.display().to_string(), b.display().to_string()]
+    let seen = values_of(&calls[0], "--skill");
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_copy_dir(&seen[0], "a");
+    assert_copy_dir(&seen[1], "b");
+}
+
+/// `value` is `<run_dir>/agent-resources/claude-plugin/skills/<name>` and the
+/// skill's `SKILL.md` is there.
+fn assert_copy_dir(value: &str, name: &str) {
+    assert!(value.contains("/runs/"), "{value}");
+    assert!(
+        value.ends_with(&format!("/agent-resources/claude-plugin/skills/{name}")),
+        "{value}"
     );
+    assert!(Path::new(value).join("SKILL.md").is_file(), "{value}");
 }
 
 #[test]
@@ -267,7 +279,9 @@ fn directory_run_passes_the_list_to_every_pipeline() {
     let calls = fx.node_calls();
     assert_eq!(calls.len(), 2, "{calls:?}");
     for call in &calls {
-        assert_eq!(values_of(call, "--skill"), [skill.display().to_string()]);
+        let seen = values_of(call, "--skill");
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_copy_dir(&seen[0], "s");
     }
 }
 
@@ -490,4 +504,148 @@ fn dry_run_with_an_untrusted_extension_does_not_fail() {
     let dot = fx.dot("p.dot");
     let output = fx.pas(&["run", arg(&dot), "--dry-run"]);
     assert!(output.status.success(), "{}", text(&output));
+}
+
+fn run_dir_of(output: &Output) -> PathBuf {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let first: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    PathBuf::from(first["run_dir"].as_str().unwrap())
+}
+
+#[test]
+fn skill_copy_has_manifest_and_a_directory_per_skill_in_the_run_dir() {
+    let fx = Fixture::new();
+    let a = fx.skill("a");
+    let b = fx.skill("b");
+    let dot = fx.dot("p.dot");
+    let output = fx.pas(&[
+        "run",
+        arg(&dot),
+        "--json",
+        "--codergen-skill",
+        arg(&a),
+        "--codergen-skill",
+        arg(&b),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+    let root = run_dir_of(&output).join("agent-resources/claude-plugin");
+    assert!(root.join(".claude-plugin/plugin.json").is_file());
+    assert!(root.join("skills/a/SKILL.md").is_file());
+    assert!(root.join("skills/b/SKILL.md").is_file());
+    let calls = fx.node_calls();
+    let seen = values_of(&calls[0], "--skill");
+    assert_eq!(
+        seen,
+        [
+            root.join("skills/a").display().to_string(),
+            root.join("skills/b").display().to_string()
+        ]
+    );
+}
+
+#[test]
+fn run_without_skills_makes_no_agent_resources_folder() {
+    let fx = Fixture::new();
+    let dot = fx.dot("p.dot");
+    let output = fx.pas(&["run", arg(&dot), "--json"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(!run_dir_of(&output).join("agent-resources").exists());
+    assert!(values_of(&fx.node_calls()[0], "--skill").is_empty());
+}
+
+#[test]
+fn over_cap_skill_is_a_setup_error_before_any_node_and_before_run_json() {
+    let fx = Fixture::new();
+    let big = fx.skill("big");
+    fs::File::create(big.join("blob.bin"))
+        .unwrap()
+        .set_len(11 * 1024 * 1024)
+        .unwrap();
+    let dot = fx.dot("p.dot");
+    let output = fx.pas(&["run", arg(&dot), "--json", "--codergen-skill", arg(&big)]);
+    assert!(!output.status.success());
+    let all = text(&output);
+    assert!(all.contains("run_setup_failed"), "{all}");
+    assert!(all.contains("10 MiB"), "{all}");
+    assert!(fx.node_calls().is_empty());
+    let run_json: Vec<_> = walk(&fx.path("work/.pas"))
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| n == "run.json"))
+        .collect();
+    assert!(run_json.is_empty(), "{run_json:?}");
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            out.extend(walk(&path));
+        }
+        out.push(path);
+    }
+    out
+}
+
+#[test]
+fn dry_run_with_skills_makes_no_copy() {
+    let fx = Fixture::new();
+    let a = fx.skill("a");
+    let dot = fx.dot("p.dot");
+    let output = fx.pas(&[
+        "run",
+        arg(&dot),
+        "--dry-run",
+        "--json",
+        "--codergen-skill",
+        arg(&a),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(!run_dir_of(&output).join("agent-resources").exists());
+}
+
+#[test]
+fn resumed_run_with_one_skill_fewer_leaves_nothing_of_the_removed_skill() {
+    let fx = Fixture::new();
+    let a = fx.skill("a");
+    let b = fx.skill("b");
+    fs::write(b.join("only-b.txt"), "b").unwrap();
+    let dot = fx.dot("p.dot");
+    // The first Attempt fails at the node, so its checkpoint stays and the
+    // same command resumes the same Run.
+    fs::write(fx.path("fail-nodes"), "").unwrap();
+    let first = fx.pas(&[
+        "run",
+        arg(&dot),
+        "--json",
+        "--codergen-skill",
+        arg(&a),
+        "--codergen-skill",
+        arg(&b),
+    ]);
+    assert!(!first.status.success(), "{}", text(&first));
+    fs::remove_file(fx.path("fail-nodes")).unwrap();
+    let run_dir = run_dir_of(&first);
+    assert!(run_dir
+        .join("agent-resources/claude-plugin/skills/b/only-b.txt")
+        .is_file());
+
+    let second = fx.pas(&["run", arg(&dot), "--json", "--codergen-skill", arg(&a)]);
+    // The checkpoint keeps the node's spent retries, so this Attempt may end
+    // in failure; the copy is rebuilt in setup before any node.
+    assert!(
+        text(&second).contains("Resuming from checkpoint"),
+        "{}",
+        text(&second)
+    );
+    assert_eq!(run_dir_of(&second), run_dir);
+    let root = run_dir.join("agent-resources/claude-plugin");
+    assert!(root.join("skills/a/SKILL.md").is_file());
+    assert!(!root.join("skills/b").exists());
+    assert!(!walk(&run_dir.join("agent-resources"))
+        .iter()
+        .any(|p| p.file_name().is_some_and(|n| n == "only-b.txt")));
 }

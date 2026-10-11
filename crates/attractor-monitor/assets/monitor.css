@@ -31,6 +31,7 @@ td.commits code { word-break: break-all; }
 .tx-result { border-left-color: #388e3c; }
 .tx-error, .tx-raw { border-left-color: #c62828; }
 .tx-thinking, .tx-note { opacity: 0.65; }
+.tx-header { font-weight: 600; }
 .gate { margin: 0.25rem 0; }
 .gate button { margin-right: 0.4rem; }
 .gate button.default { font-weight: bold; }

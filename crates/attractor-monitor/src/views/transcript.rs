@@ -51,6 +51,8 @@ pub enum Item {
         text: String,
         is_error: bool,
     },
+    /// The first line of a session, such as a pi `session` line.
+    Header(String),
     /// Session markers: init, turn boundaries, result summaries.
     Note(String),
     /// A line the renderer does not understand, shown as it is.
@@ -88,7 +90,9 @@ fn result_text(v: &Value) -> String {
 }
 
 /// Turn one Transcript line into items. Total: anything unrecognised is `Raw`.
-/// Understands Claude `stream-json` and Codex `--json`.
+/// Understands Claude `stream-json`, Codex `--json` and pi `--mode json`.
+/// A few pi types (`message_update`, `message_start`, `tool_execution_*`) repeat
+/// what a later `message_end` carries; they give no items, so the result may be empty.
 pub fn parse_line(line: &str) -> Vec<Item> {
     let raw = || vec![Item::Raw(line.to_string())];
     let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(line) else {
@@ -97,6 +101,16 @@ pub fn parse_line(line: &str) -> Vec<Item> {
     let Some(kind) = obj.get("type").and_then(Value::as_str) else {
         return raw();
     };
+    if matches!(
+        kind,
+        "message_start"
+            | "message_update"
+            | "tool_execution_start"
+            | "tool_execution_update"
+            | "tool_execution_end"
+    ) {
+        return Vec::new();
+    }
     let items: Option<Vec<Item>> = match kind {
         "system" => Some(vec![Item::Note(format!(
             "system {}",
@@ -117,6 +131,11 @@ pub fn parse_line(line: &str) -> Vec<Item> {
         ))]),
         "thread.started" | "turn.started" | "turn.completed" => Some(vec![Item::Note(kind.into())]),
         "item.completed" => obj.get("item").and_then(codex_item),
+        "session" => Some(vec![Item::Header(pi_session(&obj))]),
+        "agent_start" | "turn_start" | "turn_end" | "agent_end" | "agent_settled" => {
+            Some(vec![Item::Note(format!("pi {kind}"))])
+        }
+        "message_end" => obj.get("message").and_then(pi_message),
         _ => None,
     };
     match items {
@@ -163,6 +182,98 @@ fn claude_message(kind: &str, obj: &serde_json::Map<String, Value>) -> Option<Ve
         }
     }
     Some(out)
+}
+
+fn pi_session(obj: &serde_json::Map<String, Value>) -> String {
+    let field = |k: &str| obj.get(k).and_then(Value::as_str);
+    let mut s = String::from("pi session");
+    for v in [field("id"), field("cwd")].into_iter().flatten() {
+        s.push_str(" · ");
+        s.push_str(&cut(v));
+    }
+    s
+}
+
+/// A pi `message_end` message: the finished form of every message. `None` when the
+/// shape is not understood, so the line shows as raw.
+fn pi_message(msg: &Value) -> Option<Vec<Item>> {
+    let role = msg.get("role")?.as_str()?;
+    if role == "system" {
+        return Some(vec![Item::Note("system prompt".into())]);
+    }
+    let blocks = match msg.get("content")? {
+        Value::String(s) => vec![serde_json::json!({"type": "text", "text": s})],
+        Value::Array(a) => a.clone(),
+        _ => return None,
+    };
+    let text_role = match role {
+        "assistant" => Role::Assistant,
+        "user" => Role::User,
+        "toolResult" => {
+            return Some(vec![Item::ToolResult {
+                text: result_text(msg.get("content")?),
+                is_error: msg.get("isError").and_then(Value::as_bool) == Some(true),
+            }]);
+        }
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    for b in &blocks {
+        let field = |k: &str| b.get(k).and_then(Value::as_str);
+        match field("type")? {
+            "text" => out.push(Item::Text {
+                role: text_role,
+                text: cut(field("text").unwrap_or("")),
+            }),
+            "thinking" => {
+                if let Some(t) = field("thinking").filter(|t| !t.is_empty()) {
+                    out.push(Item::Thinking(cut(t)));
+                }
+            }
+            "toolCall" => out.push(Item::ToolCall {
+                name: field("name").unwrap_or("tool").to_string(),
+                input: b.get("arguments").map_or_else(String::new, pretty),
+            }),
+            _ => return None,
+        }
+    }
+    if role == "assistant" {
+        if msg.get("stopReason").and_then(Value::as_str) == Some("error") {
+            if let Some(e) = msg.get("errorMessage").and_then(Value::as_str) {
+                out.push(Item::ToolResult {
+                    text: cut(e),
+                    is_error: true,
+                });
+            }
+        }
+        if let Some(u) = pi_usage(msg.get("usage")) {
+            out.push(Item::Note(u));
+        }
+    }
+    Some(out)
+}
+
+fn pi_usage(usage: Option<&Value>) -> Option<String> {
+    let u = usage?.as_object()?;
+    let num = |v: Option<&Value>| v.and_then(Value::as_u64);
+    let mut parts = Vec::new();
+    if let Some(n) = num(u.get("input")) {
+        parts.push(format!("{n} in"));
+    }
+    if let Some(n) = num(u.get("output")) {
+        parts.push(format!("{n} out"));
+    }
+    if let (Some(r), Some(w)) = (num(u.get("cacheRead")), num(u.get("cacheWrite"))) {
+        parts.push(format!("cache {r}/{w}"));
+    }
+    if let Some(c) = u
+        .get("cost")
+        .and_then(|c| c.get("total"))
+        .and_then(Value::as_f64)
+    {
+        parts.push(format!("${c}"));
+    }
+    (!parts.is_empty()).then(|| format!("usage: {}", parts.join(" · ")))
 }
 
 fn codex_item(item: &Value) -> Option<Vec<Item>> {
@@ -217,6 +328,7 @@ fn render_item(item: &Item) -> Markup {
                 pre { (text) }
             }
         },
+        Item::Header(h) => html! { div class="tx tx-header" { (h) } },
         Item::Note(n) => html! { div class="tx tx-note" { (n) } },
         Item::Raw(l) => html! { pre class="tx tx-raw" { (l) } },
     }
@@ -374,10 +486,14 @@ fn follow(state: AppState, run_id: String, path: PathBuf, from: u64) -> Response
             let lines = tail.poll().await;
             let idle = lines.is_empty();
             for (end, line) in lines {
+                let html = render_line(&line).into_string();
+                if html.is_empty() {
+                    continue;
+                }
                 let ev = Event::default()
                     .event("line")
                     .id(end.to_string())
-                    .data(render_line(&line).into_string());
+                    .data(html);
                 if tx.send(Ok(ev)).await.is_err() {
                     return;
                 }
@@ -574,5 +690,163 @@ mod tests {
         let (l, rest) = split_lines(b"a\r\nb\nc", 10);
         assert_eq!(l, vec![(13, "a".to_string()), (15, "b".to_string())]);
         assert_eq!(rest, b"c");
+    }
+
+    fn fixture_lines(rel: &str) -> Vec<String> {
+        let p = format!("{}/{rel}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(p)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    const PI: &str = "../attractor-pipeline/tests/fixtures/providers/pi-1.0.4.jsonl";
+
+    fn pi_items(rel: &str) -> Vec<Item> {
+        fixture_lines(rel)
+            .iter()
+            .flat_map(|l| parse_line(l))
+            .collect()
+    }
+
+    #[test]
+    fn claude_and_codex_fixtures_render_unchanged() {
+        let dump = |rel: &str| {
+            fixture_lines(rel)
+                .iter()
+                .map(|l| format!("{:?}", parse_line(l)))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            dump("tests/fixtures/transcript_claude.jsonl"),
+            [
+                r#"[Note("system init")]"#,
+                r#"[Thinking("pondering-alpha")]"#,
+                r#"[Text { role: Assistant, text: "message-bravo" }]"#,
+                r#"[ToolCall { name: "ToolCharlie", input: "{\n  \"command\": \"echo delta\"\n}" }]"#,
+                r#"[ToolResult { text: "result-echo", is_error: false }]"#,
+                r#"[Text { role: Assistant, text: "message-foxtrot" }]"#,
+                r#"[Note("result: done-golf")]"#,
+            ]
+        );
+        assert_eq!(
+            dump("tests/fixtures/transcript_codex.jsonl"),
+            [
+                r#"[Note("thread.started")]"#,
+                r#"[ToolCall { name: "command", input: "cmd-hotel" }, ToolResult { text: "out-india", is_error: false }]"#,
+                r#"[Text { role: Assistant, text: "message-juliet" }]"#,
+                r#"[Note("turn.completed")]"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn pi_fixture_shows_text_tool_call_result_and_usage() {
+        let items = pi_items(PI);
+        assert!(
+            !items.iter().any(|i| matches!(i, Item::Raw(_))),
+            "{items:?}"
+        );
+        let pos = |f: &dyn Fn(&Item) -> bool| items.iter().position(f).unwrap();
+        let call = pos(
+            &|i| matches!(i, Item::ToolCall { name, input } if name == "bash" && input.contains("echo ok")),
+        );
+        let result = pos(
+            &|i| matches!(i, Item::ToolResult { text, is_error: false } if text.contains("ok")),
+        );
+        let done =
+            pos(&|i| matches!(i, Item::Text { role: Role::Assistant, text } if text == "done"));
+        let usage = items
+            .iter()
+            .rposition(
+                |i| matches!(i, Item::Note(n) if n.starts_with("usage:") && n.contains("0.00425")),
+            )
+            .expect("usage line");
+        assert!(call < result && result < done && done < usage, "{items:?}");
+        let users = items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    Item::Text {
+                        role: Role::User,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(users, 1);
+    }
+
+    #[test]
+    fn pi_session_header_is_not_raw() {
+        let first = &fixture_lines(PI)[0];
+        let items = parse_line(first);
+        assert!(
+            matches!(&items[..], [Item::Header(h)] if h.contains("/tmp/pas-fixture")),
+            "{items:?}"
+        );
+    }
+
+    #[test]
+    fn pi_message_update_does_not_repeat_text() {
+        let upd = r#"{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"assistantMessageEvent":{"type":"text_delta","delta":"done"}}"#;
+        assert!(parse_line(upd).is_empty());
+        let items = pi_items(PI);
+        let done = items
+            .iter()
+            .filter(|i| matches!(i, Item::Text { text, .. } if text == "done"))
+            .count();
+        assert_eq!(done, 1);
+        let calls = items
+            .iter()
+            .filter(|i| matches!(i, Item::ToolCall { .. }))
+            .count();
+        assert_eq!(calls, 1);
+        for l in fixture_lines(PI) {
+            if l.starts_with(r#"{"type":"turn_end""#) || l.starts_with(r#"{"type":"agent_end""#) {
+                assert!(parse_line(&l).iter().all(|i| matches!(i, Item::Note(_))));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_pi_event_type_is_raw() {
+        let l = r#"{"type":"future_pi_event","x":1}"#;
+        assert_eq!(parse_line(l), vec![Item::Raw(l.to_string())]);
+        let bad = r#"{"type":"message_end","message":42}"#;
+        assert_eq!(parse_line(bad), vec![Item::Raw(bad.to_string())]);
+        let bad = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"mystery"}]}}"#;
+        assert!(matches!(parse_line(bad)[0], Item::Raw(_)));
+    }
+
+    #[test]
+    fn pi_text_with_html_is_escaped() {
+        let a = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"<script>alert(1)</script>"},{"type":"toolCall","name":"bash","arguments":{"command":"<img src=x>"}}]}}"#;
+        let r = r#"{"type":"message_end","message":{"role":"toolResult","content":[{"type":"text","text":"<b onload=1>"}],"isError":false}}"#;
+        for l in [a, r] {
+            let out = render_line(l).into_string();
+            assert!(
+                !out.contains("<script>") && !out.contains("<img") && !out.contains("<b "),
+                "{out}"
+            );
+            assert!(out.contains("&lt;"));
+        }
+    }
+
+    #[test]
+    fn pi_error_fixture_shows_the_error_and_killed_has_no_raw() {
+        let err = pi_items("../attractor-pipeline/tests/fixtures/providers/pi-1.0.4.error.jsonl");
+        assert!(
+            err.iter().any(
+                |i| matches!(i, Item::ToolResult { is_error: true, text } if !text.is_empty())
+            ),
+            "{err:?}"
+        );
+        assert!(!err.iter().any(|i| matches!(i, Item::Raw(_))));
+        let killed =
+            pi_items("../attractor-pipeline/tests/fixtures/providers/pi-1.0.4.killed.jsonl");
+        assert!(!killed.iter().any(|i| matches!(i, Item::Raw(_))));
     }
 }

@@ -193,6 +193,34 @@ async fn finished_transcript_renders_every_message_and_tool_call_in_order() {
     positions(&body, &["cmd-hotel", "out-india", "message-juliet"]);
 }
 
+// pi Transcripts render as messages, tool calls and results (attractor-9bg.12).
+#[tokio::test]
+async fn pi_transcript_page_renders_messages_tool_calls_and_results() {
+    let e = env();
+    let (id, w) = new_run(&e, "/r/pi", std::process::id());
+    w.append(llm("pi-1", "n")).unwrap();
+    let pi = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../attractor-pipeline/tests/fixtures/providers/pi-1.0.4.jsonl"),
+    )
+    .unwrap();
+    std::fs::write(transcripts(&e, &id).join("pi-1.jsonl"), pi).unwrap();
+    let (addr, _stop) = serve(&e).await;
+    run_ready(addr, &id).await;
+
+    let (code, body) = get(addr, &format!("/runs/{id}/transcripts/pi-1")).await;
+    assert_eq!(code, 200);
+    positions(
+        &body,
+        &["pi session", "echo ok", "tool result", "<pre>done</pre>"],
+    );
+    assert!(
+        body.contains("usage: ") && body.contains("0.00425"),
+        "{body}"
+    );
+    assert!(!body.contains("tx-raw"), "{body}");
+}
+
 // AC 2
 async fn read_until(s: &mut TcpStream, want: &str, within: Duration) -> (String, Duration) {
     let start = Instant::now();

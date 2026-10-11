@@ -2,6 +2,31 @@
 
 All notable changes to PAS are documented here.
 
+## [Unreleased]
+
+### Added
+
+- pi (1.0 or later) is the fourth `codergen` provider. PAS starts it in
+  isolation (`-p --mode json --no-session`, no personal resources, `--offline`),
+  parses its JSONL output (final text, actual model, tokens, cost) and applies
+  explicit status rules: success needs `agent_end` and stop reason `stop`.
+  `llm_model` is `provider/model-id[:thinking]`, and `allowed_tools` maps to
+  `--tools`.
+- PAS enforces `max_budget_usd` for pi nodes by stopping the process group when
+  the summed message cost is above the limit.
+- A readiness check (`pi --version` and `pi auth check`) runs before the first
+  node of a Run that has a pi node, and `pas launch` checks all Pipelines first.
+- Per-run resources: `[codergen] skills` and `[codergen.pi]` `extensions` and
+  `prompt_templates` in `pas.toml`, and the flags `--codergen-skill`,
+  `--codergen-pi-extension` and `--codergen-pi-prompt-template`. pi and Claude
+  nodes load them while isolation stays on (Claude only in `inherit` and
+  `strict_bare`). Skills are copied into the Run folder for each Attempt, and
+  extensions from `pas.toml` need trust. Codex and Gemini nodes, and Claude
+  nodes in `subscription_bare`, get the `CODERGEN_SKILLS_NOT_LOADED` warning.
+- The Monitor shows pi Transcripts as messages, tool calls and usage.
+- Opt-in live tests for skill loading (`PAS_LIVE_PI=1`, `PAS_LIVE_CLAUDE=1`).
+- A provider matrix in `docs/execution-capabilities.md`.
+
 ## [0.11.0] — 2026-09-27
 
 ### Added

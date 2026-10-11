@@ -25,3 +25,16 @@ This table is the authoritative inventory for supported non-web execution behavi
 | Multi-edge parallel / fan-in | Rejected with `unsupported_execution_topology`; zero/one-edge parallel remains sequential compatibility. | `ExecutionPlan::validate_supported_execution_topology` | `unsupported_topology_diagnostics_are_complete_and_deterministic` |
 
 Goal-gate retry edges are graph traversal, not handler retries. They begin a new non-terminal node visit with a fresh node retry budget. Terminal retry targets are rejected, and `max_steps` remains the global execution safety bound.
+
+## Provider matrix for `codergen` nodes
+
+What each provider CLI loads inside a PAS Run today, and which per-run resources a node on that provider accepts. Per-run resources are named skills (`[codergen] skills`, `--codergen-skill`), pi extensions and pi prompt templates (`[codergen.pi]`, `--codergen-pi-extension`, `--codergen-pi-prompt-template`). See the [CLI reference](cli-reference.md#per-run-resources) for the file format.
+
+| Provider | Loads in a PAS Run today | Named skills | pi extensions and prompt templates |
+|---|---|---|---|
+| `claude` | `subscription_bare` (the default, `--safe-mode`) loads no personal skills, hooks or plugins. It does not load named skills: the node keeps `--disable-slash-commands` and PAS prints the `CODERGEN_SKILLS_NOT_LOADED` warning. `inherit` loads named skills (a plugin copy passed with `--plugin-dir`) and also the personal skills of the chosen setting sources. `strict_bare` (`--bare`) loads named skills and no personal ones; not verified locally (it needs API-key auth, which was not available). | Accepted. Loaded in `inherit` and `strict_bare` only. | Not accepted. |
+| `codex` | The user's full `~/.codex` setup, `~/.agents/skills`, `<workdir>/.agents/skills` and `AGENTS.md` (seen with Codex 0.160.1). | Not accepted. PAS prints the `CODERGEN_SKILLS_NOT_LOADED` warning. | Not accepted. |
+| `gemini` | The user's full Gemini setup; not verified locally (the CLI was not installed). | Not accepted. PAS prints the `CODERGEN_SKILLS_NOT_LOADED` warning. | Not accepted. |
+| `pi` | Only what PAS names. PAS turns off personal extensions, skills, prompt templates, context files, MCP, `.pi` project files and sessions. | Accepted (`--skill`, once per skill). | Accepted (`-e` for each extension, `--prompt-template` for each template). |
+
+Named skills turn on Claude built-in slash commands in `inherit` and `strict_bare`, because PAS leaves out `--disable-slash-commands` for a node that loads them. A pi extension can read the environment variables PAS passes and can use the network even under `--offline`.

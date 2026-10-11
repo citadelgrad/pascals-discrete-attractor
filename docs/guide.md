@@ -150,9 +150,9 @@ Every `tripleoctagon`, `type="fan_in"`, or `type="parallel.fan_in"` node fails w
 | `prompt` | string | — | Task sent to the selected provider CLI. |
 | `type` | string | auto | Explicit handler type override (`node_type` and `handler` are compatibility aliases); recognized parallel/fan-in types remain subject to the execution-topology restrictions above |
 | `llm_model` | string | graph `model` | Model override for this node (`"haiku"`, `"sonnet"`, `"opus"`, or full model ID) |
-| `llm_provider` | string | — | Required whenever the resolved handler consumes a provider: `"claude"`, `"codex"`, or `"gemini"` |
-| `allowed_tools` | string | all | Comma-separated Claude Code tool list (`"Read,Grep,Glob"` for read-only); rejected outside Claude-backed codergen nodes |
-| `max_budget_usd` | string | unlimited | Maximum spend for this node's Claude Code session; rejected outside Claude-backed codergen nodes |
+| `llm_provider` | string | — | Required whenever the resolved handler consumes a provider: `"claude"`, `"codex"`, `"gemini"` or `"pi"` (`"openai"` is the Codex alias, not pi) |
+| `allowed_tools` | string | all | Comma-separated tool list for Claude or pi nodes (`"Read,Grep,Glob"` for Claude read-only; pi takes plain tool names such as `"read,bash"`); rejected on other providers |
+| `max_budget_usd` | string | unlimited | Maximum spend for this node's Claude Code or pi session (PAS enforces the pi budget itself); rejected on other providers |
 | `goal_gate` | boolean | false | If true, this node must succeed for the pipeline to complete |
 | `retry_target` | string | — | Node ID to loop back to if this goal gate fails |
 | `fallback_retry_target` | string | — | Second-level retry target |
@@ -889,6 +889,7 @@ Every node whose resolved handler consumes a provider must resolve an explicit p
 | Claude Code | `claude` | `"claude"` |
 | OpenAI Codex | `codex` | `"codex"` |
 | Google Gemini | `gemini` | `"gemini"` |
+| pi | `pi` | `"pi"` |
 
 ### Per-node provider
 
@@ -939,10 +940,36 @@ Each provider has different CLI flags and output formats. PAS handles this autom
 - **Claude**: Uses `--output-format stream-json --verbose` and `-p` for the prompt. Returns streaming JSON events; PAS uses the final `result` event.
 - **Codex**: Uses `codex exec --json --yolo` with the prompt as a positional argument. Returns streaming JSONL events; PAS extracts the last completed agent-message item.
 - **Gemini**: Uses `--output-format json --approval-mode yolo` with the prompt as a positional argument. When `gemini --help` lists `stream-json` (Gemini CLI 0.11.0 and later), PAS passes `--output-format stream-json` in place of `json`. PAS does not pass a `--sandbox` flag to Gemini. Returns structured JSON, or streaming JSON events from which PAS joins the assistant messages.
+- **pi**: Uses `-p --mode json --no-session` with personal extensions, skills, prompt templates, context files and MCP turned off. The node needs `llm_model="provider/model-id"`. PAS enforces `max_budget_usd` itself and reads cost from each assistant message.
+
+### pi nodes
+
+```dot
+digraph PiReview {
+    start [shape="Mdiamond"]
+
+    review [shape="box", llm_provider="pi", llm_model="openai/gpt-5.5:low",
+        allowed_tools="read,grep", max_budget_usd="0.50",
+        prompt="Review the changes and list problems"]
+
+    done [shape="Msquare"]
+
+    start -> review -> done
+}
+```
+
+`llm_provider="openai"` selects Codex; a pi node says `llm_provider="pi"` and
+puts `openai/gpt-5.5` in `llm_model`. The `llm_model` shape, the tool names,
+the budget overshoot, the status rules, the readiness check, per-run resources
+and their trust rule are in the
+[CLI reference](cli-reference.md#pi-nodes). Safety notes: pi extensions can read
+environment variables and use the network under `--offline`; named skills turn
+on Claude built-in slash commands in `inherit` and `strict_bare`; a prompt that
+starts with `@` gets one leading space so pi 1.0.4 does not expand it.
 
 During `pas run`, every provider invocation's raw stdout is also copied, line by line as it arrives, to a Transcript at `runs/<run-id>/transcripts/<invocation-id>.jsonl` in the Pipeline's log folder.
 
-When the provider process exits, fails, or times out, PAS appends one `LlmInvoked` Event for that invocation to the Run Journal (`runs/<run-id>/events.jsonl`). It records the provider (`claude`, `codex` or `gemini`), the requested model (the node's `llm_model`, else the graph's `model`; left out when neither is set), the model, input and output tokens, and cost that the provider's output reported (each left out when unknown), `duration_ms`, the Transcript path relative to the Run folder, and a `status` of `success`, `failed` or `timeout`. A dry run, or a provider CLI that cannot be started, records no `LlmInvoked`.
+When the provider process exits, fails, or times out, PAS appends one `LlmInvoked` Event for that invocation to the Run Journal (`runs/<run-id>/events.jsonl`). It records the provider (`claude`, `codex`, `gemini` or `pi`), the requested model (the node's `llm_model`, else the graph's `model`; left out when neither is set), the model, input and output tokens, and cost that the provider's output reported (each left out when unknown), `duration_ms`, the Transcript path relative to the Run folder, and a `status` of `success`, `failed` or `timeout`. A dry run, or a provider CLI that cannot be started, records no `LlmInvoked`.
 
 ### CLI not found
 

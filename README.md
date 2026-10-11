@@ -226,7 +226,7 @@ State lives under `PAS_STATE_DIR` (default `~/.local/state/pas`). See [docs/cli-
 ## Environment Variables
 
 There is no implicit runtime provider. Every node whose resolved handler consumes a provider must
-select `claude`, `codex`, or `gemini` with `llm_provider`. Claude-backed nodes
+select `claude`, `codex`, `gemini`, or `pi` with `llm_provider`. Claude-backed nodes
 use your local Claude Code installation and can run on your Claude subscription
 without a separate API key; Codex- and Gemini-backed nodes use their respective
 local CLI authentication.

@@ -208,9 +208,9 @@ These failures use the node-scoped `unsupported_execution_topology` rule and occ
 | `shape` | string | -- | Node shape (see table above) |
 | `type` | string | auto | Handler override: `"codergen"`, `"conditional"`, `"tool"`, `"parallel"`, `"fan_in"`, `"quality"`, `"wait.human"`, `"beads.select"`, `"beads.close"` (see [Beads handlers](#beads-handlers)); fan-in and manager roles are recognized but rejected |
 | `llm_model` | string | graph `model` | Model override: `"haiku"`, `"sonnet"`, `"opus"`, or full model ID |
-| `llm_provider` | string | -- | Required whenever the resolved handler consumes a provider. Values: `"claude"`, `"codex"`, `"gemini"`; aliases: `anthropic`, `openai`, `google` (case-insensitive). |
-| `allowed_tools` | string | all | Claude-only tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"`; rejected outside Claude-backed codergen nodes |
-| `max_budget_usd` | string | unlimited | Claude-only spend cap for this node's session; rejected outside Claude-backed codergen nodes |
+| `llm_provider` | string | -- | Required whenever the resolved handler consumes a provider. Values: `"claude"`, `"codex"`, `"gemini"`, `"pi"`; aliases: `anthropic`, `openai` (Codex, not pi), `google` (case-insensitive). `pi` has no alias and needs `llm_model="provider/model-id"`. |
+| `allowed_tools` | string | all | Claude or pi tool list, e.g. `"Read,Grep,Glob"` or `"Bash(git:*)"` for Claude, plain names such as `"read,bash"` for pi; rejected on other providers |
+| `max_budget_usd` | string | unlimited | Spend cap for this node's Claude or pi session (PAS enforces the pi budget); rejected on other providers |
 | `goal_gate` | boolean | false | Must succeed for pipeline completion |
 | `retry_target` | string | -- | Non-terminal node to loop back to on goal gate failure |
 | `fallback_retry_target` | string | -- | Second-level non-terminal retry target |
@@ -230,7 +230,7 @@ to these names also fail closed, and legacy checkpoints have them filtered on
 restore. Ordinary graph values such as `goal`, `language`, and `deploy_env`
 remain available to prompt transforms and workflow Context.
 
-The node attribute `max_budget_usd` is still allowed as a per-session Claude
+The node attribute `max_budget_usd` is still allowed as a per-session Claude or pi
 cap; it is distinct from the reserved top-level global budget control.
 
 ### Unsupported execution capabilities

@@ -49,6 +49,9 @@ pas run <PIPELINE> [OPTIONS]
 | `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for `codergen` nodes. |
 | `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for `codergen` nodes. Repeatable. |
 | `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for `codergen` nodes. `--strict-mcp-config` remains enabled. |
+| `--codergen-skill <DIR>` | — | — | Skill directory (contains `SKILL.md`) for `claude` (in `inherit` and `strict-bare`) and `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen] skills` list. |
+| `--codergen-pi-extension <PATH>` | — | — | pi extension file or directory for `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen.pi] extensions` list. |
+| `--codergen-pi-prompt-template <PATH>` | — | — | pi prompt template file or directory for `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen.pi] prompt_templates` list. |
 | `--run-id <UUID>` | — | generated (UUID v7) | Use this Run ID instead of generating one. Must be a UUID; anything else is rejected. The Monitor passes it so it knows the ID before the Run starts. |
 | `--json` | — | false | Print `{"v":1,"ok":true,"run_id","run_dir"}` as the first stdout line once the Run folder exists; all other output goes to stderr. |
 | `--allow-shared-workdir` | — | false | Start even if another Run is active in the same git worktree. The Run records `shared_workdir: true` in its `RunStarted` event when it actually shares the worktree. |
@@ -131,6 +134,7 @@ supported provider CLI versions:
 | Claude Code (`claude`) | 2.1.282 | `--output-format stream-json --verbose` | Final text, actual model, input and output tokens, cost |
 | Codex CLI (`codex`) | 0.151.0 | `exec --json` | Final text, input and output tokens. Codex reports no model name and no cost. |
 | Gemini CLI (`gemini`) | 0.11.0 for `stream-json`; older versions use `json` | `--output-format stream-json`, or `--output-format json` when `gemini --help` does not list `stream-json` | Final text, actual model, input and output tokens. Gemini reports no cost. |
+| pi (`pi`) | 1.0.4 (any 1.0 or later is accepted) | `--mode json` | Final text, actual model, input and output tokens (cache included), cost |
 
 - The Claude Code and Codex CLI minimums are the versions PAS was verified
   against. Older versions may work but are not supported.
@@ -140,6 +144,92 @@ supported provider CLI versions:
 - Input tokens include cached prompt tokens for every provider.
 - A value the provider does not report is recorded as unknown. A missing value
   never fails the stage.
+
+#### pi nodes
+
+A `pi` node sets `llm_provider="pi"` and an `llm_model` of the form
+`provider/model-id` with an optional `:thinking` suffix, for example
+`openai/gpt-5.5` or `anthropic/claude-sonnet-4-5:high`.
+
+- PAS splits `llm_model` on the first `/`; both parts must be non-empty. The
+  thinking level is one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh`
+  or `max`. Only the node's `llm_model` applies; the graph `model` does not.
+  A pi node without `llm_model` fails validation.
+- `llm_provider="openai"` selects Codex, not pi. Write `llm_provider="pi"` and
+  put `openai/...` in `llm_model`.
+- `allowed_tools` is passed to pi as `--tools`. Built-in names are `read`,
+  `bash`, `edit`, `write`, `grep`, `find` and `ls`; other names are passed
+  through because extensions can register tools. A name with `(`, `)` or a
+  space (Claude rule syntax) is rejected.
+- PAS starts pi in isolation: `-p --mode json --no-session`, and turns off
+  personal extensions, skills, prompt templates and context files, MCP and
+  auto-discovery, plus `--offline` and `PI_TELEMETRY=0`. PAS never passes
+  `--credentials`.
+- `max_budget_usd` is enforced by PAS, not by pi. PAS stops the pi process
+  group when the summed cost of assistant messages is above the limit (equal
+  does not stop). pi reports cost when a message ends, so one message can go
+  over the limit. The node then has status `failed`, its message names the
+  spent amount and the limit, the partial cost counts toward the Run total, and
+  there is no retry.
+- Exit code 0 does not mean success. The node succeeds only when pi sent
+  `agent_end` and the last assistant message has stop reason `stop`. `error`
+  and `aborted` fail with pi's error message, `length` fails with "output
+  truncated", a missing `agent_end` fails with "no final result", and any
+  other stop reason fails with "unexpected end". A timeout has status
+  `timeout`. The `LlmInvoked` status set stays `success`, `failed` and
+  `timeout`.
+- Readiness check: before the first node of a Run that has a pi node (not on
+  `--dry-run`), PAS runs `pi --version` (major version 1 or later) and
+  `pi auth check --model <model> --json` for each distinct model. If either
+  fails, the Run stops before a Run directory is made. `pas launch` checks all
+  Pipelines first. "Ready" means a credential is configured, not that it is
+  valid; an API-key environment variable alone counts as ready.
+- A prompt that starts with `@` would be read by pi 1.0.4 as a file
+  reference, even after `--`. PAS puts one space in front of the message so
+  the text stays literal.
+
+#### Per-run resources
+
+A Run can name skills, pi extensions and pi prompt templates. `pi` nodes load
+all three; `claude` nodes load the skills in `inherit` and `strict_bare`
+settings mode. In `subscription_bare` (the default) Claude cannot load named
+skills, and PAS prints a `CODERGEN_SKILLS_NOT_LOADED` warning for each such
+node. `codex` and `gemini` nodes get the same warning. See the
+[provider matrix](execution-capabilities.md#provider-matrix-for-codergen-nodes).
+
+```toml
+[codergen]
+skills = ["agent-resources/skills/review", "agent-resources/skills/plan"]
+
+[codergen.pi]
+extensions = ["agent-resources/pi/guard.ts"]
+prompt_templates = ["agent-resources/pi/prompts"]
+```
+
+- Each skill entry is one directory with a `SKILL.md`. Two skills with the
+  same directory name are an error. A symlink entry is resolved; a symlink
+  inside a skill tree is an error. A skill may hold up to 10 MiB.
+- Relative paths in `pas.toml` are joined to the directory of `pas.toml`.
+- A flag list replaces the `pas.toml` list; it does not add to it. DOT cannot
+  set these lists.
+- PAS copies the skills into the Run folder
+  (`agent-resources/claude-plugin`) at the start of each Attempt. The Run start
+  output lists the resources and where each list came from.
+- Trust: extensions named in `pas.toml` need that `pas.toml` in the trust
+  store. The trust hash covers the bytes of `pas.toml` and then of each
+  extension, so a changed extension needs new trust. On a terminal PAS asks;
+  otherwise it prints the exact `pas trust add <path> <hash>` command and
+  names `PAS_TRUST_THIS=1`. Extensions from `--codergen-pi-extension` need no
+  trust. Skills and prompt templates from `pas.toml` need no trust in this
+  release.
+- A named skill in `inherit` or `strict_bare` makes PAS leave out
+  `--disable-slash-commands`, so Claude built-in slash commands are on for
+  that node too.
+- A pi extension can read the environment variables PAS passes to pi (API keys
+  included) and can use the network even under `--offline`, which only stops
+  pi's own startup network calls.
+- `strict_bare` skill loading and Gemini behavior are not verified locally.
+- A resume does not compare the lists between Attempts.
 
 #### Claude settings isolation for `codergen`
 
@@ -774,6 +864,9 @@ pas launch <DOCS_DIR> [OPTIONS]
 | `--codergen-claude-agents <JSON>` | — | — | PAS-owned Claude agents JSON for run-phase `codergen` nodes. |
 | `--codergen-claude-plugin-dir <DIR>` | — | — | PAS-owned Claude plugin directory for run-phase `codergen` nodes. Repeatable. |
 | `--codergen-claude-mcp-config <JSON_OR_FILE>` | — | none | Explicit MCP config for run-phase `codergen` nodes. |
+| `--codergen-skill <DIR>` | — | — | Skill directory (contains `SKILL.md`) for run-phase `claude` (in `inherit` and `strict-bare`) and `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen] skills` list. |
+| `--codergen-pi-extension <PATH>` | — | — | pi extension file or directory for `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen.pi] extensions` list. |
+| `--codergen-pi-prompt-template <PATH>` | — | — | pi prompt template file or directory for `pi` nodes. Repeatable. Replaces the `pas.toml` `[codergen.pi] prompt_templates` list. |
 
 #### How it works
 

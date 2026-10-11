@@ -112,6 +112,24 @@ fn authoritative_markdown_dot_examples_compile_with_canonical_semantics() {
 }
 
 #[test]
+fn guide_pi_example_exists_and_compiles() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let source = std::fs::read_to_string(workspace.join("docs/guide.md")).unwrap();
+    let examples: Vec<&str> = complete_dot_fences(&source)
+        .into_iter()
+        .filter(|dot| dot.contains("llm_provider=\"pi\""))
+        .collect();
+    assert!(!examples.is_empty(), "docs/guide.md has no pi DOT example");
+    for dot in examples {
+        let graph = PipelineGraph::from_dot(attractor_dot::parse(dot).unwrap()).unwrap();
+        ExecutionPlan::compile(graph).unwrap();
+    }
+}
+
+#[test]
 fn maintained_docs_do_not_advertise_stale_claude_only_or_validation_contracts() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -136,6 +154,10 @@ fn maintained_docs_do_not_advertise_stale_claude_only_or_validation_contracts() 
             "README.md",
             "Each provider-backed `codergen` node must",
         ),
+        ("docs/guide.md", "rejected outside Claude-backed codergen nodes"),
+        ("docs/dot-dialect.md", "rejected outside Claude-backed codergen nodes"),
+        ("docs/dot-dialect.md", "| Claude-only spend cap"),
+        ("docs/dot-dialect.md", "| Claude-only tool list"),
         (
             "docs/guide.md",
             "Each node becomes a Claude Code session that runs your prompt.",

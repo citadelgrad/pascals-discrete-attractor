@@ -47,7 +47,7 @@ digraph PipelineName {
 | Attribute | Purpose | Example |
 |-----------|---------|---------|
 | `prompt` | The task sent to the selected provider CLI | `prompt="Fix the bug in auth.py"` |
-| `llm_provider` | Required for provider-backed nodes: `claude`, `codex`, or `gemini` | `llm_provider="claude"` |
+| `llm_provider` | Required for provider-backed nodes: `claude`, `codex`, `gemini`, or `pi` (pi also needs `llm_model="provider/model-id"`) | `llm_provider="claude"` |
 | `llm_model` | Override model per node | `llm_model="haiku"` |
 | `allowed_tools` | Restrict tools (read-only, git-only, etc.) | `allowed_tools="Read,Grep,Glob"` |
 | `max_budget_usd` | Spending cap for this node | `max_budget_usd="1.00"` |

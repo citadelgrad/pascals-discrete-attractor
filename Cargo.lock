@@ -107,7 +107,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "attractor-agent"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "attractor-llm",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-cli"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "attractor-dot",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-dot"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "attractor-types",
  "serde",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-journal"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "serde",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-llm"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "attractor-types",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-monitor"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "attractor-journal",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-pipeline"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "attractor-dot",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-quality"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-tools"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "attractor-types",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "attractor-types"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "chrono",
  "serde",

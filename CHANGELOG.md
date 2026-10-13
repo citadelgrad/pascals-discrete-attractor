@@ -4,7 +4,14 @@ All notable changes to PAS are documented here.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-10-13
+
 ### Added
+
+- Release binaries for Linux (`x86_64-unknown-linux-gnu`,
+  `aarch64-unknown-linux-gnu`) and macOS (`aarch64-apple-darwin`,
+  `x86_64-apple-darwin`) are built by the `release` GitHub Actions workflow on
+  each `v*` tag. The macOS binaries are signed and notarized.
 
 - pi (1.0 or later) is the fourth `codergen` provider. PAS starts it in
   isolation (`-p --mode json --no-session`, no personal resources, `--offline`),
@@ -26,6 +33,10 @@ All notable changes to PAS are documented here.
 - The Monitor shows pi Transcripts as messages, tool calls and usage.
 - Opt-in live tests for skill loading (`PAS_LIVE_PI=1`, `PAS_LIVE_CLAUDE=1`).
 - A provider matrix in `docs/execution-capabilities.md`.
+
+### Changed
+
+- `install.sh` runs the codesign step on macOS only, so it works on Linux.
 
 ## [0.11.0] — 2026-09-27
 
